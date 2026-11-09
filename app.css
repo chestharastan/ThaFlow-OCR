@@ -41,6 +41,8 @@ nav{display:flex;flex-direction:column;gap:2px}
 .foot{padding:10px 10px 0;font-size:12px;color:var(--mut-2)}
 .page{padding:36px 40px 64px;display:flex;flex-direction:column;gap:22px;max-width:1280px;width:100%}
 .head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.head>.grow{flex:1 1 360px;min-width:min(360px,100%)}
+.head .tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;max-width:100%}
 .head p{margin:6px 0 0;color:var(--mut)}
 .rowhead{display:flex;align-items:center;gap:12px;padding:14px 18px 10px}
 .rowhead a{color:var(--mut);display:inline-flex;align-items:center;gap:2px;font-size:13px}
@@ -256,3 +258,25 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-bottom-
  .review.noside.one.text,.review.noside.one.original{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:860px){.sidetog{display:none}.review.noside{grid-template-columns:1fr}}
+
+/* ---------- responsive review */
+@media(max-width:1280px){
+ .page{padding:28px 24px 56px}
+ .review{grid-template-columns:72px minmax(0,1fr) minmax(0,1fr)}
+ .review.text,.review.original{grid-template-columns:72px minmax(0,1fr)}
+ .review.one{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+ .review.one.text,.review.one.original{grid-template-columns:minmax(0,1fr)}
+ .review:not(.noside)>div:last-child{grid-column:1/-1;border-top:1px solid var(--line);border-right:0}
+ .review:not(.noside)>div:last-child .panebody{max-height:none}
+ .review:not(.noside)>div:last-child #r_lows{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+ .thumbs .th{width:56px}
+}
+@media(max-width:960px){
+ h1{font-size:21px}
+ .review,.review.text,.review.original,.review.one,.review.one.text,.review.one.original,.review.noside{grid-template-columns:1fr}
+ .review>div{border-right:0;border-bottom:1px solid var(--line)}
+ .thumbs{flex-direction:row;max-height:none;position:static;overflow-x:auto;overflow-y:hidden;padding:10px}
+ .thumbs .th{flex:none;width:52px}
+ .panebody{max-height:70vh}
+ .panehead .mut{display:none}
+}
