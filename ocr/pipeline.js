@@ -234,16 +234,34 @@
       const fr = await T.classifyFonts(sel.map(([[, ln], i]) => { const c = T.cropLine(img.canvas, ln.quad, 32); return c; })); sel.forEach(([[, ln]], k) => ln.font = fr[k]); }
     timings.font_ms = ms(t);
     // bullets, structure, fonts per block
-    t = performance.now(); step("structure", "paragraphs and reading order");
+    step("structure", "paragraphs and reading order");
+    return assemble(img, blocks, timings, tStart, {ignored});
+  };
+
+  /** Shared ending of every page: bullets, structure, fonts per block, layout, render, document. */
+  async function assemble(img, blocks, timings, tStart, extra) {
+    const W = img.width, H = img.height, ms = t => +(performance.now() - t).toFixed(1);
+    let t = performance.now();
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { b.lines = mergeBulletLines(b.lines); for (const ln of b.lines) if (ln.text && !["table", "form_field"].includes(b.cls)) textBullet(ln); }
     const usedModel = await structure(blocks, W, H); timings.structure_ms = ms(t); timings.structure = usedModel ? "model" : "rules";
-    for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { blockFont(b); if (!b.font_px && b.lines.length) { const hs = b.lines.filter(l => l.text).map(l => l.bbox[3] - l.bbox[1]); if (hs.length) { b.font_px = +(U.median(hs) * 0.78).toFixed(1); b.font_src = "ink"; } } }
+    for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { blockFont(b); if (!b.font_px && b.lines.length) { const hs = b.lines.filter(l => l.text).map(l => l.bbox[3] - l.bbox[1]); if (hs.length) { b.font_px = +(U.median(hs) * 0.78).toFixed(1); b.font_src = "image"; } } }
     timings.bullets_found = blocks.reduce((a, b) => a + b.lines.filter(l => l.bullet).length, 0); timings.bold_words = 0;
     const layout = pageLayout(blocks, W, H); const outBlocks = render(img, blocks); timings.order_ms = 0; timings.total_ms = ms(tStart);
-    step("done", "done");
     const blob = await new Promise(r => img.canvas.toBlob(r, "image/jpeg", 0.9));
     return {page_id: (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "") : Date.now().toString(16) + Math.random().toString(16).slice(2)), width: W, height: H, blocks: outBlocks, layout, document: buildDocument(outBlocks, layout, W, H),
-      timings, models: Object.assign({}, T.active), device: "browser:" + (T.backendUsed || "wasm"), ignored_regions: ignored, image_blob: blob, canvas: img.canvas};
+      timings: Object.assign(timings, extra.timings || {}), models: extra.models || Object.assign({}, T.active), device: extra.device || ("browser:" + (T.backendUsed || "wasm")), source: extra.source || "ocr", ignored_regions: extra.ignored || [], image_blob: blob, canvas: img.canvas};
+  }
+
+  /** Build a page from lines that already carry text (a PDF text layer): {quad, bbox, score, text, confidence}. No layout
+      or recognition model is needed; the font and structure models are used when they happen to be loaded. */
+  T.fromLines = async function (img, lines, extra) {
+    const tStart = performance.now(), timings = {layout_ms: 0, textdet_ms: 0, lines_detected: lines.length, rec_ms: 0, lines_recognized: lines.length, font_ms: 0};
+    let blocks = groupOrphans(lines); blocks = mergeParagraphs(blocks);
+    let t = performance.now();
+    if (T.sessions.font) { try { const sel = lines.filter(ln => (ln.text || "").length >= 2 && !ln.font); const fr = await T.classifyFonts(sel.map(ln => T.cropLine(img.canvas, ln.quad, 32))); sel.forEach((ln, k) => ln.font = fr[k]); } catch (e) { console.warn("font model skipped", e); } }
+    timings.font_ms = +(performance.now() - t).toFixed(1);
+    return assemble(img, blocks, timings, tStart, extra || {});
   };
-  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render};
+
+  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble};
 })();

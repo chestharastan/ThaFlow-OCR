@@ -202,7 +202,7 @@ function docsTable(docs) {
   if (!docs.length) return `<div class="empty">No documents yet. Scan a page to start.</div>`;
   return `<table class="tbl"><thead><tr><th>Document</th><th>Status</th><th>Confidence</th><th>Scanned</th><th></th></tr></thead><tbody>
   ${docs.map(d => { const [st, cls] = docStatus(d); const pc = Math.round(d.avg_conf * 1000) / 10; return `<tr class="click" data-id="${d.page_id}">
-   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt=""></div><div><b>${esc(d.filename)}</b><span>${d.lines} lines · ${d.width}×${d.height}${d.size ? " · " + fmtSize(d.size) : ""}</span></div></div></td>
+   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt=""></div><div><b>${esc(d.filename)}</b><span>${d.lines} lines · ${d.width}×${d.height}${d.size ? " · " + fmtSize(d.size) : ""}${d.result && d.result.source === "pdf-text" ? " · PDF text" : ""}</span></div></div></td>
    <td><span class="badge ${cls}"><span class="dot"></span>${st}</span></td>
    <td><span class="acc"><span class="bar"><i class="${pc >= 95 ? "ok" : "warn"}" style="width:${pc}%"></i></span><span class="mono">${pc.toFixed(1)}%</span></span></td>
    <td class="mut">${when(d.created)}</td>
@@ -221,10 +221,14 @@ document.addEventListener("click", e => { if (!e.target.closest(".menu") && !e.t
 
 /* ---------------------------------------------------------------- scan (home) */
 function pickFiles(cb, camera) { const inp = $("#fileinput"); if (camera) inp.setAttribute("capture", "environment"); else inp.removeAttribute("capture"); inp.value = ""; inp.onchange = () => cb([...inp.files]); inp.click(); }
-function wireDrop(el, cb) { el.ondragover = e => { e.preventDefault(); el.classList.add("on"); }; el.ondragleave = () => el.classList.remove("on"); el.ondrop = e => { e.preventDefault(); el.classList.remove("on"); cb([...e.dataTransfer.files].filter(f => /^image\//.test(f.type) || /\.(tiff?)$/i.test(f.name))); }; }
-document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/")); if (f.length) addAndShow(f); });
+function wireDrop(el, cb) { el.ondragover = e => { e.preventDefault(); el.classList.add("on"); }; el.ondragleave = () => el.classList.remove("on"); el.ondrop = e => { e.preventDefault(); el.classList.remove("on"); cb([...e.dataTransfer.files].filter(f => /^image\//.test(f.type) || /\.(tiff?)$/i.test(f.name) || T.pdf.isPdf(f))); }; }
+document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/") || T.pdf.isPdf(x)); if (f.length) addAndShow(f); });
 async function addFiles(files) {
-  for (const f of files) { const url = URL.createObjectURL(f); const dims = await new Promise(res => { const im = new Image(); im.onload = () => res([im.naturalWidth, im.naturalHeight]); im.onerror = () => res([0, 0]); im.src = url; });
+  for (const f of files) {
+    if (T.pdf.isPdf(f)) { const p = {file: f, url: "", w: 0, h: 0, pdf: {pages: 0, error: null}}; pending.push(p);
+      try { const info = await T.pdf.peek(f); p.pdf.pages = info.pages; p.url = info.thumb; } catch (e) { console.warn(e); p.pdf.error = "Could not open this PDF"; }
+      continue; }
+    const url = URL.createObjectURL(f); const dims = await new Promise(res => { const im = new Image(); im.onload = () => res([im.naturalWidth, im.naturalHeight]); im.onerror = () => res([0, 0]); im.src = url; });
     pending.push({file: f, url, w: dims[0], h: dims[1]}); }
 }
 async function addAndShow(files) { await addFiles(files); const was = location.hash; location.hash = "#/scan"; if (was === "#/scan") route(); }
@@ -240,19 +244,20 @@ function devicePanel() {
 async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await T.downloadPlan(chosenModels()); const dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} to download once${DEVICE.downlinkMbps ? ` (about ${Math.max(1, Math.round(dl * 8 / (DEVICE.downlinkMbps * 1e6)))} s on your connection)` : ""}` : "already on this device"; } catch { el.textContent = ""; } }
 function renderScan() {
   const n = pending.length, lowres = pending.filter(p => p.w && p.w < 1000), recent = store.docs.slice(0, 5), b = T.benchmarkStored();
-  const est = b ? Math.max(2, Math.round(n * T.estimate(b, 40))) : null;
+  const nPages = pending.reduce((a, p) => a + (p.pdf ? Math.max(1, p.pdf.pages) : 1), 0), hasPdf = pending.some(p => p.pdf);
+  const est = b ? Math.max(2, Math.round(nPages * T.estimate(b, 40))) : null;
   view.innerHTML = `
-  <div class="head"><div class="grow"><h1>Scan a document</h1><p>Drop a photo or scan of a page. ThaOCR reads Khmer and English on this device and gives you editable text and a Word file.</p></div></div>
+  <div class="head"><div class="grow"><h1>Scan a document</h1><p>Drop a photo, a scan or a PDF. ThaOCR reads Khmer and English on this device and gives you editable text and a Word file. PDF pages that already contain text are taken as they are, without OCR.</p></div></div>
   ${devicePanel()}
-  <div class="drop ${n ? "compact" : ""}" id="drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>${n ? "Add more files" : "Drop images here"}</b><div class="small">JPG, PNG, WebP, TIFF · or paste with Ctrl+V · processed on this device only</div></div>
+  <div class="drop ${n ? "compact" : ""}" id="drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>${n ? "Add more files" : "Drop images or PDFs here"}</b><div class="small">JPG, PNG, WebP, TIFF, PDF · or paste with Ctrl+V · processed on this device only</div></div>
     <div class="acts"><button class="btn ${n ? "" : "p"}" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>
   ${n ? `<div class="card">
     <div class="rowhead"><h2>${n} file${n === 1 ? "" : "s"} ready</h2><div class="grow"></div><button class="btn ghost sm" id="s_clear">Clear</button></div>
-    <div class="flist">${pending.map((p, i) => `<div class="frow"><img src="${p.url}" alt=""><div class="grow"><b title="${esc(p.file.name)}">${esc(p.file.name)}</b><span class="small mut">${fmtSize(p.file.size)}${p.w ? " · " + p.w + "×" + p.h : ""}</span></div>
-      ${p.w && p.w < 1000 ? '<span class="badge warn"><span class="dot"></span>Low resolution</span>' : ""}<button class="x" data-i="${i}" title="Remove">${icon("x", "s")}</button></div>`).join("")}</div>
+    <div class="flist">${pending.map((p, i) => `<div class="frow">${p.url ? `<img src="${p.url}" alt="">` : `<div class="fico">${icon("file")}</div>`}<div class="grow"><b title="${esc(p.file.name)}">${esc(p.file.name)}</b><span class="small mut">${fmtSize(p.file.size)}${p.pdf ? (p.pdf.pages ? ` · PDF · ${p.pdf.pages} page${p.pdf.pages === 1 ? "" : "s"}` : " · PDF") : (p.w ? " · " + p.w + "×" + p.h : "")}</span></div>
+      ${p.pdf && p.pdf.error ? `<span class="badge bad"><span class="dot"></span>${esc(p.pdf.error)}</span>` : ""}${p.w && p.w < 1000 ? '<span class="badge warn"><span class="dot"></span>Low resolution</span>' : ""}<button class="x" data-i="${i}" title="Remove">${icon("x", "s")}</button></div>`).join("")}</div>
     ${lowres.length ? `<div class="note" style="margin:0 18px 14px">${icon("alert")}<div>${esc(lowres[0].file.name)} is only ${lowres[0].w} px wide${lowres.length > 1 ? ` (and ${lowres.length - 1} more)` : ""}. Small Khmer vowel signs may be missed. A closer photo or a 300 DPI scan reads better.</div></div>` : ""}
     <div class="startbar"><div class="opts"><label>Output ${outputSel("s_out", store.settings.output)}</label></div><div class="grow"></div>
-      <span class="small mut">${est ? `about ${est} s on this device` : "time is measured on the first run"}</span><button class="btn p lg" id="s_start">Start OCR ${icon("arrow-right")}</button></div></div>` : ""}
+      <span class="small mut">${hasPdf ? `${nPages} page${nPages === 1 ? "" : "s"} · ` : ""}${est ? `${hasPdf ? "up to " : "about "}${est} s on this device${hasPdf ? ", less for PDF pages with text" : ""}` : "time is measured on the first run"}</span><button class="btn p lg" id="s_start">Start OCR ${icon("arrow-right")}</button></div></div>` : ""}
   <div class="privacy">${icon("info")}<div><b>Your files stay here.</b> There is no server and no account: documents are kept only in this browser's storage on this device, and are lost if you clear site data or switch devices. Export what you want to keep.</div></div>
   ${recent.length ? `<div class="sec"><div class="rowhead" style="padding-left:0;padding-right:0"><h2>Recent</h2><div class="grow"></div><a href="#/documents">All documents ${icon("chevron-right", "s")}</a></div><div class="card">${docsTable(recent)}</div></div>` : ""}`;
   fillDownloadLine();
@@ -270,21 +275,42 @@ function renderScan() {
 
 /* ---------------------------------------------------------------- job runner */
 function startJob() {
-  const files = pending.splice(0); if (!files.length) return;
-  JOB = {id: Date.now().toString(36), name: files.length > 1 ? `${files.length} files` : files[0].file.name, files: files.map(p => ({name: p.file.name, url: p.url, size: p.file.size, status: "queued", page_id: null, error: null})),
-    total: files.length, done: 0, status: "running", started: Date.now(), results: [], load: {msg: "Preparing models…", frac: 0}, step: null};
+  const files = pending.splice(0).filter(p => !(p.pdf && p.pdf.error)); if (!files.length) return;
+  const entries = files.map(p => ({name: p.file.name, url: p.url, size: p.file.size, status: "queued", page_id: null, error: null, src: p, pdf: p.pdf ? {page: 0, pages: p.pdf.pages} : null}));
+  JOB = {id: Date.now().toString(36), name: files.length > 1 ? `${files.length} files` : files[0].file.name, files: entries, total: entries.length, done: 0, status: "running", started: Date.now(), results: [], load: {msg: "Preparing…", frac: 0}, step: null};
   location.hash = "#/process";
   (async () => {
-    try { await ensureModels((msg, frac) => { JOB.load = {msg, frac}; renderIfProcess(); }); JOB.load = null; }
-    catch (e) { JOB.status = "done"; JOB.files.forEach(f => { f.status = "failed"; f.error = "Could not load the models: " + e.message; }); renderIfProcess(); return; }
-    for (let i = 0; i < files.length; i++) {
-      const f = JOB.files[i]; f.status = "running"; JOB.current = i; renderIfProcess();
-      try { const t0 = performance.now(); const res = await T.process(files[i].file, s => { JOB.step = s; renderIfProcess(); }); res.client_ms = performance.now() - t0;
-        const doc = summarize(res, f.name, JOB.id, f.size); await store.put(doc, res.image_blob); f.status = "done"; f.page_id = res.page_id; JOB.results.push(doc.result); JOB.lastImage = doc.image_url;
-        T.learn(res.timings.total_ms, res.timings.lines_recognized); }
+    // expand PDFs into one entry per page (opened once per file, kept open while its pages run)
+    const docs = new Map();
+    for (let i = 0; i < JOB.files.length; i++) { const f = JOB.files[i]; if (!f.pdf) continue;
+      try { JOB.load = {msg: `Opening ${f.name}…`, frac: 0}; renderIfProcess(); const doc = await T.pdf.open(f.src.file); docs.set(f.src, doc); const n = doc.numPages, base = f.name.replace(/\.pdf$/i, "");
+        const pages = Array.from({length: n}, (_, k) => ({name: n > 1 ? `${base} · page ${k + 1}` : f.name, url: k === 0 ? f.url : "", size: k === 0 ? f.size : 0, status: "queued", page_id: null, error: null, src: f.src, pdf: {page: k + 1, pages: n}}));
+        JOB.files.splice(i, 1, ...pages); i += n - 1; }
+      catch (e) { console.warn(e); f.status = "failed"; f.error = "Could not open this PDF: " + (e.message || e); } }
+    JOB.total = JOB.files.length; JOB.name = JOB.files.length > 1 ? `${JOB.files.length} pages` : JOB.files[0].name;
+    let modelsReady = T.loaded();
+    const needModels = async () => { if (modelsReady) return; await ensureModels((msg, frac) => { JOB.load = {msg, frac}; renderIfProcess(); }); modelsReady = true; JOB.load = null; };
+    // PDF text pages need no OCR, but the small font + structure models (6 MB) give them headings, lists and fonts
+    const needLight = async () => { if (T.sessions.structure || modelsReady) return; try { JOB.load = {msg: "Loading the layout helper models…", frac: 0};
+        await T.load({layout: null, textdet: null, rec: null, font: chosenModels().font, structure: chosenModels().structure}, p => { JOB.load = {msg: `Loading ${p.id}…`, frac: p.total ? p.got / p.total : 0}; renderIfProcess(); }); }
+      catch (e) { console.warn("helper models skipped", e); } JOB.load = null; };
+    // images always need the models: start loading them before the first image so PDF text pages don't wait
+    if (!JOB.files.some(f => !f.pdf)) JOB.load = null;
+    for (let i = 0; i < JOB.files.length; i++) {
+      const f = JOB.files[i]; if (f.status === "failed") { JOB.done = i + 1; continue; } f.status = "running"; JOB.current = i; renderIfProcess();
+      try { const t0 = performance.now(); let res;
+        if (f.pdf) { const doc = docs.get(f.src); const page = await doc.getPage(f.pdf.page);
+          const probe = await T.pdf.textLayer(page, page.getViewport({scale: 1}), doc); if (!probe.usable) JOB.step = {stage: "pdf", msg: probe.reason + " · using OCR"};
+          if (!probe.usable) await needModels(); else await needLight();
+          res = await T.pdf.processPage(doc, f.pdf.page, {forceOcr: !probe.usable, onStep: s => { JOB.step = s; renderIfProcess(); }}); }
+        else { await needModels(); res = await T.process(f.src.file, s => { JOB.step = s; renderIfProcess(); }); }
+        res.client_ms = performance.now() - t0;
+        const doc = summarize(res, f.name, JOB.id, f.size); await store.put(doc, res.image_blob); f.status = "done"; f.page_id = res.page_id; f.url = doc.image_url; JOB.results.push(doc.result); JOB.lastImage = doc.image_url;
+        if (res.source !== "pdf-text") T.learn(res.timings.total_ms, res.timings.lines_recognized); }
       catch (e) { console.error(e); f.status = "failed"; f.error = String(e.message || e); }
       JOB.done = i + 1; JOB.step = null; renderIfProcess(); sidebar();
     }
+    for (const d of docs.values()) await T.pdf.close(d);
     JOB.status = "done"; renderIfProcess(); sidebar();
     const first = JOB.files.find(x => x.page_id); if (first && location.hash === "#/process") setTimeout(() => { if (location.hash === "#/process") location.hash = "#/review/" + first.page_id; }, 1200);
   })();
@@ -293,7 +319,7 @@ function renderIfProcess() { if (location.hash === "#/process") renderProcess();
 function renderProcess() {
   if (!JOB) { view.innerHTML = `<div class="head"><div class="grow"><h1>Processing</h1></div></div><div class="card empty">Nothing is running. <a href="#/scan">Scan a document</a>.</div>`; return; }
   const cur = JOB.files[Math.min(JOB.current ?? 0, JOB.files.length - 1)], last = JOB.results[JOB.results.length - 1], running = JOB.status === "running";
-  const stepIdx = {decode: 0, layout: 1, textdet: 2, rec: 3, font: 4, structure: 4, done: 5}; const si = JOB.step ? stepIdx[JOB.step.stage] : -1;
+  const stepIdx = {pdf: 0, decode: 0, layout: 1, textdet: 2, rec: 3, font: 4, structure: 4, done: 5}; const si = JOB.step ? stepIdx[JOB.step.stage] : -1;
   const recFrac = JOB.step && JOB.step.stage === "rec" && JOB.step.total ? JOB.step.done / JOB.step.total : 0;
   const fileFrac = cur.status === "running" ? Math.min(0.95, (si < 0 ? 0 : si === 3 ? 0.35 + 0.5 * recFrac : si >= 4 ? 0.9 : si * 0.12)) : 0;
   const pct = JOB.load ? Math.round(JOB.load.frac * 100) : Math.round((JOB.done + (running ? fileFrac : 0)) / JOB.total * 100);
@@ -398,8 +424,9 @@ function renderReview(id) {
      <div class="kv"><span>Content</span><b>${page.blocks.length} regions${extras ? " · " + extras : ""}</b></div>
      <div class="kv"><span>Text</span><b>${d.lines} lines · ${d.chars} characters</b></div>
      <div class="kv"><span>Fonts</span><b>${esc([...new Set(page.blocks.map(b => b.font && b.font.family).filter(Boolean))].slice(0, 3).join(", ") || "–")}</b></div>
+     ${page.source === "pdf-text" ? `<div class="kv"><span>Source</span><b>PDF text layer · no OCR needed</b></div>` : ""}
      <div class="kv"><span>Time</span><b>${fmtMs(d.timings.total_ms)} on this device</b></div>
-     <div style="display:flex;gap:8px;margin-top:16px"><button class="btn sm" id="r_rerun">${icon("refresh")}Run OCR again</button><button class="btn sm danger" id="r_del">${icon("trash")}Delete</button></div></div></div>` : ""}</div>`;
+     <div style="display:flex;gap:8px;margin-top:16px"><button class="btn sm" id="r_rerun" title="${page.source === "pdf-text" ? "Ignore the PDF text and read the page image with OCR instead" : "Process this page again"}">${icon("refresh")}${page.source === "pdf-text" ? "Run OCR instead" : "Run OCR again"}</button><button class="btn sm danger" id="r_del">${icon("trash")}Delete</button></div></div></div>` : ""}</div>`;
   view.querySelectorAll("#r_mode button").forEach(b => b.onclick = () => { REVIEW.mode = b.dataset.m; renderReview(id); });
   for (const [sel, on] of [["#r_side_close", false], ["#r_side_open", true]]) { const b = view.querySelector(sel); if (b) b.onclick = () => { REVIEW.side = on; localStorage.setItem("thaocr.reviewSide", on ? "1" : "0"); renderReview(id); }; }
   view.querySelectorAll(".thumbs .th").forEach(t => t.onclick = () => location.hash = "#/review/" + t.dataset.id);
@@ -526,6 +553,7 @@ function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)
 function renderHelp() {
   view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1><p>How ThaOCR works and how to get the best results.</p></div></div>
   <div class="card pad help"><h3>Where your files go</h3><p>Nowhere. The page downloads the ONNX runtime from the jsDelivr CDN and the OCR models (about 40 MB) from Hugging Face once, and runs them inside your browser with WebAssembly or WebGPU. Photos, text and edits never leave your device. There is no account and no server-side copy: documents live in this browser's storage and disappear if you clear site data, use a private window or change device. Export what you want to keep.</p>
+  <h3>PDF files</h3><p>Drop a PDF and each page becomes a document. If a page already contains text (a PDF made from Word, a website, or a scanner with its own OCR layer), that text is used directly and nothing is recognised, so it is exact and takes well under a second. Pages that are only pictures are read with OCR like a photo. The two kinds can be mixed in one file. If the text layer of a page is wrong, open the page and use <b>Run OCR instead</b>.</p>
   <h3>Speed</h3><p>The first visit downloads the models and measures your device, then shows an estimate per page. A laptop takes a few seconds per page; a phone can take half a minute. Smaller photos process faster. Settings lets you pick a lighter model set or force CPU or GPU.</p>
   <h3>Scanning</h3><p>Photograph or scan pages flat and evenly lit, at 300 DPI or at least about 1500 px wide for an A4 page. Khmer subscripts and vowel signs are small; below 1000 px they start to be missed.</p>
   <h3>What is read</h3><p>Paragraphs, titles, headers, footers, tables, lists, logos, stamps, signatures and handwriting regions; Khmer and English text; list markers, paragraphs and reading order; the font family, weight, slant and size of each line.</p>

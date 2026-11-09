@@ -9,6 +9,7 @@ index.html / app.js / app.css   the UI (same look as the backend-served app)
 docview.js                      reflowed, editable page view (shared with the backend app)
 ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure)
 ocr/pipeline.js                 regions -> blocks -> text -> paragraphs -> page result (same schema as POST /process)
+ocr/pdf.js                      PDF input (pdf.js from jsDelivr): text-layer pages are read without OCR, image pages are OCRed
 ocr/device.js                   device check, model-set recommendation, benchmark, time estimate
 ocr/store.js                    IndexedDB documents + page images
 models/                         models.json (manifest) + font/structure *_meta.json; the ONNX files themselves are
@@ -34,6 +35,15 @@ browser fetches only the chosen set, once, into the Cache API. The manifest and 
 Deploy: the folder is a plain static site. On Vercel just import the GitHub repo (no build step, output directory `.`);
 `vercel.json` sets the two cross-origin isolation headers that enable multi-threaded WebAssembly and the cache headers.
 On other hosts add the headers from `_headers`. Without them the app still runs, single-threaded.
+
+PDF files: every page becomes a document. A page whose text layer is usable (at least 40 characters, not damaged)
+is taken from the PDF directly - exact text, no models needed, well under a second; only the small font and
+structure models (6 MB) are loaded to label headings and lists. Pages without text (scans) are rendered at 2200 px
+and go through the normal OCR pipeline. PDFs written by Skia (Chrome, Google Docs, Android) store the real Khmer
+text in `ActualText` marks that pdf.js ignores; `ocr/pdf.js` lexes the page content stream itself and substitutes
+them, otherwise the text comes out in visual order with subscripts lost. A text layer that still looks broken
+(NUL glyphs, vowel signs starting words) is rejected and the page is OCRed instead. "Run OCR instead" on the review
+page forces OCR for a page.
 
 Device tiers (ocr/device.js): **Best quality** (WebGPU or >= 8 threads and >= 8 GB) = fp32 recogniser v2.4, detector at
 1600-2200 px; **Balanced** = int8 recogniser, 1600-1800 px; **Light** (phones, <= 4 threads or <= 4 GB) = int8,
