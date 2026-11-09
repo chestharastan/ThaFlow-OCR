@@ -13,6 +13,7 @@
     async get(id) { const d = await open(); return new Promise((res, rej) => { const r = d.transaction("docs").objectStore("docs").get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => rej(r.error); }); },
     async put(doc, imageBlob) { const d = await open(); await tx(d, ["docs", "images"], "readwrite", t => { t.objectStore("docs").put(doc); if (imageBlob) t.objectStore("images").put(imageBlob, doc.page_id); }); },
     async del(id) { const d = await open(); await tx(d, ["docs", "images"], "readwrite", t => { t.objectStore("docs").delete(id); t.objectStore("images").delete(id); }); if (urls.has(id)) { URL.revokeObjectURL(urls.get(id)); urls.delete(id); } },
+    async close() { if (!dbp) return; try { const d = await dbp; d.close(); } catch { } dbp = null; },
     async clear() { const d = await open(); await tx(d, ["docs", "images"], "readwrite", t => { t.objectStore("docs").clear(); t.objectStore("images").clear(); }); for (const u of urls.values()) URL.revokeObjectURL(u); urls.clear(); },
     async imageUrl(id) { if (urls.has(id)) return urls.get(id); const d = await open(); const blob = await new Promise((res, rej) => { const r = d.transaction("images").objectStore("images").get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => rej(r.error); });
       if (!blob) return ""; const u = URL.createObjectURL(blob); urls.set(id, u); return u; },

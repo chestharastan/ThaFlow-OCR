@@ -439,6 +439,7 @@ function renderReview(id) {
       if (a === "docx") exportDocx([d]); if (a === "docxall") exportDocx(siblings); if (a === "txt") download(base + ".txt", pageText(page), "text/plain;charset=utf-8");
       if (a === "json") download(base + ".json", JSON.stringify(page, null, 1), "application/json"); if (a === "png") { const x = document.createElement("a"); x.href = d.image_url; x.download = d.filename; x.click(); } }; };
   const img = new Image(); img.src = d.image_url;
+  if (!d.image_url) { const v = $("#r_view"); if (v) v.innerHTML = `<div class="small mut" style="padding:40px 20px;text-align:center">The page image is no longer in this browser's storage, so it cannot be shown. The text below is still available.</div>`; }
   const paint = () => { const cv = $("#r_cv"); if (cv) { drawOriginal(cv, img, page, {boxes: REVIEW.boxes, labels: REVIEW.labels, lines: REVIEW.boxes}); const v = $("#r_view"); v.style.width = Math.min(page.width, (v.parentElement.clientWidth - 32)) * REVIEW.zoom + "px"; }
     for (const c of view.querySelectorAll(".snip canvas")) { const [bid, lo] = c.dataset.key.split(":"); const b = page.blocks.find(x => x.id === bid), l = b && b.lines.find(x => String(x.reading_order) === lo); if (!l) continue;
       const pad = l.box.height * 0.3, sx = Math.max(0, l.box.x - pad), sy = Math.max(0, l.box.y - pad), sw = Math.min(page.width - sx, l.box.width + 2 * pad), sh = Math.min(page.height - sy, l.box.height + 2 * pad);
@@ -521,7 +522,7 @@ async function renderSettings() {
   await T.loadManifestSafe(); if (!RECO) await deviceCheck();
   const choice = chosenModels(), b = T.benchmarkStored(), tier = store.settings.tier || RECO.tier;
   const stage = (k, title, sub) => { const opts = T.modelsFor(k); return `<div class="field"><label>${title}</label><div class="sel"><select data-stage="${k}">${opts.map(m => `<option value="${esc(m.id)}" ${m.id === choice[k] ? "selected" : ""}>${esc(m.label || m.id)}${T.manifest.sizes && T.manifest.sizes[m.file] ? " · " + T.fmtBytes(T.manifest.sizes[m.file]) : ""}</option>`).join("")}</select></div><div class="small mut">${sub}</div></div>`; };
-  const bytes = await T.db.bytes();
+  const sr = await storageReport(); const bytes = Math.max(0, sr.usage - sr.models);
   view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1><p>Models, device and local data. Everything here applies to this browser only.</p></div></div>
   <div class="grid g-main"><div style="display:flex;flex-direction:column;gap:16px">
    <div class="card pad"><h2 style="margin-bottom:4px">Your device</h2><div class="small mut" style="margin-bottom:14px">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB memory" : ""} · ${DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU"} · ${DEVICE.threadsOK ? "multi-thread" : "single-thread"} WebAssembly${DEVICE.mobile ? " · mobile" : ""}</div>
@@ -536,8 +537,12 @@ async function renderSettings() {
    <div class="card pad"><h2 style="margin-bottom:12px">Preferences</h2>
     <div class="field"><label>Your name</label><div class="sel"><input id="s_name" value="${esc(store.settings.name)}"></div></div>
     <div class="field"><label>Default export</label><div class="sel">${outputSel("s_out", store.settings.output)}</div></div></div></div>
-   <div style="display:flex;flex-direction:column;gap:16px"><div class="card pad"><h3>Local data</h3><p class="small mut" style="margin:8px 0 12px">Documents, page images and your edits are kept in this browser only (${fmtSize(bytes)} used). There is no server copy. Clearing site data in the browser also removes them.</p><button class="btn danger" id="s_clear">Delete all documents</button></div>
-   <div class="card pad"><h3>Downloaded models</h3><p class="small mut" style="margin:8px 0 12px">Model files are cached by the browser so they download only once.</p><button class="btn" id="s_cache">Remove cached models</button></div></div></div>`;
+   <div style="display:flex;flex-direction:column;gap:16px"><div class="card pad"><h3>Space used in this browser</h3><p class="small mut" style="margin:8px 0 12px">Everything ThaOCR keeps lives in this browser, on this device. There is no server copy.</p>
+     <div class="kv"><span>Documents and page images</span><b>${store.docs.length} document${store.docs.length === 1 ? "" : "s"} · ${fmtSize(bytes)}</b></div>
+     <div class="kv"><span>Downloaded models</span><b>${sr.modelFiles ? `${sr.modelFiles} file${sr.modelFiles === 1 ? "" : "s"} · ${fmtSize(sr.models)}` : "none"}</b></div>
+     <div class="kv"><span>Total for this site</span><b>${sr.usage ? `${fmtSize(sr.usage)}${sr.quota ? ` of ${fmtSize(sr.quota)} available` : ""}` : "unknown"}</b></div>
+     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="s_clear">Delete all documents</button><button class="btn" id="s_cache">Remove cached models</button></div></div>
+   <div class="card pad" style="border-color:#f3c7c7"><h3>Reset everything</h3><p class="small mut" style="margin:8px 0 12px">Removes all documents, page images, edits, downloaded models, the device measurement and your settings, so this site takes no space in your browser. The page then starts over as on a first visit. Models download again when you next scan.</p><button class="btn danger" id="s_wipe">${icon("trash")}Reset everything</button></div></div></div>`;
   $("#s_out").onchange = e => { store.settings.output = e.target.value; store.save(); };
   $("#s_name").onchange = e => { store.settings.name = e.target.value.trim() || "Local user"; store.save(); };
   $("#s_backend").onchange = e => { store.settings.backend = e.target.value; store.save(); resetModels(); renderSettings(); };
@@ -548,6 +553,30 @@ async function renderSettings() {
   $("#s_load").onclick = async () => { try { await ensureModels((m) => toast(m)); renderSettings(); } catch (e) { toast("failed: " + e.message); } };
   $("#s_clear").onclick = async () => { if (confirm("Remove all documents from this browser? This cannot be undone.")) { await store.clear(); sidebar(); renderSettings(); } };
   $("#s_cache").onclick = async () => { await T.clearModelCache(); localStorage.removeItem("thaocr.device.v1"); resetModels(); toast("cached models removed"); renderSettings(); };
+  $("#s_wipe").onclick = async () => {
+    if (!confirm("Reset ThaOCR in this browser?\n\nAll documents, page images, edits, downloaded models and settings on this device will be removed. Export anything you want to keep first.\n\nThis cannot be undone.")) return;
+    const b = $("#s_wipe"); b.disabled = true; b.textContent = "Resetting…";
+    try { const before = await resetEverything();
+      sessionStorage.setItem("thaocr.resetMsg", before.usage ? `Reset done · ${fmtSize(before.usage)} removed from this browser` : "Reset done"); }
+    catch (e) { console.error(e); toast("reset failed: " + e.message); b.disabled = false; return; }
+    location.hash = "#/scan"; location.reload(); };
+}
+/* ---------------------------------------------------------------- storage footprint + full reset */
+async function storageReport() {
+  const r = {docs: store.docs.reduce((a, d) => a + (d.size || 0), 0), models: 0, modelFiles: 0, usage: 0, quota: 0};
+  try { const est = await navigator.storage.estimate(); r.usage = est.usage || 0; r.quota = est.quota || 0; } catch { }
+  try { const c = await caches.open("thaocr-models-v1"); for (const k of await c.keys()) { const m = await c.match(k); if (!m) continue; r.modelFiles++; const cl = +(m.headers.get("content-length") || 0); r.models += cl || (await m.blob()).size; } } catch { }
+  return r;
+}
+async function resetEverything() {
+  const before = await storageReport();
+  try { await store.clear(); } catch (e) { console.warn(e); }
+  try { await T.db.close(); await new Promise(res => { const q = indexedDB.deleteDatabase("thaocr"); q.onsuccess = q.onerror = q.onblocked = () => res(); setTimeout(res, 3000); }); } catch (e) { console.warn(e); }
+  try { for (const k of await caches.keys()) if (k.startsWith("thaocr")) await caches.delete(k); } catch (e) { console.warn(e); }
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith("thaocr")) localStorage.removeItem(k); } catch (e) { console.warn(e); }
+  try { sessionStorage.clear(); } catch { }
+  resetModels();
+  return before;
 }
 function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
@@ -568,13 +597,15 @@ function route() { closeMenus(); const [, r = "scan", arg = ""] = location.hash.
 window.addEventListener("hashchange", route);
 (async () => {
   setSideCollapsed(localStorage.getItem("thaocr.sideCollapsed") === "1");
+  try { const m = sessionStorage.getItem("thaocr.resetMsg"); if (m) { sessionStorage.removeItem("thaocr.resetMsg"); setTimeout(() => toast(m), 600); } } catch { }
   $("#sidetog").onclick = () => setSideCollapsed(!$("#shell").classList.contains("collapsed"));
   document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) { e.preventDefault(); setSideCollapsed(!$("#shell").classList.contains("collapsed")); } });
   await store.init();
-  if (!store.settings.noticeSeen) { $("#notice").classList.remove("hide"); $("#notice_ok").onclick = () => { $("#notice").classList.add("hide"); store.settings.noticeSeen = true; store.save(); }; }
+  const preload = () => { if (RECO && RECO.tier !== "low" && !(DEVICE && DEVICE.saveData)) ensureModels(() => {}).then(() => { if (location.hash === "#/scan") renderScan(); }).catch(e => console.warn("model preload failed", e)); };
+  if (!store.settings.noticeSeen) { $("#notice").classList.remove("hide"); $("#notice_ok").onclick = () => { $("#notice").classList.add("hide"); store.settings.noticeSeen = true; store.save(); preload(); }; }
   if (!location.hash) location.hash = "#/scan"; else route(); sidebar();
   try { await deviceCheck(); } catch (e) { console.warn(e); }
   sidebar(); if (location.hash === "#/scan") renderScan();
   // warm up in the background on capable devices: the first scan then starts at once
-  if (RECO && RECO.tier !== "low" && !(DEVICE && DEVICE.saveData)) ensureModels(() => {}).then(() => { if (location.hash === "#/scan") renderScan(); }).catch(e => console.warn("model preload failed", e));
+  if (store.settings.noticeSeen) preload(); // nothing is downloaded before the user has read the notice
 })();
