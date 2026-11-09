@@ -49,6 +49,11 @@ Device tiers (ocr/device.js): **Best quality** (WebGPU or >= 8 threads and >= 8 
 1600-2200 px; **Balanced** = int8 recogniser, 1600-1800 px; **Light** (phones, <= 4 threads or <= 4 GB) = int8,
 1100-1300 px. A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
 
+Layout rules added in the browser version (not in the server): segments of one line are recognised separately and
+joined in reading order; dot leaders become a tab with the page number right-aligned (Document view and Word);
+`table` regions and side-by-side aligned blocks (a list with counts at the right) are rebuilt as cell grids from
+ruling lines or line alignment and exported as real Word tables; line order inside a block is always geometric.
+
 Not ported from the backend yet (rules that need OpenCV): red-stamp lifting and reading text under stamps, ink-based
 bullet detection, bold words by stroke weight, text colours, figure splitting, box snapping, decoration/rule detection.
 Layout models are Ultralytics YOLO11 (AGPL-3.0).

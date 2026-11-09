@@ -170,7 +170,7 @@ const lineKey = (b, l) => `${b.id}:${l.reading_order}`;
 function scaleToFit(wrapper, inner, pageW, pageH) { const k = Math.min(1, (wrapper.clientWidth - 2) / pageW); inner.style.transform = `scale(${k})`; inner.style.transformOrigin = "top left"; wrapper.style.height = pageH * k + "px"; }
 
 /* ---------------------------------------------------------------- text output */
-function blockTextMd(b) { return (b.lines || []).filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? l.bullet + " " : "") + l.text).join("\n"); }
+function blockTextMd(b) { if (b.table) return b.table.rows.map(r => r.cells.map(c => c.text || "").join("\t")).join("\n"); return (b.lines || []).filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? l.bullet + " " : "") + l.text).join("\n"); }
 function pageText(page) { return [...page.blocks].sort((a, b) => a.reading_order - b.reading_order).map(blockTextMd).filter(Boolean).join("\n\n"); }
 
 
@@ -424,7 +424,7 @@ function renderReview(id) {
      <div class="kv"><span>Content</span><b>${page.blocks.length} regions${extras ? " · " + extras : ""}</b></div>
      <div class="kv"><span>Text</span><b>${d.lines} lines · ${d.chars} characters</b></div>
      <div class="kv"><span>Fonts</span><b>${esc([...new Set(page.blocks.map(b => b.font && b.font.family).filter(Boolean))].slice(0, 3).join(", ") || "–")}</b></div>
-     ${page.source === "pdf-text" ? `<div class="kv"><span>Source</span><b>PDF text layer · no OCR needed</b></div>` : ""}
+     ${page.source === "pdf-text" ? `<div class="kv"><span>Source</span><b>PDF text layer · no OCR needed</b></div>${page.pdf_text && page.pdf_text.broken > 0.01 ? `<div class="note" style="margin:8px 0">${icon("alert")}<div>The PDF's own text looks partly damaged (${Math.round(page.pdf_text.broken * 100)}% odd characters). If the text is wrong, use <b>Run OCR instead</b>.</div></div>` : ""}` : ""}
      <div class="kv"><span>Time</span><b>${fmtMs(d.timings.total_ms)} on this device</b></div>
      <div style="display:flex;gap:8px;margin-top:16px"><button class="btn sm" id="r_rerun" title="${page.source === "pdf-text" ? "Ignore the PDF text and read the page image with OCR instead" : "Process this page again"}">${icon("refresh")}${page.source === "pdf-text" ? "Run OCR instead" : "Run OCR again"}</button><button class="btn sm danger" id="r_del">${icon("trash")}Delete</button></div></div></div>` : ""}</div>`;
   view.querySelectorAll("#r_mode button").forEach(b => b.onclick = () => { REVIEW.mode = b.dataset.m; renderReview(id); });
@@ -485,7 +485,8 @@ let docxLib = null;
 async function loadDocx() { if (docxLib) return docxLib; if (!window.docx) { await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/docx@9.15.3/dist/index.iife.js"; s.onload = res; s.onerror = () => rej(new Error("docx library not found")); document.head.appendChild(s); }); } docxLib = window.docx; return docxLib; }
 const dataUrlBytes = u => { const b = atob(u.split(",")[1]); const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; };
 function docxParagraphs(D, page) {
-  const {Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun} = D, out = [], W = page.width, doc = page.document;
+  const {Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, TabStopType, TabStopPosition, LeaderType, Tab} = D, out = [], W = page.width, doc = page.document;
+  const none = {style: BorderStyle.NONE, size: 0, color: "FFFFFF"}, noBorders = {top: none, bottom: none, left: none, right: none};
   const contentW = Math.max(1, W - ((doc && doc.margins) ? doc.margins.left + doc.margins.right : 0.16 * W)), pageWidthTwips = 9026; // A4 text width at 2 cm margins
   const align = a => a === "center" ? AlignmentType.CENTER : a === "right" ? AlignmentType.RIGHT : a === "justify" ? AlignmentType.JUSTIFIED : AlignmentType.LEFT;
   const runs = (e, fallbackBold) => (e.runs && e.runs.length ? e.runs : [{text: e.text || "", bold: !!fallbackBold}]).map(r => new TextRun({text: r.text, bold: !!r.bold || !!fallbackBold, italics: e.style && e.style.slant === "italic", font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined, size: e.style && e.style.font_px ? Math.max(16, Math.round(e.style.font_px / W * 1190)) : undefined}));
@@ -493,6 +494,10 @@ function docxParagraphs(D, page) {
     if (e.type === "row" || e.type === "footer_row") { e.columns.forEach(c => c.elements.forEach(one)); return; }
     if (e.type === "list") { e.items.forEach(it => out.push(new Paragraph({children: runs(it), bullet: {level: Math.min(8, it.level || 0)}, alignment: align(e.align)}))); return; }
     if (e.type === "figure" || e.type === "decoration") { if (!e.crop) return; try { const wIn = Math.max(0.3, Math.min(6.3, 6.3 * (e.box[2] / contentW))), hIn = wIn * (e.box[3] / Math.max(1, e.box[2])); out.push(new Paragraph({alignment: align(e.align), children: [new ImageRun({type: "png", data: dataUrlBytes(e.crop), transformation: {width: Math.round(wIn * 96), height: Math.round(hIn * 96)}})]})); } catch (err) { console.warn(err); } return; }
+    if (e.type === "table" && e.table) { const t = e.table, total = Math.max(1, t.cols[t.cols.length - 1].x1 - t.cols[0].x0), widths = t.cols.map(c => Math.max(300, Math.round(9026 * (c.x1 - c.x0) / total)));
+      out.push(new Table({width: {size: 9026 * Math.min(1, total / contentW), type: WidthType.DXA}, columnWidths: widths, rows: t.rows.map(r => new TableRow({children: r.cells.map((c, i) => new TableCell({width: {size: widths[i], type: WidthType.DXA}, borders: t.borders ? undefined : noBorders, children: [new Paragraph({alignment: align(t.cols[i].align), children: runs({text: c.text || "", style: e.style})})]}))}))}));
+      out.push(new Paragraph({children: [], spacing: {after: 60}})); return; }
+    if ((e.text || "").includes("\t") && e.type === "paragraph") { const [before, after] = e.text.split("\t"); out.push(new Paragraph({tabStops: [{type: TabStopType.RIGHT, position: TabStopPosition.MAX, leader: LeaderType.DOT}], children: [...runs({text: before, style: e.style}), new TextRun({children: [new Tab(), after || ""], font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined})]})); return; }
     if (e.type === "heading") { out.push(new Paragraph({children: runs(e, true), heading: e.heading === 1 ? HeadingLevel.HEADING_1 : e.heading === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3, alignment: align(e.align)})); return; }
     out.push(new Paragraph({children: runs(e), alignment: align(e.align), indent: e.level ? {left: 720 * e.level} : (e.first_line_indent ? {firstLine: 720} : undefined), spacing: {after: 120}}));
   };
@@ -602,10 +607,23 @@ window.addEventListener("hashchange", route);
   document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) { e.preventDefault(); setSideCollapsed(!$("#shell").classList.contains("collapsed")); } });
   await store.init();
   const preload = () => { if (RECO && RECO.tier !== "low" && !(DEVICE && DEVICE.saveData)) ensureModels(() => {}).then(() => { if (location.hash === "#/scan") renderScan(); }).catch(e => console.warn("model preload failed", e)); };
-  if (!store.settings.noticeSeen) { $("#notice").classList.remove("hide"); $("#notice_ok").onclick = () => { $("#notice").classList.add("hide"); store.settings.noticeSeen = true; store.save(); preload(); }; }
+  // the notice is shown on the first visit and after a hard reload (Ctrl+Shift+R / Cmd+Shift+R / Ctrl+F5),
+  // not after a normal reload. The page cannot tell the two reloads apart afterwards, so the hard-reload keys are
+  // caught before the page unloads and remembered in sessionStorage. Models are fetched before the notice is
+  // confirmed only if the user already accepted it once (they are then in the browser cache anyway).
+  const seenBefore = !!store.settings.noticeSeen;
+  let hard = false;
+  try { hard = sessionStorage.getItem("thaocr.hardReload") === "1"; sessionStorage.removeItem("thaocr.hardReload"); } catch { }
+  document.addEventListener("keydown", e => {
+    const k = (e.key || "").toLowerCase();
+    if (((e.ctrlKey || e.metaKey) && e.shiftKey && k === "r") || (k === "f5" && (e.ctrlKey || e.shiftKey)))
+      try { sessionStorage.setItem("thaocr.hardReload", "1"); } catch { }
+  }, true);
+  if (!seenBefore || hard) $("#notice").classList.remove("hide");
+  $("#notice_ok").onclick = () => { $("#notice").classList.add("hide"); if (!seenBefore) { store.settings.noticeSeen = true; store.save(); preload(); } };
   if (!location.hash) location.hash = "#/scan"; else route(); sidebar();
   try { await deviceCheck(); } catch (e) { console.warn(e); }
   sidebar(); if (location.hash === "#/scan") renderScan();
   // warm up in the background on capable devices: the first scan then starts at once
-  if (store.settings.noticeSeen) preload(); // nothing is downloaded before the user has read the notice
+  if (seenBefore) preload(); // nothing is downloaded before the user has read the notice the first time
 })();

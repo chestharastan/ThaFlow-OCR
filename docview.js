@@ -104,6 +104,16 @@
                              : e.type === "figure" ? `<div class="dv-ph" style="width:${S(w)};height:${S(h)}">${esc(e.role)}</div>` : `<hr style="width:${S(w)}">`;
         return f;
       }
+      if (e.type === "table" && e.table) {
+        const t = e.table, cx0 = t.cols[0].x0, cx1 = t.cols[t.cols.length - 1].x1;
+        const tbl = document.createElement("table"); tbl.className = "dv-table" + (t.borders ? " bordered" : "");
+        tbl.style.cssText = style(e.style, e.text, scale, bodyPx) + `margin-left:${S(Math.max(0, cx0 - x0))};width:${S(cx1 - cx0)};`;
+        const cg = document.createElement("colgroup"); for (const c of t.cols) { const col = document.createElement("col"); col.style.width = S(c.x1 - c.x0); cg.appendChild(col); } tbl.appendChild(cg);
+        for (const r of t.rows) { const tr = document.createElement("tr"); if (r.y1 > r.y0) tr.style.height = S(r.y1 - r.y0);
+          r.cells.forEach((c, i) => { const td = document.createElement("td"); td.style.cssText = alignCss(t.cols[i].align || "left"); td.textContent = c.text || ""; if (c.text) edit(td, {block: e.block, lines: c.lines, text: c.text}); tr.appendChild(td); });
+          tbl.appendChild(tr); }
+        return tbl;
+      }
       if (e.type === "list") {
         const ul = document.createElement("div"); ul.className = "dv-list";
         let prev = ext[1];
@@ -140,6 +150,10 @@
       else if (lb.length === 1) css += `line-height:${S(Math.max(lb[0].height, (e.style && e.style.font_px || bodyPx) * 1.3))};`;
       if (lb.length >= 2) { const ind = lb[0].x - ext[0]; if (ind > 0.01 * w) css += `text-indent:${S(ind)};`; }
       p.style.cssText = css;
+      if ((e.text || "").includes("\t") && n === 1) { // dot-leader line: title ... page number
+        const [before, after] = e.text.split("\t"); p.className += " dv-tabline"; p.style.width = S(x1 - x0 - Math.max(0, ext[0] - x0)); p.style.textAlign = "left";
+        p.innerHTML = `<span class="dv-tl">${esc(before)}</span><span class="dv-leader"></span><span class="dv-tr">${esc(after)}</span>`;
+        fits.push({el: p, sizeEl: p, lines: 1, width: w * scale, lh: 0, tight: true}); return p; }
       p.innerHTML = runsHtml(e.runs, e.style && e.style.heavy, e.low); edit(p, e);
       fits.push({el: p, sizeEl: p, lines: n, width: w * scale, lh: (pt || 0) * scale, tight: !!(e.style && e.style.size_model)});
       return p;
@@ -183,6 +197,8 @@
 .dv-page .dv-rule hr{border:0;border-top:1px solid #999;margin:0}
 .dv-page .dv-row,.dv-page .dv-footer-row{display:flex;align-items:flex-start}.dv-page .dv-col>*{max-width:none}
 .dv-page .dv-low{background:#fff3cd;border-radius:2px}
+.dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.5}.dv-page .dv-table td{padding:.05em .35em;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.dv-page .dv-table.bordered td{border:1px solid #333}
+.dv-page .dv-tabline{display:flex;align-items:baseline;white-space:nowrap}.dv-page .dv-tabline .dv-leader{flex:1;min-width:1em;border-bottom:1px dotted currentColor;margin:0 .3em;transform:translateY(-.3em)}.dv-page .dv-tabline .dv-tr{flex:none}
 .dv-page [contenteditable]:focus{outline:2px solid #99f6e4;outline-offset:2px;border-radius:2px}
 .dv-page b{font-weight:700}`;
   function injectCss() { const old = document.getElementById("dv-css"); if (old) old.remove(); const st = document.createElement("style"); st.id = "dv-css"; st.textContent = CSS; document.head.appendChild(st); }

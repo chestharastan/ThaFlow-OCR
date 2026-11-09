@@ -309,7 +309,7 @@
   };
 
   /* ------------------------------------------------------------------ structure model */
-  const BULLET_RE = /^\s*([•\-–—○o◦▪■➢►✓*·]|\d{1,3}[.)]|[០-៩]{1,3}[.)]|[a-zA-Z][.)]|[ក-អ][.)]|[ivx]{1,4}[.)])\s/, TERMINAL_RE = /[។.:៖!?]\s*$/;
+  const BULLET_RE = /^\s*([•\-–—○o◦▪■➢►✓*·>»›➤❖✧√✔+□❑☐]|\d{1,3}[.)]|[០-៩]{1,3}[.)]|[a-zA-Z][.)]|[ក-អ][.)]|[ivx]{1,4}[.)])\s/, TERMINAL_RE = /[។.:៖!?]\s*$/;
   const KHMER_RE = /[ក-៿]/g, DIGIT_RE = /[0-9០-៩]/g, LATIN_RE = /[A-Za-z]/g, UPPER_RE = /[A-Z]/g;
   const hashChar = ch => Number((BigInt(ch.codePointAt(0)) * 2654435761n) % 2047n) + 1;
   function charIds(text) { const t = text.trim(), head = [...t].slice(0, 3), tail = t.length >= 3 ? [...t].slice(-3) : [...t]; const ids = [...head.map(hashChar), ...Array(3 - head.length).fill(0), ...tail.map(hashChar), ...Array(3 - tail.length).fill(0)]; return ids.slice(0, 6); }

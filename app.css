@@ -139,7 +139,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .review.one.text,.review.one.original{grid-template-columns:minmax(0,1fr) 300px}
 .review>div{border-right:1px solid var(--line);min-width:0}
 .review>div:last-child{border-right:0}
-.thumbs{padding:14px 10px;display:flex;flex-direction:column;gap:12px;align-items:center;background:var(--soft)}
+.thumbs{padding:14px 10px;display:flex;flex-direction:column;gap:12px;align-items:center;background:var(--soft);max-height:82vh;overflow-y:auto;position:sticky;top:0;align-self:start;scrollbar-width:thin}
 .thumbs .th{width:70px;border:2px solid transparent;border-radius:6px;padding:2px;cursor:pointer;text-align:center;font-size:12px;color:var(--mut)}
 .thumbs .th img{width:100%;display:block;border:1px solid var(--line);border-radius:4px;background:#fff}
 .thumbs .th.cur{border-color:var(--ink)}

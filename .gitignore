@@ -14,3 +14,4 @@ samples/
 !logo*.png
 # onnxruntime-web / docx come from jsDelivr; a local copy for offline work lives here
 vendor/
+_test/

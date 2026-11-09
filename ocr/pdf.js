@@ -6,7 +6,7 @@
   "use strict";
   const T = window.ThaOCR = window.ThaOCR || {};
   T.config.pdfBase = T.config.pdfBase || "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.5.438/";
-  const KHMER = /[ក-៿]/, GARBAGE = /[-�\u0000-\u0008]/g;
+  const KHMER = /[ក-៿]/, GARBAGE = /[-�\u0000-\u0008\u25CC]/g;
   let lib = null;
 
   async function pdfjs() {
@@ -139,8 +139,12 @@
   }
   /* Signs of a broken Khmer text layer: NULs (glyphs without a Unicode mapping) and dependent vowel signs that
      start a word (visual-order output). Ratio over the Khmer characters. */
-  function brokenScore(text) { const kh = (text.match(/[ក-៿]/g) || []).length; if (!kh) return 0;
-    const nul = (text.match(/\u0000/g) || []).length, orphan = (text.match(/(^|[\s\u0000])[ា-៓]/gm) || []).length; return (nul + orphan) / kh; }
+  function brokenScore(text) { const kh = (text.match(/[\u1780-\u17FF]/g) || []).length; if (!kh) return 0;
+    const nul = (text.match(/\u0000/g) || []).length, orphan = (text.match(/(^|[\s\u0000])[\u17B6-\u17D3]/gm) || []).length;
+    const circles = (text.match(/\u25CC/g) || []).length;                                   // dotted circle = a sign that lost its base letter
+    const latin1 = (text.match(/[\u1780-\u17FF][\u00C0-\u024F]|[\u00C0-\u024F][\u1780-\u17FF]/g) || []).length; // legacy-font leftovers ("Ä") inside Khmer words
+    const coeng = (text.match(/\u17D2/g) || []).length, noCoeng = kh >= 300 && coeng === 0 ? 0.05 : 0;      // real Khmer text always has subscripts
+    return (nul + orphan + circles + latin1) / kh + noCoeng; }
 
   /** Read the text layer of a page and group it into lines in canvas pixels. -> {lines, chars, usable} */
   async function textLayer(page, vp, doc) {
@@ -175,7 +179,7 @@
       const kh = KHMER.test(text), y0 = L.base - L.fs * (kh ? 1.05 : 0.9), y1 = L.base + L.fs * (kh ? 0.45 : 0.3);
       const quad = [[L.x0, y0], [L.x1, y0], [L.x1, y1], [L.x0, y1]];
       const fontName = Object.entries(L.fonts).sort((p, q) => q[1] - p[1])[0]?.[0], st = fontName && tc.styles ? tc.styles[fontName] : null;
-      out.push({quad, bbox: [L.x0, y0, L.x1, y1], score: 1, text, confidence: 1, pdf_font: st ? st.fontFamily : null}); }
+      out.push({quad, bbox: [L.x0, y0, L.x1, y1], score: 1, text, confidence: 1, pdf_font: st ? st.fontFamily : null, font_px: +L.fs.toFixed(1)}); }
     const all = out.map(l => l.text).join("\n"), broken = brokenScore(all);
     const usable = chars >= 40 && out.length >= 2 && bad / Math.max(1, chars) < 0.2 && broken < 0.03;
     return {lines: out, chars, usable, broken: +broken.toFixed(3), fixed: tc.fixed, reason: !usable ? (chars < 40 ? "no text layer" : broken >= 0.03 ? "text layer is damaged" : "unreadable text layer") : ""};
@@ -198,7 +202,7 @@
       const t0 = performance.now(), img = await render(page, opts.textLong || 1600), tl = await textLayer(page, img.viewport, doc);
       step("structure", "paragraphs and reading order");
       const res = await T.fromLines(img, tl.lines, {source: "pdf-text", device: "browser:pdf-text", models: {}, timings: {pdf_text_ms: +(performance.now() - t0).toFixed(1)}});
-      res.pdf_page = n; return res;
+      res.pdf_page = n; res.pdf_text = {broken: tl.broken, fixed: tl.fixed, chars: tl.chars}; return res;
     }
     if (!T.loaded()) throw new Error("models not loaded");
     const img = await render(page, opts.ocrLong || 2200);
