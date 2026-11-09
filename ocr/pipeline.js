@@ -127,6 +127,8 @@
     }
   }
   const DOTS_RE = /[.·•]/g;
+  /** "title 1<tab>23": the first leader dots read as a stray 1 / l / I / . at the end of the text part. */
+  const cleanLeaderText = t => t.includes("\t") ? t.replace(/[\s.·•]*(?:\s[1lI|!7]{1,2})?[\s.·•]*\t/, "\t") : t;
   /** Dot leaders inside a line crop ({gray, w, h}): a run >= 2.5 h wide whose ink is only short blobs (dots) with no tall
       glyph. Returns the sub-crops to recognise instead (text left / right of the leader) or null. */
   function splitLeader(crop) {
@@ -167,7 +169,7 @@
         for (let k = 1; k < texts.length - 1; k++) if (texts[k] === "") texts[k] = "\t"; // an unreadable middle segment is a leader
         if (texts.some(t => t.includes("\t"))) for (let k = 1; k < texts.length - 1; k++) { const sg = segs[k], t = texts[k].replace(/\t/g, ""); if (t.length <= 2 && !/[\u1780-\u17FF]/.test(t)) texts[k] = texts[k].includes("\t") ? "\t" : ""; void sg; } // sliver of a glyph read as "1" next to a leader
         const head = segs[0]; let geo = head; for (const l of segs.slice(1)) geo = unionLine(geo, l);
-        head.quad = geo.quad; head.bbox = geo.bbox; head.text = texts.filter(Boolean).join(" ").replace(/\s*\t\s*/g, "\t").replace(/\t+/g, "\t").replace(/^\t|\t$/g, m => m); head.tab = head.text.includes("\t") || segs.some(l => l.tab); head.confidence = Math.min(...segs.map(l => l.confidence ?? 1)); head.char_pos = null; head.merged = segs.length;
+        head.quad = geo.quad; head.bbox = geo.bbox; head.text = texts.filter(Boolean).join(" ").replace(/\s*\t\s*/g, "\t").replace(/\t+/g, "\t").replace(/^\t|\t$/g, m => m); head.text = cleanLeaderText(head.text); head.tab = head.text.includes("\t") || segs.some(l => l.tab); head.confidence = Math.min(...segs.map(l => l.confidence ?? 1)); head.char_pos = null; head.merged = segs.length;
         for (const l of segs.slice(1)) drop.add(l); }
       b.lines = b.lines.filter(l => !drop.has(l)); }
   }
@@ -370,7 +372,7 @@
       const e = {leader: true, left: -1, right: -1}; if (sp.left) { e.left = crops.length; crops.push(sp.left); } if (sp.right) { e.right = crops.length; crops.push(sp.right); } plan.push(e); }
     const res = await T.recognize(crops, 16, (d, n) => step("rec", "reading the text", {done: d, total: n}));
     todo.forEach(([b, ln], i) => { const pl = plan[i];
-      if (pl.leader) { const L = pl.left >= 0 ? res[pl.left] : null, R = pl.right >= 0 ? res[pl.right] : null; ln.text = ((L ? L.text.trim() : "") + "\t" + (R ? R.text.trim() : "")).replace(/^\t$/, ""); ln.tab = !!ln.text; ln.confidence = Math.min(L ? L.confidence : 1, R ? R.confidence : 1); ln.char_pos = null; return; }
+      if (pl.leader) { const L = pl.left >= 0 ? res[pl.left] : null, R = pl.right >= 0 ? res[pl.right] : null; ln.text = cleanLeaderText(((L ? L.text.trim() : "") + "\t" + (R ? R.text.trim() : ""))).replace(/^\t$/, ""); ln.tab = !!ln.text; ln.confidence = Math.min(L ? L.confidence : 1, R ? R.confidence : 1); ln.char_pos = null; return; }
       const r = res[pl.idx]; let text = r.text.trim(); ln.confidence = r.confidence; ln.char_pos = r.pos; if (isBulletGlyph(text, ln)) { ln.text = bulletGlyph(text); ln.isBullet = true; } else { ln.text = text; leaderTab(ln); } void b; });
     joinRowSegments(blocks); for (const b of blocks) for (const ln of b.lines) if (ln.merged && !ln.tab) leaderTab(ln);
     timings.rec_ms = ms(t); timings.lines_recognized = todo.length;
