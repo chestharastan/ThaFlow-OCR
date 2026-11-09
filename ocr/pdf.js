@@ -139,6 +139,16 @@
   }
   /* Signs of a broken Khmer text layer: NULs (glyphs without a Unicode mapping) and dependent vowel signs that
      start a word (visual-order output). Ratio over the Khmer characters. */
+  /* Legacy (pre-Unicode) Khmer fonts - Limon, ABC, Khek, Baidok ... - store Khmer as Latin code points that only look
+     like Khmer when drawn with that font. Spotted by the font name, or by the letter pattern: capitals inside words
+     and accented Latin-1 letters (µ á ú ñ Þ É) at a rate English never has. */
+  const LEGACY_FONT_RE = /limon|abc[-_ ]?(text|zero|\d)|khek|baidok|cambo|phnom|kh\s?[srb]\s?\d|limonr|limons/i;
+  function legacyLatin(text, fontName) {
+    if (fontName && LEGACY_FONT_RE.test(fontName)) return true;
+    const t = text.replace(/[^A-Za-z\u00C0-\u024F]/g, ""); if (t.length < 8 || KHMER.test(text)) return false;
+    const inner = (text.match(/[a-z][A-Z]/g) || []).length, odd = (t.match(/[\u00C0-\u024F]/g) || []).length;
+    return (inner + odd) / t.length > 0.07;
+  }
   function brokenScore(text) { const kh = (text.match(/[\u1780-\u17FF]/g) || []).length; if (!kh) return 0;
     const nul = (text.match(/\u0000/g) || []).length, orphan = (text.match(/(^|[\s\u0000])[\u17B6-\u17D3]/gm) || []).length;
     const circles = (text.match(/\u25CC/g) || []).length;                                   // dotted circle = a sign that lost its base letter
@@ -179,10 +189,13 @@
       const kh = KHMER.test(text), y0 = L.base - L.fs * (kh ? 1.05 : 0.9), y1 = L.base + L.fs * (kh ? 0.45 : 0.3);
       const quad = [[L.x0, y0], [L.x1, y0], [L.x1, y1], [L.x0, y1]];
       const fontName = Object.entries(L.fonts).sort((p, q) => q[1] - p[1])[0]?.[0], st = fontName && tc.styles ? tc.styles[fontName] : null;
-      out.push({quad, bbox: [L.x0, y0, L.x1, y1], score: 1, text, confidence: 1, pdf_font: st ? st.fontFamily : null, font_px: +L.fs.toFixed(1)}); }
+      const legacy = legacyLatin(text, st ? st.fontFamily : fontName);
+      out.push({quad, bbox: [L.x0, y0, L.x1, y1], score: 1, text, confidence: 1, pdf_font: st ? st.fontFamily : null, font_px: +L.fs.toFixed(1), legacy}); }
     const all = out.map(l => l.text).join("\n"), broken = brokenScore(all);
-    const usable = chars >= 40 && out.length >= 2 && bad / Math.max(1, chars) < 0.2 && broken < 0.03;
-    return {lines: out, chars, usable, broken: +broken.toFixed(3), fixed: tc.fixed, reason: !usable ? (chars < 40 ? "no text layer" : broken >= 0.03 ? "text layer is damaged" : "unreadable text layer") : ""};
+    const legacyChars = out.filter(l => l.legacy).reduce((a, l) => a + l.text.length, 0), legacyFrac = legacyChars / Math.max(1, all.length);
+    const usable = chars >= 40 && out.length >= 2 && bad / Math.max(1, chars) < 0.2 && broken < 0.03 && legacyFrac < 0.2;
+    const reason = usable ? "" : chars < 40 ? "no text layer" : legacyFrac >= 0.2 ? "text layer uses a legacy Khmer font" : broken >= 0.03 ? "text layer is damaged" : "unreadable text layer";
+    return {lines: out, chars, usable, broken: +broken.toFixed(3), legacy: +legacyFrac.toFixed(3), fixed: tc.fixed, reason};
   }
 
   /** Thumbnail of page 1 as a data URL, plus the page count. */
@@ -206,7 +219,7 @@
     }
     if (!T.loaded()) throw new Error("models not loaded");
     const img = await render(page, opts.ocrLong || 2200);
-    const res = await T.process(img.canvas, opts.onStep); res.source = "ocr"; res.pdf_page = n; return res;
+    const res = await T.process(img.canvas, opts.onStep); res.source = "ocr"; res.pdf_page = n; res.pdf_text = {reason: opts.reason || probe.reason || "no text layer"}; return res;
   }
 
   T.pdf = {isPdf, open, close, render, textLayer, textItems, pageMarks, peek, processPage, lib: pdfjs};

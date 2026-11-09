@@ -153,6 +153,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .panehead .seg button{padding:4px 10px;font-size:12.5px}
 .panebody{padding:16px;overflow:auto;max-height:82vh;background:var(--soft)}
 .panebody.white{background:#fff}
+.pagewrap{margin-bottom:22px}.pagewrap:last-child{margin-bottom:0}
+.pglabel{font:11px Inter,system-ui;color:var(--mut);text-align:center;margin:0 0 8px;letter-spacing:.08em;text-transform:uppercase}
 .view{position:relative;margin:0 auto;box-shadow:var(--shadow-2);background:#fff;border-radius:3px;overflow:hidden;cursor:zoom-in}
 .view:hover{outline:2px solid var(--ink);outline-offset:2px}
 .view canvas,.view img{display:block;width:100%;height:auto}

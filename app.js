@@ -187,22 +187,36 @@ function setSideCollapsed(c) {  // ChatGPT-style: full sidebar <-> icon rail, re
 function sidebar() {
   const r = location.hash.split("/")[1] || "scan";
   document.querySelectorAll(".nav").forEach(a => a.classList.toggle("cur", a.dataset.r === r || (r === "process" && a.dataset.r === "scan") || (r === "review" && a.dataset.r === "documents")));
-  $("#n_docs").textContent = store.docs.length || "";
+  $("#n_docs").textContent = groups(store.docs).length || "";
   const running = JOB && JOB.status === "running";
   $("#running").classList.toggle("hide", !running || r === "process");
   if (running) { $("#running_pct").textContent = Math.round(JOB.done / JOB.total * 100) + "%"; }
   $("#dev").textContent = T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") + " · models ready" : DEVICE ? `${DEVICE.threads} threads${DEVICE.webgpu ? " · WebGPU" : ""}` : "checking device…";
 }
 const docTitle = d => d.filename.replace(/\.[^.]+$/, "");
+/* A multi-page PDF is one document made of several page records (one per page). Pages share a group key. */
+const PAGE_RE = /^(.*) · page (\d+)$/;
+function groupKey(d) { if (d.group) return d.group; const m = PAGE_RE.exec(d.filename); return m && d.job ? d.job + ":" + m[1] : d.page_id; }
+function groupName(d) { if (d.group_name) return d.group_name; const m = PAGE_RE.exec(d.filename); return m ? m[1] : d.filename; }
+function pageNo(d) { if (d.page_no) return d.page_no; const m = PAGE_RE.exec(d.filename); return m ? +m[2] : 1; }
+function groupDocs(key) { return store.docs.filter(x => groupKey(x) === key).sort((a, b) => pageNo(a) - pageNo(b) || a.created - b.created); }
+function groups(docs) { const seen = new Map(); for (const d of docs) { const k = groupKey(d); if (!seen.has(k)) seen.set(k, []); seen.get(k).push(d); } return [...seen.values()].map(g => g.sort((a, b) => pageNo(a) - pageNo(b) || a.created - b.created)); }
+const groupTitle = g => groupName(g[0]).replace(/\.[^.]+$/, "");
+function groupStatus(g) { if (g.some(d => d.status === "failed")) return ["Failed", "bad"]; if (g.some(d => d.status === "processing")) return ["Processing", "ink"]; return g.some(d => (d.low - Object.keys(d.reviewed || {}).length) > 0) ? ["Needs review", "warn"] : ["Completed", "ok"]; }
+function groupConf(g) { const n = g.reduce((a, d) => a + d.lines, 0); return n ? g.reduce((a, d) => a + d.avg_conf * d.lines, 0) / n : 0; }
+const groupText = g => g.length === 1 ? pageText(g[0].result) : g.map((d, i) => `----- page ${i + 1} -----\n\n` + pageText(d.result)).join("\n\n");
+async function deleteGroup(g) { for (const d of g) await store.del(d.page_id); }
+async function rerunGroup(g) { for (const d of g) await rerun(d, g.length > 1 ? `page ${pageNo(d)} of ${g.length}` : ""); }
 const outputSel = (id, cur) => `<select id="${id}">${[["docx", "Word (.docx)"], ["txt", "Plain text"], ["json", "JSON"]].map(([k, t]) => `<option value="${k}" ${cur === k ? "selected" : ""}>${t}</option>`).join("")}</select>`;
 const TIER_LABEL = {high: "Best quality", mid: "Balanced", low: "Light"};
 
 /* ---------------------------------------------------------------- documents table (shared) */
 function docsTable(docs) {
-  if (!docs.length) return `<div class="empty">No documents yet. Scan a page to start.</div>`;
+  const gs = groups(docs);
+  if (!gs.length) return `<div class="empty">No documents yet. Scan a page to start.</div>`;
   return `<table class="tbl"><thead><tr><th>Document</th><th>Status</th><th>Confidence</th><th>Scanned</th><th></th></tr></thead><tbody>
-  ${docs.map(d => { const [st, cls] = docStatus(d); const pc = Math.round(d.avg_conf * 1000) / 10; return `<tr class="click" data-id="${d.page_id}">
-   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt=""></div><div><b>${esc(d.filename)}</b><span>${d.lines} lines · ${d.width}×${d.height}${d.size ? " · " + fmtSize(d.size) : ""}${d.result && d.result.source === "pdf-text" ? " · PDF text" : ""}</span></div></div></td>
+  ${gs.map(g => { const d = g[0], [st, cls] = groupStatus(g), pc = Math.round(groupConf(g) * 1000) / 10, lines = g.reduce((a, x) => a + x.lines, 0), size = g.reduce((a, x) => a + (x.size || 0), 0), pdfText = g.filter(x => x.result && x.result.source === "pdf-text").length; return `<tr class="click" data-id="${d.page_id}" data-g="${esc(groupKey(d))}">
+   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt=""></div><div><b>${esc(groupName(d))}</b><span>${g.length > 1 ? `${g.length} pages · ` : ""}${lines} lines · ${g.length > 1 ? "" : d.width + "×" + d.height}${size ? (g.length > 1 ? "" : " · ") + fmtSize(size) : ""}${pdfText ? ` · ${g.length > 1 && pdfText < g.length ? `${pdfText} page${pdfText === 1 ? "" : "s"} ` : ""}PDF text` : ""}</span></div></div></td>
    <td><span class="badge ${cls}"><span class="dot"></span>${st}</span></td>
    <td><span class="acc"><span class="bar"><i class="${pc >= 95 ? "ok" : "warn"}" style="width:${pc}%"></i></span><span class="mono">${pc.toFixed(1)}%</span></span></td>
    <td class="mut">${when(d.created)}</td>
@@ -212,9 +226,9 @@ function wireDocsTable() {
   view.querySelectorAll("tr.click").forEach(tr => tr.onclick = e => { if (e.target.closest(".more") || e.target.closest(".menu")) return; location.hash = "#/review/" + tr.dataset.id; });
   view.querySelectorAll(".more").forEach(btn => btn.onclick = e => { e.stopPropagation(); closeMenus(); const m = document.createElement("div"); m.className = "menu";
     m.innerHTML = `<button data-a="open">${icon("external")}Open</button><button data-a="docx">${icon("file")}Download Word</button><button data-a="txt">${icon("list")}Download text</button><hr><button data-a="rerun">${icon("refresh")}Run OCR again</button><button data-a="del" class="danger">${icon("trash")}Delete</button>`;
-    btn.parentElement.appendChild(m); m.onclick = async ev => { const a = ev.target.closest("button")?.dataset.a, d = store.get(btn.dataset.id); closeMenus(); if (!d) return;
-      if (a === "open") location.hash = "#/review/" + d.page_id; if (a === "rerun") await rerun(d); if (a === "docx") exportDocx([d]); if (a === "txt") download(docTitle(d) + ".txt", pageText(d.result), "text/plain;charset=utf-8");
-      if (a === "del") { await store.del(d.page_id); route(); toast("deleted"); } }; });
+    btn.parentElement.appendChild(m); m.onclick = async ev => { const a = ev.target.closest("button")?.dataset.a, d = store.get(btn.dataset.id); closeMenus(); if (!d) return; const g = groupDocs(groupKey(d));
+      if (a === "open") location.hash = "#/review/" + d.page_id; if (a === "rerun") await rerunGroup(g); if (a === "docx") exportDocx(g); if (a === "txt") download(groupTitle(g) + ".txt", groupText(g), "text/plain;charset=utf-8");
+      if (a === "del") { if (g.length > 1 && !confirm(`Delete this document and its ${g.length} pages?`)) return; await deleteGroup(g); route(); toast("deleted"); } }; });
 }
 function closeMenus() { document.querySelectorAll(".menu").forEach(m => m.remove()); }
 document.addEventListener("click", e => { if (!e.target.closest(".menu") && !e.target.closest(".more") && !e.target.closest("#r_export")) closeMenus(); });
@@ -284,7 +298,7 @@ function startJob() {
     const docs = new Map();
     for (let i = 0; i < JOB.files.length; i++) { const f = JOB.files[i]; if (!f.pdf) continue;
       try { JOB.load = {msg: `Opening ${f.name}…`, frac: 0}; renderIfProcess(); const doc = await T.pdf.open(f.src.file); docs.set(f.src, doc); const n = doc.numPages, base = f.name.replace(/\.pdf$/i, "");
-        const pages = Array.from({length: n}, (_, k) => ({name: n > 1 ? `${base} · page ${k + 1}` : f.name, url: k === 0 ? f.url : "", size: k === 0 ? f.size : 0, status: "queued", page_id: null, error: null, src: f.src, pdf: {page: k + 1, pages: n}}));
+        const pages = Array.from({length: n}, (_, k) => ({name: n > 1 ? `${base} · page ${k + 1}` : f.name, url: k === 0 ? f.url : "", size: k === 0 ? f.size : 0, status: "queued", page_id: null, error: null, src: f.src, pdf: {page: k + 1, pages: n}, grp: {key: JOB.id + ":" + i, name: f.name}}));
         JOB.files.splice(i, 1, ...pages); i += n - 1; }
       catch (e) { console.warn(e); f.status = "failed"; f.error = "Could not open this PDF: " + (e.message || e); } }
     JOB.total = JOB.files.length; JOB.name = JOB.files.length > 1 ? `${JOB.files.length} pages` : JOB.files[0].name;
@@ -302,10 +316,10 @@ function startJob() {
         if (f.pdf) { const doc = docs.get(f.src); const page = await doc.getPage(f.pdf.page);
           const probe = await T.pdf.textLayer(page, page.getViewport({scale: 1}), doc); if (!probe.usable) JOB.step = {stage: "pdf", msg: probe.reason + " · using OCR"};
           if (!probe.usable) await needModels(); else await needLight();
-          res = await T.pdf.processPage(doc, f.pdf.page, {forceOcr: !probe.usable, onStep: s => { JOB.step = s; renderIfProcess(); }}); }
+          res = await T.pdf.processPage(doc, f.pdf.page, {forceOcr: !probe.usable, reason: probe.reason, onStep: s => { JOB.step = s; renderIfProcess(); }}); }
         else { await needModels(); res = await T.process(f.src.file, s => { JOB.step = s; renderIfProcess(); }); }
         res.client_ms = performance.now() - t0;
-        const doc = summarize(res, f.name, JOB.id, f.size); await store.put(doc, res.image_blob); f.status = "done"; f.page_id = res.page_id; f.url = doc.image_url; JOB.results.push(doc.result); JOB.lastImage = doc.image_url;
+        const doc = summarize(res, f.name, JOB.id, f.size); if (f.grp) { doc.group = f.grp.key; doc.group_name = f.grp.name; doc.page_no = f.pdf.page; doc.page_count = f.pdf.pages; } await store.put(doc, res.image_blob); f.status = "done"; f.page_id = res.page_id; f.url = doc.image_url; JOB.results.push(doc.result); JOB.lastImage = doc.image_url;
         if (res.source !== "pdf-text") T.learn(res.timings.total_ms, res.timings.lines_recognized); }
       catch (e) { console.error(e); f.status = "failed"; f.error = String(e.message || e); }
       JOB.done = i + 1; JOB.step = null; renderIfProcess(); sidebar();
@@ -350,7 +364,7 @@ function renderProcess() {
 
 /* ---------------------------------------------------------------- review & export */
 let REVIEW = {mode: "side", zoom: 1, boxes: true, labels: false, cur: null, pane: "document", side: localStorage.getItem("thaocr.reviewSide") !== "0"};
-async function rerun(d) { toast("running OCR again…"); try { await ensureModels(); const blob = await T.db.imageBlob(d.page_id); if (!blob) throw new Error("page image missing"); const res = await T.process(blob); res.page_id = d.page_id; const nd = summarize(res, d.filename, d.job, d.size); nd.created = d.created; await store.put(nd, res.image_blob); toast("done"); route(); } catch (e) { toast("failed: " + e.message); } }
+async function rerun(d, label) { toast("running OCR again" + (label ? " · " + label : "") + "…"); try { await ensureModels(); const blob = await T.db.imageBlob(d.page_id); if (!blob) throw new Error("page image missing"); const res = await T.process(blob); res.page_id = d.page_id; const nd = summarize(res, d.filename, d.job, d.size); nd.created = d.created; for (const k of ["group", "group_name", "page_no", "page_count"]) if (d[k] != null) nd[k] = d[k]; await store.put(nd, res.image_blob); toast("done"); route(); } catch (e) { toast("failed: " + e.message); } }
 /* ---------------------------------------------------------------- full-size viewer */
 function openLightbox(d, img, onClose) {
   if ($("#lightbox")) return;
@@ -397,71 +411,88 @@ function openLightbox(d, img, onClose) {
 function renderReview(id) {
   const d = store.get(id); REVIEW.cur = id; if (REVIEW.key) { document.removeEventListener("keydown", REVIEW.key); REVIEW.key = null; }
   if (!d) { view.innerHTML = `<div class="head"><div class="grow"><h1>Document</h1></div></div><div class="card empty">This document is no longer in this browser. <a href="#/documents">Back to documents</a></div>`; return; }
-  const page = d.result, siblings = d.job ? store.docs.filter(x => x.job === d.job).sort((a, b) => a.created - b.created) : [d];
-  const lines = page.blocks.flatMap(b => (b.lines || []).filter(l => l.text).map(l => ({b, l}))), lows = lines.filter(x => x.l.confidence < LOW && !(d.reviewed || {})[lineKey(x.b, x.l)]).sort((a, b) => a.l.confidence - b.l.confidence);
-  const [st, cls] = docStatus(d), kinds = {};
-  for (const b of page.blocks) kinds[b.cls] = (kinds[b.cls] || 0) + 1;
+  // one document = all pages of the same file (a PDF), stacked in reading order; a photo is a one-page document
+  const pages = groupDocs(groupKey(d)), multi = pages.length > 1, byId = Object.fromEntries(pages.map(s => [s.page_id, s]));
+  const linesOf = s => s.result.blocks.flatMap(b => (b.lines || []).filter(l => l.text).map(l => ({b, l, d: s})));
+  const lows = pages.flatMap(s => linesOf(s).filter(x => x.l.confidence < LOW && !(s.reviewed || {})[lineKey(x.b, x.l)])).sort((a, b) => a.l.confidence - b.l.confidence);
+  const [st, cls] = groupStatus(pages), kinds = {};
+  for (const s of pages) for (const b of s.result.blocks) kinds[b.cls] = (kinds[b.cls] || 0) + 1;
   const extras = Object.entries(kinds).filter(([k]) => ["table", "stamp", "logo", "figure", "handwriting"].includes(k)).map(([k, v]) => `${v} ${(ROLE[k] || k).toLowerCase()}${v > 1 ? "s" : ""}`).join(" · ");
-  const hasDoc = !!(page.document && window.DocView);
+  const hasDoc = !!(window.DocView && pages.some(s => s.result.document)), regions = pages.reduce((a, s) => a + s.result.blocks.length, 0), nLines = pages.reduce((a, s) => a + s.lines, 0), nChars = pages.reduce((a, s) => a + s.chars, 0), totalMs = pages.reduce((a, s) => a + (s.timings.total_ms || 0), 0);
+  const fonts = [...new Set(pages.flatMap(s => s.result.blocks.map(b => b.font && b.font.family)).filter(Boolean))].slice(0, 3), pdfTextPages = pages.filter(s => s.result.source === "pdf-text").length, conf = groupConf(pages);
+  const pageLabel = (s, i) => multi ? `<div class="pglabel">Page ${i + 1}${s.result.source === "pdf-text" ? " · PDF text" : ""}</div>` : "";
+  const textOut = s => [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : b.lines.filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? esc(l.bullet) + " " : "") + ((l.spans && l.spans.length) ? l.spans.map(sp => sp.bold ? `<b>${esc(sp.text)}</b>` : esc(sp.text)).join(" ") : (l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)))).join("\n")}</div>`).join("");
+  const source = pdfTextPages === pages.length ? "PDF text layer · no OCR needed" : pdfTextPages ? `${pdfTextPages} of ${pages.length} pages from the PDF text, the rest by OCR` : (d.result.pdf_text && d.result.pdf_text.reason ? `OCR · PDF text not used (${esc(d.result.pdf_text.reason)})` : "");
+  const doubtful = pages.filter(s => s.result.source === "pdf-text" && s.result.pdf_text && s.result.pdf_text.broken > 0.01);
   view.innerHTML = `
-  <div class="head" style="align-items:center"><div class="grow"><h1 style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">${esc(docTitle(d))} <span class="badge ${cls}"><span class="dot"></span>${st}</span></h1>
-    <p>${siblings.length > 1 ? siblings.length + " pages · " : ""}${(d.avg_conf * 100).toFixed(1)}% confidence · ${lows.length ? `<span style="color:var(--warn)">${lows.length} line${lows.length === 1 ? "" : "s"} to check</span>` : "nothing to check"} · <a href="#/documents">all documents</a></p></div>
+  <div class="head" style="align-items:center"><div class="grow"><h1 style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">${esc(groupTitle(pages))} <span class="badge ${cls}"><span class="dot"></span>${st}</span></h1>
+    <p>${multi ? pages.length + " pages · " : ""}${(conf * 100).toFixed(1)}% confidence · ${lows.length ? `<span style="color:var(--warn)">${lows.length} line${lows.length === 1 ? "" : "s"} to check</span>` : "nothing to check"} · <a href="#/documents">all documents</a></p></div>
     <div class="seg" id="r_mode">${[["side", "Side by side"], ["text", "Text"], ["original", "Original"]].map(([k, t]) => `<button class="${REVIEW.mode === k ? "on" : ""}" data-m="${k}">${t}</button>`).join("")}</div>
     ${REVIEW.side ? "" : `<button class="btn" id="r_side_open" title="Show the check panel">${icon("panel-right")}Check lines${lows.length ? ` <span class="badge warn">${lows.length}</span>` : ""}</button>`}
     <button class="btn" id="r_copy">${icon("copy")}Copy text</button>
     <div class="rel"><button class="btn p" id="r_export">${icon("download")}Export ${icon("chevron-down", "s")}</button></div></div>
-  <div class="card review ${REVIEW.mode === "side" ? "" : REVIEW.mode} ${siblings.length > 1 ? "" : "one"} ${REVIEW.side ? "" : "noside"}">
-   ${siblings.length > 1 ? `<div class="thumbs">${siblings.map((s, i) => `<div class="th ${s.page_id === id ? "cur" : ""}" data-id="${s.page_id}"><img src="${s.image_url}" alt="">${i + 1}</div>`).join("")}</div>` : ""}
+  <div class="card review ${REVIEW.mode === "side" ? "" : REVIEW.mode} ${multi ? "" : "one"} ${REVIEW.side ? "" : "noside"}">
+   ${multi ? `<div class="thumbs">${pages.map((s, i) => `<div class="th ${s.page_id === id ? "cur" : ""}" data-id="${s.page_id}" title="Page ${i + 1}"><img src="${s.image_url}" alt="">${i + 1}</div>`).join("")}</div>` : ""}
    ${REVIEW.mode !== "text" ? `<div><div class="panehead"><span>Original</span><div class="grow"></div><button class="tool" id="r_zoomout" title="Zoom out">${icon("zoom-out", "s")}</button><span class="mono">${Math.round(REVIEW.zoom * 100)}%</span><button class="tool" id="r_zoomin" title="Zoom in">${icon("zoom-in", "s")}</button><button class="tool" id="r_full" title="Open full size (F)">${icon("expand", "s")}</button><span class="opts"><label class="small"><input type="checkbox" id="r_boxes" ${REVIEW.boxes ? "checked" : ""}> boxes</label><label class="small"><input type="checkbox" id="r_labels" ${REVIEW.labels ? "checked" : ""}> labels</label></span></div>
-     <div class="panebody"><div class="view" id="r_view" title="Click to open full size"><canvas id="r_cv"></canvas></div></div></div>` : ""}
-   ${REVIEW.mode === "side" ? `<div><div class="panehead"><div class="seg" id="r_pane">${hasDoc ? `<button class="${REVIEW.pane === "document" ? "on" : ""}" data-p="document">Document</button>` : ""}<button class="${REVIEW.pane === "overlay" || !hasDoc ? "on" : ""}" data-p="overlay">Overlay</button></div><div class="grow"></div><span class="mut">Click text to edit · <span id="r_saved">Saved</span></span></div><div class="panebody" id="r_docwrap"></div></div>` : ""}
-   ${REVIEW.mode === "text" ? `<div><div class="panehead"><span>Text in reading order</span></div><div class="panebody white"><div class="textout" id="r_text">${[...page.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.lines.filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? esc(l.bullet) + " " : "") + ((l.spans && l.spans.length) ? l.spans.map(s => s.bold ? `<b>${esc(s.text)}</b>` : esc(s.text)).join(" ") : (l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)))).join("\n")}</div>`).join("")}</div></div></div>` : ""}
+     <div class="panebody" id="r_orig">${pages.map((s, i) => `<div class="pagewrap" data-pid="${s.page_id}">${pageLabel(s, i)}<div class="view" data-pid="${s.page_id}" title="Click to open full size"><canvas data-pid="${s.page_id}"></canvas></div></div>`).join("")}</div></div>` : ""}
+   ${REVIEW.mode === "side" ? `<div><div class="panehead"><div class="seg" id="r_pane">${hasDoc ? `<button class="${REVIEW.pane === "document" ? "on" : ""}" data-p="document">Document</button>` : ""}<button class="${REVIEW.pane === "overlay" || !hasDoc ? "on" : ""}" data-p="overlay">Overlay</button></div><div class="grow"></div><span class="mut">Click text to edit · <span id="r_saved">Saved</span></span></div><div class="panebody" id="r_docwrap">${pages.map((s, i) => `<div class="pagewrap" data-pid="${s.page_id}">${pageLabel(s, i)}<div class="pgbody" data-pid="${s.page_id}"></div></div>`).join("")}</div></div>` : ""}
+   ${REVIEW.mode === "text" ? `<div><div class="panehead"><span>Text in reading order</span></div><div class="panebody white"><div class="textout" id="r_text">${pages.map((s, i) => (multi ? `<div class="lbl" style="margin:${i ? 28 : 0}px 0 10px;font:12px Inter,system-ui;color:var(--mut-2);letter-spacing:.06em;text-transform:uppercase">Page ${i + 1}</div>` : "") + textOut(s)).join("")}</div></div></div>` : ""}
    ${REVIEW.side ? `<div><div class="panehead"><b style="color:var(--ink)">Check these lines</b><div class="grow"></div><span class="badge ${lows.length ? "warn" : "ok"}">${lows.length}</span><button class="tool" id="r_side_close" title="Close panel">${icon("x", "s")}</button></div>
     <div class="panebody white" style="max-height:none">
-     <div id="r_lows">${lows.length ? lows.slice(0, 12).map((x, i) => `<div class="rev ${i === 0 ? "cur" : ""}" data-key="${lineKey(x.b, x.l)}"><div class="w"><span>${esc(x.l.text.length > 28 ? x.l.text.slice(0, 28) + "…" : x.l.text)}</span><span class="pc">${Math.round(x.l.confidence * 100)}%</span></div><div class="snip"><canvas data-key="${lineKey(x.b, x.l)}"></canvas></div><input value="${esc(x.l.text)}"><div class="acts"><button class="btn p sm" data-a="accept">${icon("check", "s")}Accept</button><button class="btn sm" data-a="ignore">Ignore</button></div></div>`).join("") : `<div class="small mut" style="padding:8px 0 16px">Every line was read with good confidence.</div>`}</div>
+     <div id="r_lows">${lows.length ? lows.slice(0, 12).map((x, i) => `<div class="rev ${i === 0 ? "cur" : ""}" data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"><div class="w"><span>${esc(x.l.text.length > 28 ? x.l.text.slice(0, 28) + "…" : x.l.text)}</span><span class="pc">${multi ? `p.${pageNo(x.d)} · ` : ""}${Math.round(x.l.confidence * 100)}%</span></div><div class="snip"><canvas data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"></canvas></div><input value="${esc(x.l.text)}"><div class="acts"><button class="btn p sm" data-a="accept">${icon("check", "s")}Accept</button><button class="btn sm" data-a="ignore">Ignore</button></div></div>`).join("") : `<div class="small mut" style="padding:8px 0 16px">Every line was read with good confidence.</div>`}</div>
      ${lows.length ? `<button class="btn" style="width:100%;margin-bottom:18px" id="r_acceptall">${icon("check-circle")}Accept all</button>` : ""}
-     <h3 style="margin:4px 0 6px">About this page</h3>
-     <div class="kv"><span>Content</span><b>${page.blocks.length} regions${extras ? " · " + extras : ""}</b></div>
-     <div class="kv"><span>Text</span><b>${d.lines} lines · ${d.chars} characters</b></div>
-     <div class="kv"><span>Fonts</span><b>${esc([...new Set(page.blocks.map(b => b.font && b.font.family).filter(Boolean))].slice(0, 3).join(", ") || "–")}</b></div>
-     ${page.source === "pdf-text" ? `<div class="kv"><span>Source</span><b>PDF text layer · no OCR needed</b></div>${page.pdf_text && page.pdf_text.broken > 0.01 ? `<div class="note" style="margin:8px 0">${icon("alert")}<div>The PDF's own text looks partly damaged (${Math.round(page.pdf_text.broken * 100)}% odd characters). If the text is wrong, use <b>Run OCR instead</b>.</div></div>` : ""}` : ""}
-     <div class="kv"><span>Time</span><b>${fmtMs(d.timings.total_ms)} on this device</b></div>
-     <div style="display:flex;gap:8px;margin-top:16px"><button class="btn sm" id="r_rerun" title="${page.source === "pdf-text" ? "Ignore the PDF text and read the page image with OCR instead" : "Process this page again"}">${icon("refresh")}${page.source === "pdf-text" ? "Run OCR instead" : "Run OCR again"}</button><button class="btn sm danger" id="r_del">${icon("trash")}Delete</button></div></div></div>` : ""}</div>`;
+     <h3 style="margin:4px 0 6px">About this ${multi ? "document" : "page"}</h3>
+     ${multi ? `<div class="kv"><span>Pages</span><b>${pages.length}</b></div>` : ""}
+     <div class="kv"><span>Content</span><b>${regions} regions${extras ? " · " + extras : ""}</b></div>
+     <div class="kv"><span>Text</span><b>${nLines} lines · ${nChars} characters</b></div>
+     <div class="kv"><span>Fonts</span><b>${esc(fonts.join(", ") || "–")}</b></div>
+     ${source ? `<div class="kv"><span>Source</span><b>${source}</b></div>` : ""}
+     ${doubtful.length ? `<div class="note" style="margin:8px 0">${icon("alert")}<div>The PDF's own text looks partly damaged on ${multi ? `page${doubtful.length > 1 ? "s" : ""} ${doubtful.map(s => pageNo(s)).join(", ")}` : "this page"}. If the text is wrong, use <b>Run OCR instead</b>.</div></div>` : ""}
+     <div class="kv"><span>Time</span><b>${fmtMs(totalMs)} on this device</b></div>
+     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap"><button class="btn sm" id="r_rerun" title="${pdfTextPages ? "Ignore the PDF text and read the page images with OCR" : "Process again"}">${icon("refresh")}${pdfTextPages ? "Run OCR instead" : "Run OCR again"}</button><button class="btn sm danger" id="r_del">${icon("trash")}Delete</button></div></div></div>` : ""}</div>`;
   view.querySelectorAll("#r_mode button").forEach(b => b.onclick = () => { REVIEW.mode = b.dataset.m; renderReview(id); });
   for (const [sel, on] of [["#r_side_close", false], ["#r_side_open", true]]) { const b = view.querySelector(sel); if (b) b.onclick = () => { REVIEW.side = on; localStorage.setItem("thaocr.reviewSide", on ? "1" : "0"); renderReview(id); }; }
-  view.querySelectorAll(".thumbs .th").forEach(t => t.onclick = () => location.hash = "#/review/" + t.dataset.id);
-  $("#r_copy").onclick = () => navigator.clipboard.writeText(pageText(page)).then(() => toast("text copied"));
-  if ($("#r_rerun")) $("#r_rerun").onclick = () => rerun(d);  // the check panel (and these buttons) can be closed
-  if ($("#r_del")) $("#r_del").onclick = async () => { if (confirm("Delete this document from this browser?")) { await store.del(d.page_id); location.hash = "#/documents"; toast("deleted"); } };
+  // page strip: scroll both panes to that page
+  const scrollToPage = pid => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${pid}"]`)) el.scrollIntoView({block: "start", behavior: "smooth"}); view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === pid)); REVIEW.cur = pid; };
+  view.querySelectorAll(".thumbs .th").forEach(t => t.onclick = () => scrollToPage(t.dataset.id));
+  const orig = $("#r_orig"); if (orig && multi && window.IntersectionObserver) { const io = new IntersectionObserver(es => { const top = es.filter(e => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]; if (top) view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === top.target.dataset.pid)); }, {root: orig, threshold: [0.25, 0.5, 0.75]}); orig.querySelectorAll(".pagewrap").forEach(el => io.observe(el)); }
+  $("#r_copy").onclick = () => navigator.clipboard.writeText(groupText(pages)).then(() => toast("text copied"));
+  if ($("#r_rerun")) $("#r_rerun").onclick = () => rerunGroup(pages);
+  if ($("#r_del")) $("#r_del").onclick = async () => { if (confirm(multi ? `Delete this document and its ${pages.length} pages from this browser?` : "Delete this document from this browser?")) { await deleteGroup(pages); location.hash = "#/documents"; toast("deleted"); } };
   $("#r_export").onclick = e => { e.stopPropagation(); closeMenus(); const m = document.createElement("div"); m.className = "menu";
-    m.innerHTML = `<button data-a="docx">${icon("file")}Word document (.docx)</button>${siblings.length > 1 ? `<button data-a="docxall">${icon("layers")}All ${siblings.length} pages as one .docx</button>` : ""}<button data-a="txt">${icon("list")}Plain text (.txt)</button><button data-a="json">${icon("braces")}JSON (full result)</button><button data-a="png">${icon("image")}Page image</button>`;
-    $("#r_export").parentElement.appendChild(m); m.onclick = ev => { const a = ev.target.closest("button")?.dataset.a; closeMenus(); const base = docTitle(d);
-      if (a === "docx") exportDocx([d]); if (a === "docxall") exportDocx(siblings); if (a === "txt") download(base + ".txt", pageText(page), "text/plain;charset=utf-8");
-      if (a === "json") download(base + ".json", JSON.stringify(page, null, 1), "application/json"); if (a === "png") { const x = document.createElement("a"); x.href = d.image_url; x.download = d.filename; x.click(); } }; };
-  const img = new Image(); img.src = d.image_url;
-  if (!d.image_url) { const v = $("#r_view"); if (v) v.innerHTML = `<div class="small mut" style="padding:40px 20px;text-align:center">The page image is no longer in this browser's storage, so it cannot be shown. The text below is still available.</div>`; }
-  const paint = () => { const cv = $("#r_cv"); if (cv) { drawOriginal(cv, img, page, {boxes: REVIEW.boxes, labels: REVIEW.labels, lines: REVIEW.boxes}); const v = $("#r_view"); v.style.width = Math.min(page.width, (v.parentElement.clientWidth - 32)) * REVIEW.zoom + "px"; }
-    for (const c of view.querySelectorAll(".snip canvas")) { const [bid, lo] = c.dataset.key.split(":"); const b = page.blocks.find(x => x.id === bid), l = b && b.lines.find(x => String(x.reading_order) === lo); if (!l) continue;
+    m.innerHTML = `<button data-a="docx">${icon("file")}Word document (.docx)${multi ? ` · ${pages.length} pages` : ""}</button><button data-a="txt">${icon("list")}Plain text (.txt)</button><button data-a="json">${icon("braces")}JSON (full result)</button><button data-a="png">${icon("image")}Page image${multi ? "s" : ""}</button>`;
+    $("#r_export").parentElement.appendChild(m); m.onclick = ev => { const a = ev.target.closest("button")?.dataset.a; closeMenus(); const base = groupTitle(pages);
+      if (a === "docx") exportDocx(pages); if (a === "txt") download(base + ".txt", groupText(pages), "text/plain;charset=utf-8");
+      if (a === "json") download(base + ".json", JSON.stringify(multi ? pages.map(s => s.result) : d.result, null, 1), "application/json");
+      if (a === "png") pages.forEach((s, i) => setTimeout(() => { const x = document.createElement("a"); x.href = s.image_url; x.download = multi ? `${base} page ${i + 1}.jpg` : s.filename; x.click(); }, i * 400)); }; };
+  // page images + canvases
+  const imgs = {}; for (const s of pages) { const im = new Image(); im.src = s.image_url; imgs[s.page_id] = im; }
+  const paintPage = s => { const im = imgs[s.page_id], cv = view.querySelector(`canvas[data-pid="${s.page_id}"]`); if (!cv || !im.complete || !im.naturalWidth) return; const page = s.result;
+    drawOriginal(cv, im, page, {boxes: REVIEW.boxes, labels: REVIEW.labels, lines: REVIEW.boxes}); const v = cv.parentElement; v.style.width = Math.min(page.width, (v.parentElement.parentElement.clientWidth - 32)) * REVIEW.zoom + "px"; };
+  const paintSnips = () => { for (const c of view.querySelectorAll(".snip canvas")) { const s = byId[c.dataset.pid], im = imgs[c.dataset.pid]; if (!s || !im || !im.complete || !im.naturalWidth) continue; const page = s.result, [bid, lo] = c.dataset.key.split(":"); const b = page.blocks.find(x => x.id === bid), l = b && b.lines.find(x => String(x.reading_order) === lo); if (!l) continue;
       const pad = l.box.height * 0.3, sx = Math.max(0, l.box.x - pad), sy = Math.max(0, l.box.y - pad), sw = Math.min(page.width - sx, l.box.width + 2 * pad), sh = Math.min(page.height - sy, l.box.height + 2 * pad);
-      c.width = Math.round(sw * 2); c.height = Math.round(sh * 2); c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height); } };
-  img.onload = paint; if (img.complete) paint();
+      c.width = Math.round(sw * 2); c.height = Math.round(sh * 2); c.getContext("2d").drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height); } };
+  const paintAll = () => { pages.forEach(paintPage); paintSnips(); };
+  for (const s of pages) { const im = imgs[s.page_id]; const v = view.querySelector(`.view[data-pid="${s.page_id}"]`); if (!s.image_url && v) v.innerHTML = `<div class="small mut" style="padding:40px 20px;text-align:center">The page image is no longer in this browser's storage, so it cannot be shown. The text is still available.</div>`;
+    im.onload = () => { paintPage(s); paintSnips(); }; if (im.complete && im.naturalWidth) im.onload(); }
   if ($("#r_zoomin")) { $("#r_zoomin").onclick = () => { REVIEW.zoom = Math.min(3, REVIEW.zoom + 0.25); renderReview(id); }; $("#r_zoomout").onclick = () => { REVIEW.zoom = Math.max(0.5, REVIEW.zoom - 0.25); renderReview(id); };
-    $("#r_boxes").onchange = e => { REVIEW.boxes = e.target.checked; paint(); }; $("#r_labels").onchange = e => { REVIEW.labels = e.target.checked; paint(); };
-    const full = () => openLightbox(d, img, () => { if ($("#r_boxes")) { $("#r_boxes").checked = REVIEW.boxes; $("#r_labels").checked = REVIEW.labels; } paint(); });
-    $("#r_full").onclick = full; $("#r_view").onclick = full;
-    REVIEW.key = e => { if (e.key.toLowerCase() === "f" && !(e.target.closest && e.target.closest("input,textarea,[contenteditable]")) && !$("#lightbox")) full(); };
+    $("#r_boxes").onchange = e => { REVIEW.boxes = e.target.checked; paintAll(); }; $("#r_labels").onchange = e => { REVIEW.labels = e.target.checked; paintAll(); };
+    const full = pid => { const s = byId[pid] || byId[REVIEW.cur] || d; openLightbox(s, imgs[s.page_id], () => { if ($("#r_boxes")) { $("#r_boxes").checked = REVIEW.boxes; $("#r_labels").checked = REVIEW.labels; } paintAll(); }); };
+    $("#r_full").onclick = () => full(REVIEW.cur); view.querySelectorAll(".view[data-pid]").forEach(v => v.onclick = () => full(v.dataset.pid));
+    REVIEW.key = e => { if (e.key.toLowerCase() === "f" && !(e.target.closest && e.target.closest("input,textarea,[contenteditable]")) && !$("#lightbox")) full(REVIEW.cur); };
     document.addEventListener("keydown", REVIEW.key); }
   const wrap = $("#r_docwrap");
   if (wrap) {
-    if (REVIEW.pane === "document" && hasDoc) { const avail = Math.max(320, wrap.clientWidth - 32); wrap.appendChild(DocView.render(page, {scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(d, bid, orders, text)})); }
-    else { const dp = buildDocPage(d, (b, l, text) => applyEdit(d, b, l, text)); wrap.appendChild(dp); const fit = () => scaleToFit(wrap, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); }
+    for (const s of pages) { const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`), page = s.result;
+      if (REVIEW.pane === "document" && window.DocView && page.document) { const avail = Math.max(320, wrap.clientWidth - 32); body.appendChild(DocView.render(page, {scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)})); }
+      else { const dp = buildDocPage(s, (b, l, text) => applyEdit(s, b, l, text)); body.appendChild(dp); const fit = () => scaleToFit(body, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); } }
     view.querySelectorAll("#r_pane button").forEach(b => b.onclick = () => { REVIEW.pane = b.dataset.p; renderReview(id); });
   }
-  view.querySelectorAll(".rev").forEach(card => { const key = card.dataset.key, [bid, lo] = key.split(":"), b = page.blocks.find(x => x.id === bid), l = b.lines.find(x => String(x.reading_order) === lo);
-    card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); const ln = view.querySelector(`.docpage .ln[data-key="${key}"]`); if (ln && !e.target.closest("button,input")) { ln.scrollIntoView({block: "center", behavior: "smooth"}); ln.focus(); } };
-    card.querySelector('[data-a="accept"]').onclick = () => { applyEdit(d, b, l, card.querySelector("input").value); renderReview(id); };
-    card.querySelector('[data-a="ignore"]').onclick = () => { d.reviewed = d.reviewed || {}; d.reviewed[key] = "ignored"; store.put(d); renderReview(id); }; });
-  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { d.reviewed = d.reviewed || {}; d.reviewed[lineKey(x.b, x.l)] = "accepted"; } store.put(d); renderReview(id); toast("all lines accepted"); };
+  view.querySelectorAll(".rev").forEach(card => { const key = card.dataset.key, s = byId[card.dataset.pid], page = s.result, [bid, lo] = key.split(":"), b = page.blocks.find(x => x.id === bid), l = b.lines.find(x => String(x.reading_order) === lo);
+    card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); const ln = view.querySelector(`.pgbody[data-pid="${s.page_id}"] .docpage .ln[data-key="${key}"]`); if (ln && !e.target.closest("button,input")) { ln.scrollIntoView({block: "center", behavior: "smooth"}); ln.focus(); } else if (multi && !e.target.closest("button,input")) scrollToPage(s.page_id); };
+    card.querySelector('[data-a="accept"]').onclick = () => { applyEdit(s, b, l, card.querySelector("input").value); renderReview(id); };
+    card.querySelector('[data-a="ignore"]').onclick = () => { s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; store.put(s); renderReview(id); }; });
+  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) store.put(s); renderReview(id); toast("all lines accepted"); };
 }
 function applyParagraphEdit(d, blockId, orders, text) {
   const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
@@ -516,7 +547,7 @@ async function exportDocx(docs) {
 /* ---------------------------------------------------------------- documents / settings / help */
 function renderDocuments() {
   const filter = q => store.docs.filter(d => !q || d.filename.toLowerCase().includes(q.toLowerCase()) || pageText(d.result).includes(q));
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1><p>${store.docs.length} document${store.docs.length === 1 ? "" : "s"} kept in this browser, on this device only.</p></div>
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1><p>${groups(store.docs).length} document${groups(store.docs).length === 1 ? "" : "s"} kept in this browser, on this device only.</p></div>
     <label class="search">${icon("search", "s")}<input id="q" placeholder="Search by name or text"></label><a class="btn p" href="#/scan">${icon("plus")}Scan</a></div><div class="card" id="doclist">${docsTable(store.docs)}</div>
     <div class="privacy">${icon("info")}<div>These documents exist only in this browser. They are not backed up anywhere. Export the ones you need to keep.</div></div>`;
   wireDocsTable();
