@@ -14,6 +14,35 @@
   const quadOf = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
   const block = (cls, box, score = 1, label = "", source = "layout") => ({cls, box: box.slice(), score, label: label || cls, source, lines: []});
 
+  /* ---------------------------------------------------------------- stamps over text */
+  /** Copy of the page with the coloured ink of each stamp box whitened (red or blue, by the box's dominant hue), so a
+      line running under a stamp can be read. Dark (grey) text ink is kept. */
+  function destamp(canvas, boxes) {
+    const c = document.createElement("canvas"); c.width = canvas.width; c.height = canvas.height; const g = c.getContext("2d", {willReadFrequently: true}); g.drawImage(canvas, 0, 0);
+    for (const b of boxes) { const pad = 0.08 * Math.max(b[2] - b[0], b[3] - b[1]); const x0 = Math.max(0, Math.floor(b[0] - pad)), y0 = Math.max(0, Math.floor(b[1] - pad)), x1 = Math.min(c.width, Math.ceil(b[2] + pad)), y1 = Math.min(c.height, Math.ceil(b[3] + pad)); if (x1 - x0 < 4 || y1 - y0 < 4) continue;
+      const im = g.getImageData(x0, y0, x1 - x0, y1 - y0), d = im.data; let red = 0, blue = 0;
+      for (let i = 0; i < d.length; i += 4) { const r = d[i], gg = d[i + 1], bb = d[i + 2], mx = Math.max(r, gg, bb), mn = Math.min(r, gg, bb); if (mx - mn < 60) continue; if (r === mx) red++; else if (bb === mx) blue++; }
+      const hue = red >= blue ? "r" : "b"; if (red + blue < 50) continue;
+      for (let i = 0; i < d.length; i += 4) { const r = d[i], gg = d[i + 1], bb = d[i + 2], mx = Math.max(r, gg, bb), mn = Math.min(r, gg, bb); if (mx - mn < 45) continue;
+        if ((hue === "r" && r === mx && r > gg * 1.15) || (hue === "b" && bb === mx && bb > r * 1.1)) { d[i] = d[i + 1] = d[i + 2] = 255; } }
+      g.putImageData(im, x0, y0); }
+    return c;
+  }
+  const inter = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  /** Word-level bold for lines the font model is unsure about: each word window of the 32-px crop is classified on
+      its own, consecutive words with the same weight become spans. */
+  async function wordBold(ln, crop32) {
+    const text = ln.text || "", pos = ln.char_pos; if (!pos || pos.length !== text.length || !text.includes(" ")) return;
+    const words = []; let st = 0; for (let i = 0; i <= text.length; i++) { if (i === text.length || text[i] === " ") { if (i > st) words.push([st, i]); st = i + 1; } }
+    if (words.length < 2 || words.length > 40) return;
+    const {gray, w, h} = crop32, crops = [];
+    for (const [a, b] of words) { const x0 = Math.max(0, Math.floor((pos[a] - 0.5 / Math.max(1, b - a)) * w) - 3), x1 = Math.min(w, Math.ceil(pos[b - 1] * w) + Math.round(0.02 * w) + 3); const cw = Math.max(12, x1 - x0), g = new Uint8Array(cw * h).fill(255);
+      for (let y = 0; y < h; y++) for (let x = 0; x < x1 - x0; x++) g[y * cw + x] = gray[y * w + x0 + x]; crops.push({gray: g, w: cw, h, srcH: crop32.srcH}); }
+    const fr = await T.classifyFonts(crops); const bold = fr.map(f => !!f && f.weight === "bold" && f.weight_confidence >= 0.75);
+    const spans = []; words.forEach(([a, b], i) => { const t = text.slice(a, b); const last = spans[spans.length - 1]; if (last && last.bold === bold[i]) last.text += " " + t; else spans.push({text: t, bold: bold[i]}); });
+    if (spans.length >= 2) { ln.spans = spans; ln.bold = false; } else { ln.bold = spans.length ? spans[0].bold : ln.bold; }
+  }
+
   /* ---------------------------------------------------------------- regions -> blocks */
   function cleanRegions(regions, W, H) {
     const blocks = [], ignored = [];
@@ -207,7 +236,8 @@
   const isKhDigit = ch => ch >= "០" && ch <= "៩";
   function joinWrapped(a, b) { if (!a) return b; if (!b) return a; const x = a[a.length - 1], y = b[0]; return isKhmer(x) && isKhmer(y) && !isKhDigit(x) && !isKhDigit(y) ? a + b : a + " " + b; }
   const paragraphText = lines => lines.reduce((a, l) => joinWrapped(a, l.text), "");
-  function paragraphRuns(lines) { const runs = []; for (const ln of lines) { const t = ln.text, bold = !!ln.bold; if (!t) continue; if (runs.length) { const last = runs[runs.length - 1]; const glue = isKhmer(last.text[last.text.length - 1] || "") && isKhmer(t[0]) ? "" : " "; if (last.bold === bold) { last.text += glue + t; continue; } last.text += glue; } runs.push({text: t, bold}); } return runs; }
+  function paragraphRuns(lines) { const runs = []; const push = (t, bold) => { if (!t) return; if (runs.length) { const last = runs[runs.length - 1]; const glue = isKhmer(last.text[last.text.length - 1] || "") && isKhmer(t[0]) ? "" : " "; if (last.bold === bold) { last.text += glue + t; return; } last.text += glue; } runs.push({text: t, bold}); };
+    for (const ln of lines) { if (ln.spans && ln.spans.length) { ln.spans.forEach(sp => push(sp.text, !!sp.bold)); } else push(ln.text, !!ln.bold); } return runs; }
   function mergeBulletLines(lines) { // a line read as a bullet glyph joins the text line of its row
     const bullets = lines.filter(l => l.isBullet), rest = lines.filter(l => !l.isBullet);
     for (const bl of bullets) { const cy = (bl.bbox[1] + bl.bbox[3]) / 2; let best = null, bd = Infinity;
@@ -324,7 +354,7 @@
       const rendered = new Map();
       b.lines.forEach((ln, i) => { const lx0 = Math.max(0, ln.bbox[0]), ly0 = Math.max(0, ln.bbox[1]), lx1 = Math.min(W, ln.bbox[2]), ly1 = Math.min(H, ln.bbox[3]); if (lx1 - lx0 < 2 || ly1 - ly0 < 2) return;
         const line = {box: {x: lx0, y: ly0, width: lx1 - lx0, height: ly1 - ly0}, quad: ln.quad.map(p => [+p[0].toFixed(1), +p[1].toFixed(1)]), text: ln.text || "", confidence: +(ln.confidence || 0).toFixed(4), score: +(ln.score || 0).toFixed(4), reading_order: i + 1,
-          indent_level: ln.indent_level || 0, indent: 0, tab: false, bullet: ln.bullet || null, bullet_box: ln.bullet_box ? ln.bullet_box.map(v => +v.toFixed(1)) : null, baseline: null, core_h: null, font: ln.font ? Object.fromEntries(Object.entries(ln.font).filter(([k]) => k !== "probs")) : null, bold: !!ln.bold, spans: [], text_color: null};
+          indent_level: ln.indent_level || 0, indent: 0, tab: false, bullet: ln.bullet || null, bullet_box: ln.bullet_box ? ln.bullet_box.map(v => +v.toFixed(1)) : null, baseline: null, core_h: null, font: ln.font ? Object.fromEntries(Object.entries(ln.font).filter(([k]) => k !== "probs")) : null, bold: !!ln.bold, spans: ln.spans || [], text_color: null};
         blk.lines.push(line); rendered.set(ln, line); });
       blk.text = blockText(blk.lines); blk.bold = blk.lines.length > 0 && blk.lines.filter(l => l.text).every(l => l.bold);
       if (cls === "table") { const tg = tableGrid(b, img); if (tg) { blk.table = {borders: tg.borders, skew: tg.skew, cols: tg.cols, rows: tg.rows.map(r => ({y0: r.y0, y1: r.y1, span: !!r.span, cells: r.cells.map(c => ({text: c.text, colspan: c.colspan || 1, lines: c.lines.map(l => rendered.get(l)).filter(Boolean).map(l => l.reading_order)}))}))}; blk.text = tg.rows.map(r => r.cells.map(c => c.text).join("\t")).join("\n"); } }
@@ -376,14 +406,24 @@
     step("decode", "reading the file"); const img = await T.loadImage(src); const W = img.width, H = img.height;
     step("layout", "finding regions"); let t = performance.now(); const regions = await T.detectLayout(img); let {blocks, ignored} = cleanRegions(regions, W, H); timings.layout_ms = ms(t);
     step("textdet", "finding text lines"); t = performance.now(); let lines = await T.detectLines(img.canvas); if (T.config.cascade) lines = await cascade(img, blocks, lines);
-    const orphans = assign(lines, blocks); for (const b of blocks) if (!TEXT_CLASSES.has(b.cls)) b.lines = [];
+    const orphans = assign(lines, blocks);
+    // a "decoration" that swallowed text lines (a whole letterhead band) is a misdetection: give the lines back as
+    // orphans and drop the region when it is large or contains a logo / stamp / QR
+    for (const b of blocks) if (!TEXT_CLASSES.has(b.cls)) { if (b.cls === "decoration" && b.lines.length >= 2) { orphans.push(...b.lines); const area = U.bArea(b.box); if (area > 0.02 * W * H || blocks.some(o => o !== b && CROP_CLASSES.has(o.cls) && inter(o.box, b.box) > 0.8 * U.bArea(o.box))) b.drop = true; } b.lines = []; }
+    blocks = blocks.filter(b => !b.drop);
+    // stamps: the stamp's own (curved) text is not document text; lines running under a stamp are read from a de-stamped copy
+    const stampBoxes = blocks.filter(b => b.cls === "stamp").map(b => b.box);
+    if (stampBoxes.length) { for (let i = orphans.length - 1; i >= 0; i--) { const ln = orphans[i], a = U.bArea(ln.bbox); const sb = stampBoxes.find(b => inter(ln.bbox, b) > 0.7 * a); if (sb && (ln.bbox[2] - ln.bbox[0]) < 0.85 * (sb[2] - sb[0])) orphans.splice(i, 1); }
+      for (const ln of orphans) if (stampBoxes.some(b => inter(ln.bbox, b) > 0.05 * U.bArea(ln.bbox))) ln.stamped = true;
+      for (const b of blocks) for (const ln of b.lines) if (stampBoxes.some(sb => inter(ln.bbox, sb) > 0.05 * U.bArea(ln.bbox))) ln.stamped = true; }
+    const cleanCanvas = stampBoxes.length && T.config.destamp === true ? destamp(img.canvas, stampBoxes) : img.canvas; img.clean = cleanCanvas; // opt-in: whitening the ink also carves the glyphs
     blocks = dropEmptyContainers(blocks); const lineH = lines.length ? U.median(lines.map(l => { const q = U.bboxOf(l.quad); return q[3] - q[1]; })) : 0; for (const b of blocks) fallbackWholeBlock(b, lineH);
     blocks.push(...groupOrphans(orphans)); blocks = mergeParagraphs(blocks); blocks = mergeAlignedBlocks(blocks, W); mergeRowSegments(blocks); timings.textdet_ms = ms(t); timings.lines_detected = lines.length;
     // recognise
     const todo = []; for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) for (const ln of b.lines) todo.push([b, ln]);
     step("rec", "reading the text", {done: 0, total: todo.length}); t = performance.now();
     const crops = [], plan = []; // plan[i] = {idx} (one crop) or {left, right} (leader line split into parts)
-    for (const [b, ln] of todo) { const c = T.cropLine(img.canvas, ln.quad, 48); const sp = (!["table", "form_field"].includes(b.cls)) ? splitLeader(c) : null;
+    for (const [b, ln] of todo) { const c = T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 48); const sp = (!["table", "form_field"].includes(b.cls)) ? splitLeader(c) : null;
       if (!sp) { plan.push({idx: crops.length}); crops.push(c); continue; }
       const e = {leader: true, left: -1, right: -1}; if (sp.left) { e.left = crops.length; crops.push(sp.left); } if (sp.right) { e.right = crops.length; crops.push(sp.right); } plan.push(e); }
     const res = await T.recognize(crops, 16, (d, n) => step("rec", "reading the text", {done: d, total: n}));
@@ -403,7 +443,12 @@
     // fonts (printed lines)
     t = performance.now();
     if (T.sessions.font) { step("font", "fonts and sizes"); const sel = todo.map((x, i) => [x, i]).filter(([[b, ln]]) => b.cls !== "handwriting" && (ln.text || "").length >= 2);
-      const fr = await T.classifyFonts(sel.map(([[, ln], i]) => { const c = T.cropLine(img.canvas, ln.quad, 32); return c; })); sel.forEach(([[, ln]], k) => ln.font = fr[k]); }
+      const c32 = sel.map(([[, ln]]) => T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 32)); const fr = await T.classifyFonts(c32); sel.forEach(([[, ln]], k) => { ln.font = fr[k]; if (ln.font) ln.bold = ln.font.weight === "bold" && ln.font.weight_confidence >= 0.6; });
+      // mixed lines (a bold label or word inside a regular line) leave the model unsure: classify word by word
+      const LABEL_RE = /^\S{1,24}\s?[៖:]/; // "សំណុំលិខិត៖ ..." - a bold label in front of regular text
+      const medLineH = U.median(sel.map(([[, ln]]) => ln.bbox[3] - ln.bbox[1])) || 1;
+      const unsure = sel.map(([[b, ln]], k) => [ln, k, b]).filter(([ln, , b]) => ln.font && !HEAVY.has(ln.font.family) && (ln.text || "").includes(" ") && ln.char_pos && !["footer", "header", "page_number", "caption", "footnote"].includes(b.cls) && (ln.bbox[3] - ln.bbox[1]) >= 0.7 * medLineH && (ln.font.weight_confidence < 0.85 || LABEL_RE.test(ln.text)));
+      for (const [ln, k] of unsure) { try { await wordBold(ln, c32[k]); } catch (e) { console.warn("word bold", e); } } }
     timings.font_ms = ms(t);
     // bullets, structure, fonts per block
     step("structure", "paragraphs and reading order");
@@ -416,7 +461,7 @@
     let t = performance.now();
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { b.lines = mergeBulletLines(b.lines); for (const ln of b.lines) if (ln.text && !["table", "form_field"].includes(b.cls)) textBullet(ln); }
     const usedModel = await structure(blocks, W, H); timings.structure_ms = ms(t); timings.structure = usedModel ? "model" : "rules";
-    for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { blockFont(b); const pf = b.lines.map(l => l.font_px).filter(Boolean); if (pf.length) { b.font_px = +U.median(pf).toFixed(1); b.font_src = "pdf"; } if (!b.font_px && b.lines.length) { const hs = b.lines.filter(l => l.text).map(l => l.bbox[3] - l.bbox[1]); if (hs.length) { b.font_px = +(U.median(hs) * 0.78).toFixed(1); b.font_src = "image"; } } }
+    for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { blockFont(b); if (b.font && b.font.weight !== "bold" && b.lines.length >= 2) for (const ln of b.lines) if (ln.bold && !(ln.spans && ln.spans.length) && !(ln.font && ln.font.weight_confidence >= 0.97 && HEAVY.has(ln.font.family))) ln.bold = false; const pf = b.lines.map(l => l.font_px).filter(Boolean); if (pf.length) { b.font_px = +U.median(pf).toFixed(1); b.font_src = "pdf"; } if (!b.font_px && b.lines.length) { const hs = b.lines.filter(l => l.text).map(l => l.bbox[3] - l.bbox[1]); if (hs.length) { b.font_px = +(U.median(hs) * 0.78).toFixed(1); b.font_src = "image"; } } }
     timings.bullets_found = blocks.reduce((a, b) => a + b.lines.filter(l => l.bullet).length, 0); timings.bold_words = 0;
     const layout = pageLayout(blocks, W, H); const outBlocks = render(img, blocks); timings.order_ms = 0; timings.total_ms = ms(tStart);
     const blob = await new Promise(r => img.canvas.toBlob(r, "image/jpeg", 0.9));
