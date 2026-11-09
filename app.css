@@ -154,6 +154,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .panebody{padding:16px;overflow:auto;max-height:82vh;background:var(--soft)}
 .panebody.white{background:#fff}
 .pagewrap{margin-bottom:22px}.pagewrap:last-child{margin-bottom:0}
+.linkbtn{border:0;background:none;color:var(--ink);text-decoration:underline;cursor:pointer;font:inherit;letter-spacing:inherit;text-transform:inherit;padding:0}.linkbtn:disabled{color:var(--mut);text-decoration:none;cursor:default}
 .pglabel{font:11px Inter,system-ui;color:var(--mut);text-align:center;margin:0 0 8px;letter-spacing:.08em;text-transform:uppercase}
 .view{position:relative;margin:0 auto;box-shadow:var(--shadow-2);background:#fff;border-radius:3px;overflow:hidden;cursor:zoom-in}
 .view:hover{outline:2px solid var(--ink);outline-offset:2px}
