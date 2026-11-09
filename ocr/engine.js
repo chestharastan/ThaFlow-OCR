@@ -101,7 +101,7 @@
       const {sess, ep} = await session(buf, stage === "rec" || stage === "structure" || stage === "font" ? ["wasm"] : eps);
       if (T.sessions[stage] && T.sessions[stage].sess.release) { try { await T.sessions[stage].sess.release(); } catch { } }
       T.sessions[stage] = {sess, ep, spec}; T.active[stage] = id;
-      if (stage === "rec") { const v = await (await fetch(T.config.modelBase + spec.vocab)).json(); T.meta.vocab = v.itos || v; T.meta.recStride = null; }
+      if (stage === "rec") { const v = await (await fetch(T.config.modelBase + spec.vocab)).json(); T.meta.vocab = v.itos || v; T.meta.recStride = null; T.sessions.rec.vocab = T.meta.vocab; }
       if (stage === "layout") T.meta.layoutNames = spec.classes || CLASSES;
       if (stage === "font") { const mf = await (await fetch(T.config.manifestBase + "font/font_meta.json")).json(); T.meta.font = mf; }
       if (stage === "structure") { const ms = await (await fetch(T.config.manifestBase + "structure/struct_meta.json")).json(); T.meta.structure = ms; }
@@ -110,6 +110,15 @@
     return T.active;
   };
   T.loaded = () => !!(T.sessions.layout && T.sessions.textdet && T.sessions.rec);
+  /** A second recogniser (the handwriting-trained CRNN) for doubtful lines; loaded on first need, wasm only. */
+  T.altRecId = () => { const m = T.manifest; if (!m) return null; const want = m.models.filter(x => x.stage === "rec" && /hw/.test(x.id)); return (want.find(x => /int8/.test(x.id)) || want[0] || {}).id || null; };
+  T.loadAltRec = async function (id, onProgress) {
+    if (T.sessions.rec_alt && T.sessions.rec_alt.spec.id === id) return T.sessions.rec_alt;
+    const spec = T.spec(id); if (!spec) throw new Error("unknown model " + id);
+    const buf = await fetchCached(T.config.modelBase + spec.file, (got, total, fromCache) => onProgress && onProgress({stage: "rec_alt", id, got, total, fromCache}));
+    const {sess, ep} = await session(buf, ["wasm"]); const v = await (await fetch(T.config.modelBase + spec.vocab)).json();
+    T.sessions.rec_alt = {sess, ep, spec, vocab: v.itos || v}; return T.sessions.rec_alt;
+  };
 
   /* ------------------------------------------------------------------ images */
   const MAX_SIDE = 3600;
@@ -264,12 +273,12 @@
   };
 
   /* ------------------------------------------------------------------ recogniser: CRNN-CTC */
-  async function recLogits(x, N, Wd) { const {sess} = T.sessions.rec, ort = window.ort; const out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [N, 1, REC_H, Wd])}); const o = out[sess.outputNames[0]]; return o; }
-  async function recStride() { if (T.meta.recStride) return T.meta.recStride; const o = await recLogits(new Float32Array(REC_H * 256), 1, 256); T.meta.recStride = Math.max(1, Math.round(256 / o.dims[0])); return T.meta.recStride; }
-  async function recBatch(crops) {
-    const s = await recStride(), Wd = Math.ceil(Math.max(...crops.map(c => c.w)) / s) * s, N = crops.length, x = new Float32Array(N * REC_H * Wd);
+  async function recLogits(x, N, Wd, key = "rec") { const {sess} = T.sessions[key], ort = window.ort; const out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [N, 1, REC_H, Wd])}); const o = out[sess.outputNames[0]]; return o; }
+  async function recStride(key = "rec") { const S = T.sessions[key]; if (S.stride) return S.stride; const o = await recLogits(new Float32Array(REC_H * 256), 1, 256, key); S.stride = Math.max(1, Math.round(256 / o.dims[0])); if (key === "rec") T.meta.recStride = S.stride; return S.stride; }
+  async function recBatch(crops, key = "rec") {
+    const s = await recStride(key), Wd = Math.ceil(Math.max(...crops.map(c => c.w)) / s) * s, N = crops.length, x = new Float32Array(N * REC_H * Wd);
     crops.forEach((c, i) => { const base = i * REC_H * Wd; for (let y = 0; y < REC_H; y++) for (let xx = 0; xx < Wd; xx++) x[base + y * Wd + xx] = (c.gray[y * c.w + Math.min(xx, c.w - 1)] / 255 - 0.5) / 0.5; });
-    const o = await recLogits(x, N, Wd), [Tn, Nn, C] = o.dims, d = o.data, itos = T.meta.vocab, out = [];
+    const o = await recLogits(x, N, Wd, key), [Tn, Nn, C] = o.dims, d = o.data, itos = T.sessions[key].vocab || T.meta.vocab, out = [];
     for (let i = 0; i < N; i++) { const Tl = Math.min(Tn, Math.max(1, Math.floor(crops[i].w / s))); let prev = -1; const seq = [], cs = [], pos = [];
       for (let k = 0; k < Tl; k++) { const off = (k * Nn + i) * C; let m = -Infinity, mi = 0; for (let c = 0; c < C; c++) { const v = d[off + c]; if (v > m) { m = v; mi = c; } }
         if (mi !== prev && mi !== 0) { let z = 0; for (let c = 0; c < C; c++) z += Math.exp(d[off + c] - m); seq.push(itos[mi] || ""); cs.push(1 / z); pos.push((k + 0.5) / Tl); } prev = mi; }
@@ -277,11 +286,11 @@
     return out;
   }
   /** crops: [{gray,w,h}] at height 48 -> [{text, confidence, pos}] in the same order (width-bucketed batches of <= maxBatch). */
-  T.recognize = async function (crops, maxBatch = 16, onBatch) {
+  T.recognize = async function (crops, maxBatch = 16, onBatch, key = "rec") {
     if (!crops.length) return [];
     const order = crops.map((_, i) => i).sort((a, b) => crops[a].w - crops[b].w), res = new Array(crops.length); let i = 0, done = 0;
     while (i < order.length) { let j = i + 1; const w0 = crops[order[i]].w; while (j < order.length && j - i < maxBatch && crops[order[j]].w <= 1.35 * w0 + 16) j++;
-      const r = await recBatch(order.slice(i, j).map(k => crops[k])); order.slice(i, j).forEach((k, n) => res[k] = r[n]); done += j - i; onBatch && onBatch(done, crops.length); i = j; }
+      const r = await recBatch(order.slice(i, j).map(k => crops[k]), key); order.slice(i, j).forEach((k, n) => res[k] = r[n]); done += j - i; onBatch && onBatch(done, crops.length); i = j; }
     return res;
   };
 

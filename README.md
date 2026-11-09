@@ -54,6 +54,13 @@ joined in reading order; dot leaders become a tab with the page number right-ali
 `table` regions and side-by-side aligned blocks (a list with counts at the right) are rebuilt as cell grids from
 ruling lines or line alignment and exported as real Word tables; line order inside a block is always geometric.
 
+Doubtful lines (confidence < 0.6, typically handwriting or text under a stamp) get a second opinion from the
+handwriting-trained recogniser (`crnn_m_v2_hw_int8`, loaded on first need); the better-scoring reading wins.
+Tables are de-skewed before the cell grid is built and group-header rows span the table.
+
+Training data from use: every line a user edits in the review is a (line image, corrected text) pair. Settings ->
+"Export corrected lines" writes them as JSON (PNG crops, base64) for fine-tuning the recogniser with `training/rec`.
+
 Not ported from the backend yet (rules that need OpenCV): red-stamp lifting and reading text under stamps, ink-based
 bullet detection, bold words by stroke weight, text colours, figure splitting, box snapping, decoration/rule detection.
 Layout models are Ultralytics YOLO11 (AGPL-3.0).

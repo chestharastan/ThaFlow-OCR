@@ -110,7 +110,7 @@
         tbl.style.cssText = style(e.style, e.text, scale, bodyPx) + `margin-left:${S(Math.max(0, cx0 - x0))};width:${S(cx1 - cx0)};`;
         const cg = document.createElement("colgroup"); for (const c of t.cols) { const col = document.createElement("col"); col.style.width = S(c.x1 - c.x0); cg.appendChild(col); } tbl.appendChild(cg);
         for (const r of t.rows) { const tr = document.createElement("tr"); if (r.y1 > r.y0) tr.style.height = S(r.y1 - r.y0);
-          r.cells.forEach((c, i) => { const td = document.createElement("td"); td.style.cssText = alignCss(t.cols[i].align || "left"); td.textContent = c.text || ""; if (c.text) edit(td, {block: e.block, lines: c.lines, text: c.text}); tr.appendChild(td); });
+          r.cells.forEach((c, i) => { const td = document.createElement("td"); if (c.colspan > 1) { td.colSpan = c.colspan; td.className = "dv-span"; } td.style.cssText = alignCss(c.colspan > 1 ? "left" : (t.cols[i].align || "left")); td.textContent = c.text || ""; if (c.text) edit(td, {block: e.block, lines: c.lines, text: c.text}); tr.appendChild(td); });
           tbl.appendChild(tr); }
         return tbl;
       }
@@ -197,7 +197,7 @@
 .dv-page .dv-rule hr{border:0;border-top:1px solid #999;margin:0}
 .dv-page .dv-row,.dv-page .dv-footer-row{display:flex;align-items:flex-start}.dv-page .dv-col>*{max-width:none}
 .dv-page .dv-low{background:#fff3cd;border-radius:2px}
-.dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.5}.dv-page .dv-table td{padding:.05em .35em;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.dv-page .dv-table.bordered td{border:1px solid #333}
+.dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.5}.dv-page .dv-table td{padding:.05em .35em;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.dv-page .dv-table.bordered td{border:1px solid #333}.dv-page .dv-table td.dv-span{font-weight:600}
 .dv-page .dv-tabline{display:flex;align-items:baseline;white-space:nowrap}.dv-page .dv-tabline .dv-leader{flex:1;min-width:1em;border-bottom:1px dotted currentColor;margin:0 .3em;transform:translateY(-.3em)}.dv-page .dv-tabline .dv-tr{flex:none}
 .dv-page [contenteditable]:focus{outline:2px solid #99f6e4;outline-offset:2px;border-radius:2px}
 .dv-page b{font-weight:700}`;

@@ -347,19 +347,75 @@ function renderProcess() {
     ["Build the document", t ? "ready to review and export" : "", !!t, null]];
   const failed = JOB.files.filter(f => f.status === "failed");
   const b = T.benchmarkStored(), remaining = running ? (JOB.load ? "" : `about ${Math.max(1, Math.round((JOB.total - JOB.done - fileFrac) * (b ? T.estimate(b, 40) : 8)))} s left`) : `took ${fmtMs(Date.now() - JOB.started)}`;
-  view.innerHTML = `
-  <div class="head"><div class="grow"><h1>${JOB.load ? "Getting ready…" : running ? "Reading your document…" : "Done"}</h1><p>${esc(JOB.name)}${JOB.total > 1 ? ` · file ${Math.min(JOB.done + 1, JOB.total)} of ${JOB.total}` : ""} · on this device</p></div>
-    ${running ? `<a class="btn" href="#/scan">Keep working, I'll wait</a>` : `<a class="btn p lg" href="#/review/${esc((JOB.files.find(x => x.page_id) || {}).page_id || "")}">Review results ${icon("arrow-right")}</a>`}</div>
+  const headHtml = `<div class="grow"><h1>${JOB.load ? "Getting ready…" : running ? "Reading your document…" : "Done"}</h1><p>${esc(JOB.name)}${JOB.total > 1 ? ` · file ${Math.min(JOB.done + 1, JOB.total)} of ${JOB.total}` : ""} · on this device</p></div>
+    ${running ? `<a class="btn" href="#/scan">Keep working, I'll wait</a>` : `<a class="btn p lg" href="#/review/${esc((JOB.files.find(x => x.page_id) || {}).page_id || "")}">Review results ${icon("arrow-right")}</a>`}`;
+  const badgeCls = `badge ${running ? "ink" : "ok"}`, badgeTxt = JOB.load ? "Loading models" : running ? "Working" : "Finished";
+  const msg = JOB.load ? JOB.load.msg : remaining;
+  const note = JOB.load ? `First visit: the OCR models are downloaded once and kept in this browser. Later scans start immediately.` : "";
+  const steps = stepsHtml.map(([tt, s, done, ms], i) => ({cls: `step ${done ? "done" : running && !JOB.load && i === Math.max(0, si) ? "run" : ""}`, done, tt, s, ms}));
+  const stepHtml = (st, i) => `<div class="${st.cls}" data-i="${i}"><span class="n">${st.done ? icon("check", "s") : i + 1}</span><div class="grow"><b>${st.tt}</b><span class="sub">${esc(st.s || "")}</span></div><span class="ms mono">${st.ms != null ? fmtMs(st.ms) : ""}</span></div>`;
+  const filesHtml = JOB.total > 1 ? `<div class="card pad">${JOB.files.map(f => `<div class="kv"><span style="color:var(--ink)">${esc(f.name)}</span><span class="badge ${f.status === "done" ? "ok" : f.status === "failed" ? "bad" : f.status === "running" ? "ink" : ""}">${f.status === "done" ? "Done" : f.status === "failed" ? "Failed" : f.status === "running" ? "Working" : "Waiting"}</span></div>`).join("")}</div>` : "";
+  const failedHtml = failed.length ? `<div class="note">${icon("alert")}<div>${failed.map(f => `<b>${esc(f.name)}</b>: ${esc(f.error)}`).join("<br>")}</div></div>` : "";
+  const overlay = !!(last && last.page_id === cur.page_id), imgSrc = overlay ? JOB.lastImage : cur.url;
+  const scan = running && cur.status === "running" ? (JOB.load ? "scanline soft" : "scanline") : "";
+  const key = `${JOB.id}|${imgSrc}|${overlay}`, phase = JOB.load ? "load" : "run";
+
+  // Build the page only when the picture changes; otherwise patch the parts that changed in place, so the scan
+  // line, spinners and progress bar keep animating instead of restarting on every progress callback.
+  if (!PVIEW || PVIEW.key !== key || !$("#p_stage")) {
+    view.innerHTML = `
+  <div class="head" id="p_head">${headHtml}</div>
   <div class="grid g-main">
-   <div class="card"><div class="panehead"><span style="color:var(--ink)">${esc(cur.name)}</span><div class="grow"></div><span class="badge ${running ? "ink" : "ok"}"><span class="dot"></span>${JOB.load ? "Loading models" : running ? "Working" : "Finished"}</span></div>
-    <div class="stage"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(last && last.page_id === cur.page_id ? JOB.lastImage : cur.url)}" alt="" style="display:block;max-width:100%;max-height:70vh"><canvas id="p_cv" class="hide"></canvas>${running && cur.status === "running" && !JOB.load ? '<div class="scanline"></div>' : ""}</div></div></div>
+   <div class="card"><div class="panehead"><span style="color:var(--ink)" id="p_name">${esc(cur.name)}</span><div class="grow"></div><span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
+    <div class="stage"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" style="display:block;max-width:100%;max-height:70vh"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
    <div style="display:flex;flex-direction:column;gap:16px">
-    <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog">${pct}%</div><div class="mut small grow" style="text-align:right">${JOB.load ? esc(JOB.load.msg) : remaining}</div></div><div class="bar" style="height:8px;margin-top:12px"><i style="width:${pct}%"></i></div>
-      ${JOB.load ? `<div class="small mut" style="margin-top:10px">First visit: the OCR models are downloaded once and kept in this browser. Later scans start immediately.</div>` : ""}</div>
-    <div class="card pad"><div class="pipe">${stepsHtml.map(([tt, s, done, ms], i) => `<div class="step ${done ? "done" : running && !JOB.load && i === Math.max(0, si) ? "run" : ""}"><span class="n">${done ? icon("check", "s") : i + 1}</span><div class="grow"><b>${tt}</b>${s ? `<span>${esc(s)}</span>` : ""}</div>${ms != null ? `<span class="ms mono">${fmtMs(ms)}</span>` : ""}</div>`).join("")}</div></div>
-    ${JOB.total > 1 ? `<div class="card pad">${JOB.files.map(f => `<div class="kv"><span style="color:var(--ink)">${esc(f.name)}</span><span class="badge ${f.status === "done" ? "ok" : f.status === "failed" ? "bad" : f.status === "running" ? "ink" : ""}">${f.status === "done" ? "Done" : f.status === "failed" ? "Failed" : f.status === "running" ? "Working" : "Waiting"}</span></div>`).join("")}</div>` : ""}
-    ${failed.length ? `<div class="note">${icon("alert")}<div>${failed.map(f => `<b>${esc(f.name)}</b>: ${esc(f.error)}`).join("<br>")}</div></div>` : ""}</div></div>`;
-  if (last && last.page_id === cur.page_id) { const img = $("#p_img"), cv = $("#p_cv"); img.onload = () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true}); cv.classList.remove("hide"); cv.style.maxWidth = "100%"; cv.style.maxHeight = "70vh"; cv.style.width = "auto"; img.classList.add("hide"); }; if (img.complete) img.onload(); }
+    <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" style="width:${pct}%;transition:none"></i></div>
+      <div class="small mut" id="p_note" style="margin-top:10px${note ? "" : ";display:none"}">${note}</div></div>
+    <div class="card pad"><div class="pipe" id="p_steps">${steps.map(stepHtml).join("")}</div></div>
+    <div id="p_files">${filesHtml}</div><div id="p_failed">${failedHtml}</div></div></div>`;
+    const prev = PVIEW && PVIEW.id === JOB.id && PVIEW.phase === phase ? PVIEW.disp : pct;
+    PVIEW = {key, id: JOB.id, phase, target: pct, disp: Math.min(prev, pct), running, html: {}};
+    $("#p_pct").textContent = Math.round(PVIEW.disp) + "%"; $("#p_bar").style.width = PVIEW.disp + "%";
+    if (overlay) { const img = $("#p_img"), cv = $("#p_cv"); img.onload = () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true}); cv.classList.remove("hide"); cv.style.maxWidth = "100%"; cv.style.maxHeight = "70vh"; cv.style.width = "auto"; img.classList.add("hide"); }; if (img.complete) img.onload(); }
+    progressLoop();
+    return;
+  }
+  const set = (id, html) => { if (PVIEW.html[id] !== html) { PVIEW.html[id] = html; $("#" + id).innerHTML = html; } };
+  set("p_head", headHtml); set("p_files", filesHtml); set("p_failed", failedHtml);
+  $("#p_name").textContent = cur.name;
+  const bd = $("#p_badge"); if (bd.className !== badgeCls) bd.className = badgeCls; bd.querySelector(".t").textContent = badgeTxt;
+  $("#p_msg").textContent = msg; const nt = $("#p_note"); nt.textContent = note; nt.style.display = note ? "" : "none";
+  const stage = $("#p_stage"); let sl = stage.querySelector(".scanline");
+  if (scan && !sl) { sl = document.createElement("div"); stage.appendChild(sl); }
+  if (sl) { if (scan) sl.className = scan; else sl.remove(); }
+  $("#p_steps").querySelectorAll(".step").forEach((el, i) => { const st = steps[i];
+    if (el.className !== st.cls) { const wasDone = el.classList.contains("done"); el.className = st.cls; if (wasDone !== st.done) el.querySelector(".n").innerHTML = st.done ? icon("check", "s") : String(i + 1); }
+    el.querySelector(".sub").textContent = st.s || ""; el.querySelector(".ms").textContent = st.ms != null ? fmtMs(st.ms) : ""; });
+  if (PVIEW.phase !== phase) { PVIEW.phase = phase; PVIEW.disp = Math.min(PVIEW.disp, pct); } // new phase: the bar may start again from 0
+  PVIEW.target = pct; PVIEW.running = running; progressLoop();
+}
+/** Eases the shown percentage toward the real one, and creeps forward slowly between progress callbacks so the
+ *  bar never looks frozen during a long step (never more than a few % ahead of the real value, never 100 early). */
+let PVIEW = null;
+function progressLoop() {
+  if (PVIEW && PVIEW.raf) return;
+  let lastT = performance.now();
+  const tick = now => {
+    const pe = $("#p_pct"), be = $("#p_bar");
+    if (!PVIEW || !pe || !be) { if (PVIEW) PVIEW.raf = 0; return; }
+    const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
+    const v = PVIEW, cap = v.running ? Math.min(99, v.target + 6) : v.target;
+    if (v.disp < v.target) v.disp += Math.max(0.05, (v.target - v.disp) * Math.min(1, dt * 6)); // ease in
+    else if (v.disp > v.target && !v.running) v.disp = v.target;
+    else if (v.running && v.disp < cap) v.disp += dt * 0.8 * (1 - (v.disp - v.target) / 6); // creep, slowing down
+    v.disp = Math.min(v.disp, Math.max(cap, v.target));
+    const shown = Math.floor(v.disp);
+    if (pe.textContent !== shown + "%") pe.textContent = shown + "%";
+    be.style.width = v.disp.toFixed(2) + "%";
+    if (!v.running && Math.abs(v.disp - v.target) < 0.01) { v.raf = 0; return; }
+    v.raf = requestAnimationFrame(tick);
+  };
+  PVIEW.raf = requestAnimationFrame(tick);
 }
 
 /* ---------------------------------------------------------------- review & export */
@@ -513,14 +569,14 @@ function renderReview(id) {
 function applyParagraphEdit(d, blockId, orders, text) {
   const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
   const lines = orders.map(o => b.lines.find(l => l.reading_order === o)).filter(Boolean); if (!lines.length) return;
-  lines.forEach((l, i) => { l.text = i ? "" : text; l.spans = []; l.confidence = Math.max(l.confidence, 0.99); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = "edited"; });
+  lines.forEach((l, i) => { if (l.confidence_before == null) l.confidence_before = l.confidence; l.text = i ? "" : text; l.spans = []; l.confidence = Math.max(l.confidence, 0.99); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = "edited"; });
   b.text = blockTextMd(b);
   const para = (b.paragraphs || []).find(p => p.lines.join() === orders.join()); if (para) { para.text = text; para.runs = [{text, bold: false}]; }
   const de = (d.result.document || {elements: []}).elements; for (const e of de) { const items = e.type === "list" ? e.items : e.columns ? e.columns.flatMap(c => c.elements) : [e]; for (const it of items) if (it.block === blockId && (it.lines || []).join() === orders.join()) { it.text = text; it.runs = [{text, bold: false}]; it.low = false; } }
   recount(d); store.put(d); const s = $("#r_saved"); if (s) s.textContent = "Saved just now";
 }
 function applyEdit(d, b, l, text) {
-  const changed = text !== l.text; l.text = text; if (changed) { l.spans = []; l.confidence = Math.max(l.confidence, 0.99); }
+  const changed = text !== l.text; if (changed && l.confidence_before == null) l.confidence_before = l.confidence; l.text = text; if (changed) { l.spans = []; l.confidence = Math.max(l.confidence, 0.99); }
   b.text = blockTextMd(b); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = changed ? "edited" : "accepted";
   recount(d); store.put(d); const s = $("#r_saved"); if (s) s.textContent = "Saved just now";
 }
@@ -542,7 +598,7 @@ function docxParagraphs(D, page) {
     if (e.type === "list") { e.items.forEach(it => out.push(new Paragraph({children: runs(it), bullet: {level: Math.min(8, it.level || 0)}, alignment: align(e.align)}))); return; }
     if (e.type === "figure" || e.type === "decoration") { if (!e.crop) return; try { const wIn = Math.max(0.3, Math.min(6.3, 6.3 * (e.box[2] / contentW))), hIn = wIn * (e.box[3] / Math.max(1, e.box[2])); out.push(new Paragraph({alignment: align(e.align), children: [new ImageRun({type: "png", data: dataUrlBytes(e.crop), transformation: {width: Math.round(wIn * 96), height: Math.round(hIn * 96)}})]})); } catch (err) { console.warn(err); } return; }
     if (e.type === "table" && e.table) { const t = e.table, total = Math.max(1, t.cols[t.cols.length - 1].x1 - t.cols[0].x0), widths = t.cols.map(c => Math.max(300, Math.round(9026 * (c.x1 - c.x0) / total)));
-      out.push(new Table({width: {size: 9026 * Math.min(1, total / contentW), type: WidthType.DXA}, columnWidths: widths, rows: t.rows.map(r => new TableRow({children: r.cells.map((c, i) => new TableCell({width: {size: widths[i], type: WidthType.DXA}, borders: t.borders ? undefined : noBorders, children: [new Paragraph({alignment: align(t.cols[i].align), children: runs({text: c.text || "", style: e.style})})]}))}))}));
+      out.push(new Table({width: {size: 9026 * Math.min(1, total / contentW), type: WidthType.DXA}, columnWidths: widths, rows: t.rows.map(r => new TableRow({children: r.cells.map((c, i) => new TableCell({width: {size: c.colspan > 1 ? widths.reduce((p, q) => p + q, 0) : widths[i], type: WidthType.DXA}, columnSpan: c.colspan > 1 ? c.colspan : undefined, borders: t.borders ? undefined : noBorders, children: [new Paragraph({alignment: align(c.colspan > 1 ? "left" : t.cols[i].align), children: runs({text: c.text || "", style: e.style}, c.colspan > 1)})]}))}))}));
       out.push(new Paragraph({children: [], spacing: {after: 60}})); return; }
     if ((e.text || "").includes("\t") && e.type === "paragraph") { const [before, after] = e.text.split("\t"); out.push(new Paragraph({tabStops: [{type: TabStopType.RIGHT, position: TabStopPosition.MAX, leader: LeaderType.DOT}], children: [...runs({text: before, style: e.style}), new TextRun({children: [new Tab(), after || ""], font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined})]})); return; }
     if (e.type === "heading") { out.push(new Paragraph({children: runs(e, true), heading: e.heading === 1 ? HeadingLevel.HEADING_1 : e.heading === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3, alignment: align(e.align)})); return; }
@@ -594,6 +650,7 @@ async function renderSettings() {
      <div class="kv"><span>Downloaded models</span><b>${sr.modelFiles ? `${sr.modelFiles} file${sr.modelFiles === 1 ? "" : "s"} · ${fmtSize(sr.models)}` : "none"}</b></div>
      <div class="kv"><span>Total for this site</span><b>${sr.usage ? `${fmtSize(sr.usage)}${sr.quota ? ` of ${fmtSize(sr.quota)} available` : ""}` : "unknown"}</b></div>
      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="s_clear">Delete all documents</button><button class="btn" id="s_cache">Remove cached models</button></div></div>
+   <div class="card pad"><h3>Improve the models</h3><p class="small mut" style="margin:8px 0 12px">Every line you correct in a review is a training example. Export them as line images with the right text and send the file to the ThaOCR maintainer, or use it with the training scripts, to retrain the recogniser on your kind of documents. Nothing is sent automatically.</p><button class="btn" id="s_corr">${icon("download")}Export corrected lines (${correctedLines().length})</button></div>
    <div class="card pad" style="border-color:#f3c7c7"><h3>Reset everything</h3><p class="small mut" style="margin:8px 0 12px">Removes all documents, page images, edits, downloaded models, the device measurement and your settings, so this site takes no space in your browser. The page then starts over as on a first visit. Models download again when you next scan.</p><button class="btn danger" id="s_wipe">${icon("trash")}Reset everything</button></div></div></div>`;
   $("#s_out").onchange = e => { store.settings.output = e.target.value; store.save(); };
   $("#s_name").onchange = e => { store.settings.name = e.target.value.trim() || "Local user"; store.save(); };
@@ -605,6 +662,7 @@ async function renderSettings() {
   $("#s_load").onclick = async () => { try { await ensureModels((m) => toast(m)); renderSettings(); } catch (e) { toast("failed: " + e.message); } };
   $("#s_clear").onclick = async () => { if (confirm("Remove all documents from this browser? This cannot be undone.")) { await store.clear(); sidebar(); renderSettings(); } };
   $("#s_cache").onclick = async () => { await T.clearModelCache(); localStorage.removeItem("thaocr.device.v1"); resetModels(); toast("cached models removed"); renderSettings(); };
+  $("#s_corr").onclick = exportCorrections;
   $("#s_wipe").onclick = async () => {
     if (!confirm("Reset ThaOCR in this browser?\n\nAll documents, page images, edits, downloaded models and settings on this device will be removed. Export anything you want to keep first.\n\nThis cannot be undone.")) return;
     const b = $("#s_wipe"); b.disabled = true; b.textContent = "Resetting…";
@@ -613,6 +671,22 @@ async function renderSettings() {
     catch (e) { console.error(e); toast("reset failed: " + e.message); b.disabled = false; return; }
     location.hash = "#/scan"; location.reload(); };
 }
+/* ---------------------------------------------------------------- corrections -> training data */
+function correctedLines() { const out = []; for (const d of store.docs) for (const b of d.result.blocks) for (const l of (b.lines || [])) { const k = lineKey(b, l); if ((d.reviewed || {})[k] === "edited" && l.text) out.push({d, b, l}); } return out; }
+async function exportCorrections() {
+  const items = correctedLines(); if (!items.length) { toast("no edited lines yet"); return; }
+  toast(`packing ${items.length} corrected line${items.length === 1 ? "" : "s"}…`);
+  const imgs = new Map(), rows = [];
+  for (const {d, b, l} of items) {
+    let im = imgs.get(d.page_id); if (!im) { im = new Image(); im.src = d.image_url; try { await im.decode(); } catch { continue; } imgs.set(d.page_id, im); }
+    const pad = l.box.height * 0.25, sx = Math.max(0, l.box.x - pad), sy = Math.max(0, l.box.y - pad * 0.5), sw = Math.min(d.width - sx, l.box.width + 2 * pad), sh = Math.min(d.height - sy, l.box.height + pad);
+    const c = document.createElement("canvas"); c.width = Math.round(sw); c.height = Math.round(sh); c.getContext("2d").drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    rows.push({text: l.text, image_png_base64: c.toDataURL("image/png").split(",")[1], width: c.width, height: c.height, source: d.result.source || "ocr", block: b.cls, confidence_before: l.confidence_before ?? null, document: groupName(d), page: pageNo(d), page_id: d.page_id, line: l.reading_order});
+  }
+  const meta = {format: "thaocr-corrections/1", exported: new Date().toISOString(), lines: rows.length, note: "Each item is a line crop (PNG) with the text as corrected by the user. Grey-scale, height-normalise to 48 px and train the CRNN with training/rec."};
+  download(`thaocr-corrections-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({meta, items: rows}), "application/json"); toast(`exported ${rows.length} lines`);
+}
+
 /* ---------------------------------------------------------------- storage footprint + full reset */
 async function storageReport() {
   const r = {docs: store.docs.reduce((a, d) => a + (d.size || 0), 0), models: 0, modelFiles: 0, usage: 0, quota: 0};

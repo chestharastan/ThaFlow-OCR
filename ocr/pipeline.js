@@ -263,40 +263,56 @@
     const s = Math.min(1, maxW / (x1 - x0)), c = document.createElement("canvas"); c.width = Math.round((x1 - x0) * s); c.height = Math.round((y1 - y0) * s); c.getContext("2d").drawImage(canvas, x0, y0, x1 - x0, y1 - y0, 0, 0, c.width, c.height); return {url: c.toDataURL("image/png")}; }
   const blockText = lines => lines.filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? l.bullet + " " : "") + l.text).join("\n");
   /* ---------------------------------------------------------------- tables: cells from ruling lines / alignment */
-  /** Ruling lines inside a box from ink projections. -> {vx: [x...], hy: [y...]} (page pixels) */
-  function findRules(canvas, box, medH) {
+  /** Skew of a set of lines (radians, positive = clockwise on screen) from the top edges of their quads. */
+  function skewOf(lines) { const a = lines.filter(l => l.bbox[2] - l.bbox[0] > 3 * (l.bbox[3] - l.bbox[1])).map(l => Math.atan2(l.quad[1][1] - l.quad[0][1], l.quad[1][0] - l.quad[0][0])); return a.length ? U.median(a) : 0; }
+  /** Ruling lines inside a box from ink projections on a de-skewed copy of the region. -> {vx: [x...], hy: [y...]} in the de-skewed frame */
+  function findRules(canvas, box, medH, ang) {
     const x0 = Math.max(0, Math.floor(box[0])), y0 = Math.max(0, Math.floor(box[1])), x1 = Math.min(canvas.width, Math.ceil(box[2])), y1 = Math.min(canvas.height, Math.ceil(box[3])), w = x1 - x0, h = y1 - y0;
     if (w < 8 || h < 8) return {vx: [], hy: []};
-    const d = canvas.getContext("2d", {willReadFrequently: true}).getImageData(x0, y0, w, h).data, colC = new Int32Array(w), rowC = new Int32Array(h);
+    const off = document.createElement("canvas"); off.width = w; off.height = h; const g = off.getContext("2d", {willReadFrequently: true}); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+    if (Math.abs(ang) > 0.002) { g.translate(w / 2, h / 2); g.rotate(-ang); g.translate(-w / 2, -h / 2); } g.drawImage(canvas, x0, y0, w, h, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, colC = new Int32Array(w), rowC = new Int32Array(h);
     for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i += 4) { if ((d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10 < 140) { colC[x]++; rowC[y]++; } }
     const runs = (cnt, n, need, maxW) => { const out = []; let st = -1; for (let i = 0; i <= n; i++) { const on = i < n && cnt[i] >= need; if (on && st < 0) st = i; if (!on && st >= 0) { if (i - st <= maxW) out.push((st + i - 1) / 2); st = -1; } } return out; };
     const thick = Math.max(2, 0.35 * medH);
-    return {vx: runs(colC, w, 0.7 * h, thick).map(x => x + x0), hy: runs(rowC, h, 0.7 * w, thick).map(y => y + y0)};
+    return {vx: runs(colC, w, 0.5 * h, thick).map(x => x + x0), hy: runs(rowC, h, 0.5 * w, thick).map(y => y + y0)};
   }
-  const NUMERIC_RE = /^[\d០-៩.,:%\s\-–/នាក់]+$/;
-  /** Cell grid of a table block. Columns come from vertical rules, else from the left edges of the lines; rows from
-      horizontal rules, else from baselines (a baseline row that has nothing in the first column continues the row
-      above it, which is how a 2-line cell looks in a borderless list). -> {borders, cols, rows} or null */
+  const NUMERIC_RE = /^[\d០-៩.,:%\s\-–/នាក់៛]+$/;
+  /** Cell grid of a table block. Lines are first de-skewed (photos are rarely straight; a 1° tilt chains the cells of
+      neighbouring rows). Columns come from vertical rules, else from the left edges of the lines; rows from horizontal
+      rules, else from baselines (a baseline row that has nothing in the first column continues the row above it). A row
+      whose only text runs across several columns is a group header and spans the table. -> {borders, cols, rows} or null */
   function tableGrid(b, img) {
     const lines = b.lines.filter(l => l.text); if (lines.length < 2) return null;
-    const [bx0, , bx1] = b.box, medH = U.median(lines.map(l => l.bbox[3] - l.bbox[1])) || 10;
-    const rules = b.borders === false ? {vx: [], hy: []} : findRules(img.canvas, b.box, medH);
+    const medH = U.median(lines.map(l => l.bbox[3] - l.bbox[1])) || 10, ang = skewOf(lines), cx = (b.box[0] + b.box[2]) / 2, cy = (b.box[1] + b.box[3]) / 2, cs = Math.cos(ang), sn = Math.sin(ang);
+    const rot = ([x, y]) => [cx + (x - cx) * cs + (y - cy) * sn, cy - (x - cx) * sn + (y - cy) * cs]; // de-skew about the box centre
+    const geo = new Map(lines.map(l => [l, U.bboxOf(l.quad.map(rot))])), bb = l => geo.get(l);
+    const bx0 = Math.min(...lines.map(l => bb(l)[0])) - 0.3 * medH, bx1 = Math.max(...lines.map(l => bb(l)[2])) + 0.3 * medH;
+    const rules = b.borders === false ? {vx: [], hy: []} : findRules(img.canvas, b.box, medH, ang);
     let edges;
     if (rules.vx.length >= 2) { edges = rules.vx.slice(); if (edges[0] - bx0 > medH) edges.unshift(bx0); if (bx1 - edges[edges.length - 1] > medH) edges.push(bx1); }
-    else { const xs = lines.map(l => l.bbox[0]).sort((p, q) => p - q), cl = []; for (const x of xs) { const c = cl[cl.length - 1]; if (c && x - c.max < 1.5 * medH) { c.max = x; c.n++; } else cl.push({min: x, max: x, n: 1}); }
+    else { const xs = lines.map(l => bb(l)[0]).sort((p, q) => p - q), cl = []; for (const x of xs) { const c = cl[cl.length - 1]; if (c && x - c.max < 1.5 * medH) { c.max = x; c.n++; } else cl.push({min: x, max: x, n: 1}); }
       const keep = cl.filter(c => c.n >= 2 || cl.length <= 3); edges = [bx0, ...keep.slice(1).map(c => c.min - 0.4 * medH), bx1]; }
     const nCols = edges.length - 1; if (nCols < 2) return null;
-    const colOf = l => { const cx = l.bbox[0] + Math.min(0.5 * medH, (l.bbox[2] - l.bbox[0]) / 2); for (let i = 0; i < nCols; i++) if (cx < edges[i + 1]) return i; return nCols - 1; };
-    let bands = rules.hy.length >= 2 ? rules.hy.slice(0, -1).map((y, i) => [y, rules.hy[i + 1]]) : rowsOf(lines).map(r => [Math.min(...r.map(l => l.bbox[1])), Math.max(...r.map(l => l.bbox[3]))]);
-    if (rules.hy.length >= 2) { const top = Math.min(...lines.map(l => l.bbox[1])), bot = Math.max(...lines.map(l => l.bbox[3])); if (top < bands[0][0] - 2) bands.unshift([top, bands[0][0]]); if (bot > bands[bands.length - 1][1] + 2) bands.push([bands[bands.length - 1][1], bot]); }
-    const rowOf = l => { const cy = (l.bbox[1] + l.bbox[3]) / 2; let best = 0, bd = Infinity; bands.forEach(([y0, y1], i) => { const d = cy < y0 ? y0 - cy : cy > y1 ? cy - y1 : 0; if (d < bd) { bd = d; best = i; } }); return best; };
+    const colOf = l => { const g = bb(l), x = g[0] + Math.min(0.5 * medH, (g[2] - g[0]) / 2); for (let i = 0; i < nCols; i++) if (x < edges[i + 1]) return i; return nCols - 1; };
+    const lastColOf = l => { const g = bb(l), x = g[2] - Math.min(0.5 * medH, (g[2] - g[0]) / 2); for (let i = 0; i < nCols; i++) if (x < edges[i + 1]) return i; return nCols - 1; };
+    const rowsDeskewed = ls => { const items = ls.slice().sort((p, q) => (bb(p)[1] + bb(p)[3]) - (bb(q)[1] + bb(q)[3])), rows = [[items[0]]];
+      for (const ln of items.slice(1)) { const g = bb(ln), c = (g[1] + g[3]) / 2, h = g[3] - g[1], row = rows[rows.length - 1]; const rc = row.reduce((a, r) => a + (bb(r)[1] + bb(r)[3]) / 2, 0) / row.length, rh = U.median(row.map(r => bb(r)[3] - bb(r)[1]));
+        if (Math.abs(c - rc) < 0.5 * Math.min(rh, h)) row.push(ln); else rows.push([ln]); } return rows; };
+    let bands = rules.hy.length >= 2 ? rules.hy.slice(0, -1).map((y, i) => [y, rules.hy[i + 1]]) : rowsDeskewed(lines).map(r => [Math.min(...r.map(l => bb(l)[1])), Math.max(...r.map(l => bb(l)[3]))]);
+    if (rules.hy.length >= 2) { const top = Math.min(...lines.map(l => bb(l)[1])), bot = Math.max(...lines.map(l => bb(l)[3])); if (top < bands[0][0] - 2) bands.unshift([top, bands[0][0]]); if (bot > bands[bands.length - 1][1] + 2) bands.push([bands[bands.length - 1][1], bot]); }
+    const rowOf = l => { const g = bb(l), c = (g[1] + g[3]) / 2; let best = 0, bd = Infinity; bands.forEach(([y0, y1], i) => { const d = c < y0 ? y0 - c : c > y1 ? c - y1 : 0; if (d < bd) { bd = d; best = i; } }); return best; };
     let grid = bands.map(() => Array.from({length: nCols}, () => []));
     for (const l of lines) grid[rowOf(l)][colOf(l)].push(l);
-    if (rules.hy.length < 2) for (let r = grid.length - 1; r > 0; r--) { const first = grid[r].findIndex(c => c.length); if (first > 0 && grid[r - 1][0].length && !grid[r][0].length) { grid[r].forEach((c, ci) => grid[r - 1][ci].push(...c)); grid.splice(r, 1); bands.splice(r, 1); } }
-    const rows = []; grid.forEach((cells, i) => { if (!cells.some(c => c.length)) return; rows.push({y0: +bands[i][0].toFixed(1), y1: +bands[i][1].toFixed(1), cells: cells.map(c => { c.sort((p, q) => (p.bbox[1] + p.bbox[3]) - (q.bbox[1] + q.bbox[3]) || p.bbox[0] - q.bbox[0]); return {lines: c, text: paragraphText(c)}; })}); });
+    // group header: the only text in the row runs across 2+ columns -> one spanning cell
+    const span = grid.map(cells => { const filled = cells.map((c, i) => c.length ? i : -1).filter(i => i >= 0); if (filled.length !== 1) return false; const ls = cells[filled[0]]; return ls.some(l => lastColOf(l) > filled[0]); });
+    if (rules.hy.length < 2) for (let r = grid.length - 1; r > 0; r--) { if (span[r] || span[r - 1]) continue; const first = grid[r].findIndex(c => c.length); if (first > 0 && grid[r - 1][0].length && !grid[r][0].length) { grid[r].forEach((c, ci) => grid[r - 1][ci].push(...c)); grid.splice(r, 1); bands.splice(r, 1); span.splice(r, 1); } }
+    const cellOf = c => { c.sort((p, q) => (bb(p)[1] + bb(p)[3]) - (bb(q)[1] + bb(q)[3]) || bb(p)[0] - bb(q)[0]); return {lines: c, text: paragraphText(c)}; };
+    const rows = []; grid.forEach((cells, i) => { if (!cells.some(c => c.length)) return; const row = {y0: +bands[i][0].toFixed(1), y1: +bands[i][1].toFixed(1)};
+      if (span[i]) { const all = cells.flat(); row.cells = [Object.assign(cellOf(all), {colspan: nCols})]; row.span = true; } else row.cells = cells.map(cellOf); rows.push(row); });
     if (rows.length < 2) return null;
-    const cols = []; for (let i = 0; i < nCols; i++) { const cl = rows.flatMap(r => r.cells[i].lines); cols.push({x0: +edges[i].toFixed(1), x1: +edges[i + 1].toFixed(1), align: cl.length && cl.every(l => NUMERIC_RE.test(l.text)) ? "right" : "left"}); }
-    return {borders: rules.vx.length >= 2 || rules.hy.length >= 2, cols, rows};
+    const cols = []; for (let i = 0; i < nCols; i++) { const cl = rows.filter(r => !r.span).flatMap(r => r.cells[i].lines); cols.push({x0: +edges[i].toFixed(1), x1: +edges[i + 1].toFixed(1), align: cl.length && cl.every(l => NUMERIC_RE.test(l.text)) ? "right" : "left"}); }
+    return {borders: rules.vx.length >= 2 || rules.hy.length >= 2, cols, rows, skew: +(ang * 180 / Math.PI).toFixed(2)};
   }
 
   function render(img, blocks) {
@@ -311,7 +327,7 @@
           indent_level: ln.indent_level || 0, indent: 0, tab: false, bullet: ln.bullet || null, bullet_box: ln.bullet_box ? ln.bullet_box.map(v => +v.toFixed(1)) : null, baseline: null, core_h: null, font: ln.font ? Object.fromEntries(Object.entries(ln.font).filter(([k]) => k !== "probs")) : null, bold: !!ln.bold, spans: [], text_color: null};
         blk.lines.push(line); rendered.set(ln, line); });
       blk.text = blockText(blk.lines); blk.bold = blk.lines.length > 0 && blk.lines.filter(l => l.text).every(l => l.bold);
-      if (cls === "table") { const tg = tableGrid(b, img); if (tg) { blk.table = {borders: tg.borders, cols: tg.cols, rows: tg.rows.map(r => ({y0: r.y0, y1: r.y1, cells: r.cells.map(c => ({text: c.text, lines: c.lines.map(l => rendered.get(l)).filter(Boolean).map(l => l.reading_order)}))}))}; blk.text = tg.rows.map(r => r.cells.map(c => c.text).join("\t")).join("\n"); } }
+      if (cls === "table") { const tg = tableGrid(b, img); if (tg) { blk.table = {borders: tg.borders, skew: tg.skew, cols: tg.cols, rows: tg.rows.map(r => ({y0: r.y0, y1: r.y1, span: !!r.span, cells: r.cells.map(c => ({text: c.text, colspan: c.colspan || 1, lines: c.lines.map(l => rendered.get(l)).filter(Boolean).map(l => l.reading_order)}))}))}; blk.text = tg.rows.map(r => r.cells.map(c => c.text).join("\t")).join("\n"); } }
       blk.paragraphs = (b.paras || []).map(p => { const pl = p.lines.map(l => rendered.get(l)).filter(l => l && l.text); if (!pl.length) return null; const levels = pl.map(l => l.indent_level);
         return {indent_level: p.indent_level || 0, bullet: p.bullet || null, text: paragraphText(pl), lines: pl.map(l => l.reading_order), runs: paragraphRuns(pl), first_line_indent: pl.length > 1 && levels[0] > Math.min(...levels.slice(1))}; }).filter(Boolean);
       out.push(blk); });
@@ -374,6 +390,14 @@
     todo.forEach(([b, ln], i) => { const pl = plan[i];
       if (pl.leader) { const L = pl.left >= 0 ? res[pl.left] : null, R = pl.right >= 0 ? res[pl.right] : null; ln.text = cleanLeaderText(((L ? L.text.trim() : "") + "\t" + (R ? R.text.trim() : ""))).replace(/^\t$/, ""); ln.tab = !!ln.text; ln.confidence = Math.min(L ? L.confidence : 1, R ? R.confidence : 1); ln.char_pos = null; return; }
       const r = res[pl.idx]; let text = r.text.trim(); ln.confidence = r.confidence; ln.char_pos = r.pos; if (isBulletGlyph(text, ln)) { ln.text = bulletGlyph(text); ln.isBullet = true; } else { ln.text = text; leaderTab(ln); } void b; });
+    // second opinion: doubtful lines (often handwriting or stamps) go through the handwriting-trained recogniser too
+    timings.second_opinion = 0;
+    if (T.config.secondOpinion !== false) { const doubtful = todo.map((x, i) => [x, i]).filter(([[, ln], i]) => !plan[i].leader && !ln.isBullet && (ln.confidence || 0) < (T.config.secondOpinionBelow ?? 0.6) && (ln.text || "").length >= 1);
+      const altId = doubtful.length ? T.altRecId() : null;
+      if (altId && altId !== T.active.rec) { try { if (!T.sessions.rec_alt) { step("rec", "loading the handwriting recogniser"); await T.loadAltRec(altId, p => step("rec", "loading the handwriting recogniser", {done: p.got, total: p.total})); }
+          step("rec", "second opinion on doubtful lines", {done: 0, total: doubtful.length}); const alt = await T.recognize(doubtful.map(([, i]) => crops[plan[i].idx]), 16, null, "rec_alt");
+          doubtful.forEach(([[, ln]], k) => { const r = alt[k]; const t = (r.text || "").trim(); if (t && r.confidence > (ln.confidence || 0) + 0.12) { ln.text = t; ln.confidence = r.confidence; ln.char_pos = r.pos; ln.alt_model = altId; timings.second_opinion++; } }); }
+        catch (e) { console.warn("second opinion skipped", e); } } }
     joinRowSegments(blocks); for (const b of blocks) for (const ln of b.lines) if (ln.merged && !ln.tab) leaderTab(ln);
     timings.rec_ms = ms(t); timings.lines_recognized = todo.length;
     // fonts (printed lines)
@@ -411,5 +435,5 @@
     return assemble(img, blocks, timings, tStart, extra || {});
   };
 
-  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble};
+  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf};
 })();

@@ -119,14 +119,24 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 /* ---------- process */
 .stage{background:var(--soft);border-radius:var(--r);padding:28px;display:grid;place-items:center;min-height:480px}
 .stage .pageimg{position:relative;box-shadow:var(--shadow-2);background:#fff;max-width:100%;overflow:hidden;border-radius:4px}
-.scanline{position:absolute;left:0;right:0;height:2px;background:var(--ink);box-shadow:0 0 12px rgba(17,17,17,.5);animation:scan 2.4s linear infinite}
-@keyframes scan{0%{top:0}100%{top:100%}}
+/* scan line: a full-size layer moved with transform (GPU, no layout), gliding down and back up with easing */
+.scanline{position:absolute;inset:0;pointer-events:none;animation:scan 2.8s cubic-bezier(.45,0,.55,1) infinite alternate;will-change:transform;transition:opacity .4s}
+.scanline::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--ink);box-shadow:0 0 14px 1px rgba(17,17,17,.45)}
+.scanline::after{content:"";position:absolute;left:0;right:0;top:2px;height:56px;background:linear-gradient(rgba(17,17,17,.07),transparent)}
+.scanline.soft{opacity:.35;animation-duration:3.6s}
+@keyframes scan{from{transform:translateY(0)}to{transform:translateY(calc(100% - 2px))}}
+.badge.ink .dot{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+.pipe .step{transition:opacity .3s}
+.pipe .step .n{transition:background .3s,border-color .3s,color .3s}
+.pipe .ms:empty{display:none}
+@media (prefers-reduced-motion:reduce){.scanline,.badge.ink .dot{animation:none}}
 .prog{font-size:40px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1}
 .pipe .step{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line-2);align-items:flex-start}
 .pipe .step:last-child{border-bottom:0}
 .pipe .n{width:22px;height:22px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;font-size:11px;flex:none;color:var(--mut);background:#fff}
 .pipe .step.done .n{background:var(--ink);border-color:var(--ink);color:#fff}
-.pipe .step.run .n{border-color:var(--ink)}
+.pipe .step.run .n{border-color:var(--ink);font-size:0}
 .pipe .step.run .n::after{content:"";width:10px;height:10px;border:2px solid var(--ink);border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
 .pipe b{display:block;font-weight:500}.pipe span{font-size:12px;color:var(--mut)}
 .pipe .ms{margin-left:auto;color:var(--mut-2);font-size:12px}
