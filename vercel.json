@@ -1,0 +1,16 @@
+{
+  "headers": [
+    { "source": "/(.*)", "headers": [
+      { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+      { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" },
+      { "key": "X-Content-Type-Options", "value": "nosniff" }
+    ] },
+    { "source": "/(vendor|fonts)/(.*)", "headers": [
+      { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+    ] },
+    { "source": "/(index.html|app.js|app.css|docview.js|models/models.json)", "headers": [
+      { "key": "Cache-Control", "value": "no-cache" }
+    ] },
+    { "source": "/ocr/(.*)", "headers": [ { "key": "Cache-Control", "value": "no-cache" } ] }
+  ]
+}

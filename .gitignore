@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.bak*
+.DS_Store
+# model binaries are served from Hugging Face (Thareah/ThaOCR-models); keep only the manifest and *_meta.json here
+models/**/*.onnx
+models/**/*.vocab.json
+
+# never commit document photos (they can contain personal data)
+samples/
+*.jpg
+*.jpeg
+*.heic
+!logo*.png
+# onnxruntime-web / docx come from jsDelivr; a local copy for offline work lives here
+vendor/

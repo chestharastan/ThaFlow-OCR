@@ -1,0 +1,424 @@
+{
+ "schema": 2,
+ "defaults": {
+  "layout": "layout_yolo11n_v3_22cls",
+  "textdet": "db_ppocrv5_khmer_v2",
+  "rec": "crnn_m_v2_stamp2",
+  "font": "font_cnn_v2",
+  "structure": "struct_v1"
+ },
+ "models": [
+  {
+   "id": "layout_yolo11s_v1_12cls",
+   "stage": "layout",
+   "kind": "yolo_onnx",
+   "file": "layout/layout_v1_12cls.onnx",
+   "version": "v1",
+   "label": "YOLO11s layout v1 (12 classes, ONNX)",
+   "sha256": "ba63720539569529d110a74047e12aec901439f610e74ff144f9a8654847e627",
+   "input_size": [
+    1024,
+    1024
+   ],
+   "classes": [
+    "text",
+    "title",
+    "list",
+    "table",
+    "figure",
+    "signature",
+    "stamp",
+    "logo",
+    "qr_barcode",
+    "handwriting",
+    "header_footer",
+    "formula"
+   ]
+  },
+  {
+   "id": "db_ppocrv5_khmer_v1",
+   "stage": "textdet",
+   "kind": "db_onnx",
+   "file": "textdet/db_v1.onnx",
+   "version": "v1",
+   "label": "DB PP-OCRv5 mobile, Khmer fine-tuned v1",
+   "sha256": "e2d2ff137899fc3f1c868e687710425b161f055207be2a3583fcad8db2f6e94d",
+   "input_size": [
+    null,
+    null
+   ]
+  },
+  {
+   "id": "db_ppocrv5_orig",
+   "stage": "textdet",
+   "kind": "db_onnx",
+   "file": "textdet/db_ppocrv5_orig.onnx",
+   "version": "v0",
+   "label": "DB PP-OCRv5 mobile (original)",
+   "sha256": "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d",
+   "input_size": [
+    null,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v1",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v1.onnx",
+   "version": "v1",
+   "label": "CRNN-CTC m v1 (fp32)",
+   "sha256": "8add76fd3711901f8fc6579707af11a1cba9454ae57923d11d93d8ca893b784d",
+   "vocab": "rec/crnn_m_v1.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v1_int8",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v1_int8.onnx",
+   "version": "v1",
+   "label": "CRNN-CTC m v1 (int8)",
+   "sha256": "28a2672b09fdc16479f3f9f06bcdd9a41fdeec33d948d7fa314e30b9aa19493a",
+   "vocab": "rec/crnn_m_v1.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "layout_yolo11s_v2_r2_21cls",
+   "stage": "layout",
+   "kind": "yolo_onnx",
+   "file": "layout/layout_v2_r2_21cls.onnx",
+   "version": "v2",
+   "label": "YOLO11s layout v2 round 2 (21 classes, ONNX)",
+   "sha256": "d0d51b9b87d9c7982b1b4fc595423d2abfbf85aea8c339b1473a90ff18d1b88d",
+   "input_size": [
+    1024,
+    1024
+   ],
+   "classes": [
+    "text",
+    "title",
+    "section_header",
+    "list",
+    "table",
+    "figure",
+    "caption",
+    "header",
+    "footer",
+    "page_number",
+    "footnote",
+    "formula",
+    "signature",
+    "stamp",
+    "logo",
+    "qr_code",
+    "barcode",
+    "photo",
+    "handwriting",
+    "checkbox",
+    "form_field"
+   ]
+  },
+  {
+   "id": "db_ppocrv5_khmer_v2",
+   "stage": "textdet",
+   "kind": "db_onnx",
+   "file": "textdet/db_v2.onnx",
+   "version": "v2",
+   "label": "DB PP-OCRv5 mobile v2 (docs + exam sheets + handwriting)",
+   "sha256": "606e608bd5e977abc85e426832f539df1988fa00c021b7a0b2a2e9ed2f7430f4",
+   "input_size": [
+    null,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2.onnx",
+   "version": "v2",
+   "label": "CRNN-CTC M v2 (print + handwriting, fp32)",
+   "sha256": "0916d482eedeb5eadd94fed1cb4a4ae87c1e4d86a414132a23f1845960f0f961",
+   "vocab": "rec/crnn_m_v2.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2_int8",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_int8.onnx",
+   "version": "v2",
+   "label": "CRNN-CTC M v2 (print + handwriting, int8 4.8 MB)",
+   "sha256": "ea7ddddf02099cf08f29876460677c8fcd4201e968664cc7da84925f196d97dc",
+   "vocab": "rec/crnn_m_v2.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "layout_yolo11n_v2_21cls",
+   "stage": "layout",
+   "kind": "yolo_onnx",
+   "file": "layout/layout_v2_n_21cls.onnx",
+   "version": "v2",
+   "label": "YOLO11n layout v2 phone-size (21 classes, ONNX, 2.6M params)",
+   "sha256": "389dc78d2cc62301811b1e29a5005cd6a9b45e3fc98ef86147a209ec0bd487e9",
+   "input_size": [
+    1024,
+    1024
+   ],
+   "classes": [
+    "text",
+    "title",
+    "section_header",
+    "list",
+    "table",
+    "figure",
+    "caption",
+    "header",
+    "footer",
+    "page_number",
+    "footnote",
+    "formula",
+    "signature",
+    "stamp",
+    "logo",
+    "qr_code",
+    "barcode",
+    "photo",
+    "handwriting",
+    "checkbox",
+    "form_field"
+   ]
+  },
+  {
+   "id": "crnn_m_v2_hw",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_hw.onnx",
+   "version": "v2.1",
+   "label": "CRNN-CTC M v2.1 (print + REAL handwriting, fp32)",
+   "sha256": "35d02d36f11ce9e52de7663ce699bb45ea64f5c5119eb22a42e640b9057500d0",
+   "vocab": "rec/crnn_m_v2_hw.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2_hw_int8",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_hw_int8.onnx",
+   "version": "v2.1",
+   "label": "CRNN-CTC M v2.1 (print + REAL handwriting, int8 4.8 MB)",
+   "sha256": "f4ccfd35def42cb151e5bd51466363d6cd73604fc809c67abb14d495ca26490e",
+   "vocab": "rec/crnn_m_v2_hw.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "font_cnn_v1",
+   "stage": "font",
+   "kind": "font_cnn_onnx",
+   "file": "font/font_cnn_v1.onnx",
+   "version": "v1",
+   "label": "Font CNN v1 (29 Khmer/Latin families)",
+   "sha256": "9a3b7162aa9066c568733cb61ce4d6b45838b7f170871eddd57e500b3fe22148",
+   "input_size": [
+    32,
+    256
+   ]
+  },
+  {
+   "id": "struct_v1",
+   "stage": "structure",
+   "kind": "structure_onnx",
+   "file": "structure/struct_v1.onnx",
+   "version": "v1",
+   "label": "Structure Transformer v1 (roles, paragraphs, levels, reading order)",
+   "sha256": "5178d047a0e178572d7e6170330e882da606e673360c0b9945fe9dc70bc4bd9a",
+   "input_size": [
+    23
+   ]
+  },
+  {
+   "id": "layout_yolo11n_v3_22cls",
+   "stage": "layout",
+   "kind": "yolo_onnx",
+   "file": "layout/layout_v3_n_22cls.onnx",
+   "version": "v3",
+   "label": "YOLO11n layout v3 phone-size (22 classes: + decoration, letterheads)",
+   "sha256": "772d49d5f26438dee69ecef6b0f67b2a62c5b2fc349e73b16311112271f3e877",
+   "input_size": [
+    1024,
+    1024
+   ],
+   "classes": [
+    "text",
+    "title",
+    "section_header",
+    "list",
+    "table",
+    "figure",
+    "caption",
+    "header",
+    "footer",
+    "page_number",
+    "footnote",
+    "formula",
+    "signature",
+    "stamp",
+    "logo",
+    "qr_code",
+    "barcode",
+    "photo",
+    "handwriting",
+    "checkbox",
+    "form_field",
+    "decoration"
+   ]
+  },
+  {
+   "id": "crnn_m_v2_stamp",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_stamp.onnx",
+   "version": "v2.2",
+   "label": "CRNN-CTC M v2.2 (print + handwriting + text under stamps)",
+   "sha256": "1ee0c53323acc0271847f3ee23c75a42091545dd3d763a67619a109c1926071c",
+   "vocab": "rec/crnn_m_v2_stamp.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2_stamp_int8",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_stamp_int8.onnx",
+   "version": "v2.2",
+   "label": "CRNN-CTC M v2.2 int8 (phone size)",
+   "sha256": "5e808e3177592cd4ef8530002b8e4002cb7cba1f2ba962a6124a069647c6a3ba",
+   "vocab": "rec/crnn_m_v2_stamp.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2_stamp2",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_stamp2.onnx",
+   "version": "v2.3",
+   "label": "CRNN-CTC M v2.3 (print + handwriting + text under stamps, gentle)",
+   "sha256": "7943dd3b6df465f8c9fafc7c5bc356970bbbbb17a2b817519d72241a6e24e2b1",
+   "vocab": "rec/crnn_m_v2_stamp2.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2_stamp2_int8",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_stamp2_int8.onnx",
+   "version": "v2.3",
+   "label": "CRNN-CTC M v2.3 int8 (phone size)",
+   "sha256": "152ad9e1e49d64c2fd9117c37694b207c01ca4769fe451ef4c6097e842faac52",
+   "vocab": "rec/crnn_m_v2_stamp2.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2_stamp3",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_stamp3.onnx",
+   "version": "v2.4",
+   "label": "CRNN-CTC M v2.4 (v2.3 + 4 epochs)",
+   "sha256": "80510d973429ee85efaa8912dc11a3c0fe3025c575d9db2cebfd283a32ed5bd6",
+   "vocab": "rec/crnn_m_v2_stamp3.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "crnn_m_v2_stamp3_int8",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v2_stamp3_int8.onnx",
+   "version": "v2.4",
+   "label": "CRNN-CTC M v2.4 int8 (phone size)",
+   "sha256": "f2ced5b928abd0bb1f6e23bc2925331eeb0501ec0eccc332fbe8216bdae08110",
+   "vocab": "rec/crnn_m_v2_stamp3.vocab.json",
+   "input_size": [
+    48,
+    null
+   ]
+  },
+  {
+   "id": "font_cnn_v2",
+   "stage": "font",
+   "kind": "font_cnn_onnx",
+   "file": "font/font_cnn_v2.onnx",
+   "version": "v2",
+   "label": "Font CNN v2 (family, weight, slant + learned em size)",
+   "sha256": "fe1c760baa8d436f1769edd3297fd460980c9f6d266cf0c88224d7e9cdb5ff40",
+   "input_size": [
+    32,
+    256
+   ]
+  }
+ ],
+ "sizes": {
+  "layout/layout_v1_12cls.onnx": 38167956,
+  "textdet/db_v1.onnx": 4759758,
+  "textdet/db_ppocrv5_orig.onnx": 4826518,
+  "rec/crnn_m_v1.onnx": 19060368,
+  "rec/crnn_m_v1.vocab.json": 1198,
+  "rec/crnn_m_v1_int8.onnx": 4817737,
+  "layout/layout_v2_r2_21cls.onnx": 38182025,
+  "textdet/db_v2.onnx": 4759758,
+  "rec/crnn_m_v2.onnx": 19060368,
+  "rec/crnn_m_v2.vocab.json": 1198,
+  "rec/crnn_m_v2_int8.onnx": 4817737,
+  "layout/layout_v2_n_21cls.onnx": 10905839,
+  "rec/crnn_m_v2_hw.onnx": 19060368,
+  "rec/crnn_m_v2_hw.vocab.json": 1198,
+  "rec/crnn_m_v2_hw_int8.onnx": 4817737,
+  "font/font_cnn_v1.onnx": 1935274,
+  "structure/struct_v1.onnx": 3978971,
+  "layout/layout_v3_n_22cls.onnx": 10946514,
+  "rec/crnn_m_v2_stamp.onnx": 19060368,
+  "rec/crnn_m_v2_stamp.vocab.json": 1198,
+  "rec/crnn_m_v2_stamp_int8.onnx": 4817737,
+  "rec/crnn_m_v2_stamp2.onnx": 19060368,
+  "rec/crnn_m_v2_stamp2.vocab.json": 1198,
+  "rec/crnn_m_v2_stamp2_int8.onnx": 4817737,
+  "rec/crnn_m_v2_stamp3.onnx": 19060368,
+  "rec/crnn_m_v2_stamp3.vocab.json": 1198,
+  "rec/crnn_m_v2_stamp3_int8.onnx": 4817737,
+  "font/font_cnn_v2.onnx": 1937813
+ },
+ "app": "ThaOCR web"
+}

@@ -1,0 +1,25 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>ThaOCR engine test</title></head><body>
+<pre id="log"></pre><pre id="out"></pre>
+<script src="ocr/engine.js"></script><script src="ocr/pipeline.js"></script><script src="ocr/device.js"></script>
+<script>
+const log = m => { document.getElementById("log").textContent += m + "\n"; console.log(m); };
+window.onerror = (m, s, l, c, e) => log("ERROR " + m + " @" + l + ":" + c + " " + (e && e.stack));
+(async () => {
+  const q = new URLSearchParams(location.search), T = window.ThaOCR;
+  T.config.backend = q.get("backend") || "wasm"; if (q.get("threads")) T.config.threads = +q.get("threads");
+  log("isolated=" + self.crossOriginIsolated + " threads=" + navigator.hardwareConcurrency);
+  const info = await T.deviceInfo(); log("device " + JSON.stringify(info));
+  const t0 = performance.now();
+  await T.load({}, p => { if (p.got === p.total) log(`loaded ${p.stage} ${p.id} ${(p.total / 1e6).toFixed(1)} MB cache=${p.fromCache}`); });
+  log("models loaded in " + Math.round(performance.now() - t0) + " ms, backend=" + T.backendUsed + " rec=" + T.active.rec);
+  if (q.get("bench")) { const b = await T.benchmark(); log("bench " + JSON.stringify(b) + " estimate40=" + T.estimate(b, 40) + "s"); }
+  const img = q.get("img");  // e.g. ?img=/path/to/local-test.jpg (no sample images are shipped)
+  if (!img) { document.body.insertAdjacentHTML("beforeend", "<p>Add ?img=&lt;image url&gt; to the address to run the engine test.</p>"); throw new Error("no ?img= given"); }
+  const res = await T.process(img, s => log(`[${s.stage}] ${s.msg}${s.total ? ` ${s.done}/${s.total}` : ""}`));
+  log("timings " + JSON.stringify(res.timings));
+  const lines = res.blocks.flatMap(b => (b.lines || []).map(l => ({c: b.cls, o: b.reading_order, t: l.text, p: +l.confidence.toFixed(3), f: l.font && l.font.family})));
+  const summary = {width: res.width, height: res.height, blocks: res.blocks.map(b => `${b.reading_order}:${b.cls}${b.relabel ? "(" + b.relabel + ")" : ""}[${b.lines.length}]${b.font ? " " + b.font.family + " " + (b.font_px || "") : ""} align=${b.align}`), lines, doc_elements: res.document.elements.map(e => e.type + (e.heading ? e.heading : "") + (e.items ? "[" + e.items.length + "]" : "") + (e.columns ? "{cols " + e.columns.length + "}" : "")), margins: res.document.margins, models: res.models};
+  document.getElementById("out").textContent = JSON.stringify(summary, null, 1);
+  document.title = "DONE";
+})().catch(e => { log("FAILED " + e.message + "\n" + e.stack); document.title = "FAILED"; });
+</script></body></html>
