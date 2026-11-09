@@ -21,7 +21,7 @@
     const strong = info.webgpu || (info.threads >= 8 && (info.memoryGB || 8) >= 8 && !info.mobile);
     const weak = info.mobile || info.threads <= 4 || (info.memoryGB && info.memoryGB <= 4) || info.saveData;
     const tier = strong ? "high" : weak ? "low" : "mid";
-    const d = T.manifest ? T.manifest.defaults : {layout: "layout_yolo11n_v3_22cls", textdet: "db_ppocrv5_khmer_v2", rec: "crnn_m_v2_stamp2", font: "font_cnn_v2", structure: "struct_v1"};
+    const d = T.manifest ? T.manifest.defaults : {layout: "layout_yolo11n_v4_22cls", textdet: "db_ppocrv5_khmer_v2", rec: "crnn_m_v2_stamp2", font: "font_cnn_v2", structure: "struct_v1"};
     const choice = Object.assign({}, d);
     const has = id => !T.manifest || T.manifest.models.some(m => m.id === id);
     if (tier === "high") { if (has("crnn_m_v2_stamp3")) choice.rec = "crnn_m_v2_stamp3"; }

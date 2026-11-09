@@ -1,7 +1,7 @@
 {
  "schema": 2,
  "defaults": {
-  "layout": "layout_yolo11n_v3_22cls",
+  "layout": "layout_yolo11n_v4_22cls",
   "textdet": "db_ppocrv5_khmer_v2",
   "rec": "crnn_m_v2_stamp2",
   "font": "font_cnn_v2",
@@ -293,6 +293,80 @@
    ]
   },
   {
+   "id": "layout_yolo11n_v4_22cls",
+   "stage": "layout",
+   "kind": "yolo_onnx",
+   "file": "layout/layout_v4_n_22cls.onnx",
+   "version": "v4",
+   "label": "YOLO11n layout v4 (stamps, logos, handwriting, letterheads; mAP50-95 0.85)",
+   "sha256": "58168bc5ecae10b9548d72612f272f91b97f25f230374cdda174c6b686ed5ed9",
+   "input_size": [
+    1024,
+    1024
+   ],
+   "classes": [
+    "text",
+    "title",
+    "section_header",
+    "list",
+    "table",
+    "figure",
+    "caption",
+    "header",
+    "footer",
+    "page_number",
+    "footnote",
+    "formula",
+    "signature",
+    "stamp",
+    "logo",
+    "qr_code",
+    "barcode",
+    "photo",
+    "handwriting",
+    "checkbox",
+    "form_field",
+    "decoration"
+   ]
+  },
+  {
+   "id": "layout_yolo11n_v4_22cls_int8",
+   "stage": "layout",
+   "kind": "yolo_onnx",
+   "file": "layout/layout_v4_n_22cls_int8.onnx",
+   "version": "v4",
+   "label": "YOLO11n layout v4 int8 (phone size, 3.1 MB)",
+   "sha256": "198a2edfa43831c195d63499a16823d3841ad045551923955fef43e5cc58959e",
+   "input_size": [
+    1024,
+    1024
+   ],
+   "classes": [
+    "text",
+    "title",
+    "section_header",
+    "list",
+    "table",
+    "figure",
+    "caption",
+    "header",
+    "footer",
+    "page_number",
+    "footnote",
+    "formula",
+    "signature",
+    "stamp",
+    "logo",
+    "qr_code",
+    "barcode",
+    "photo",
+    "handwriting",
+    "checkbox",
+    "form_field",
+    "decoration"
+   ]
+  },
+  {
    "id": "crnn_m_v2_stamp",
    "stage": "rec",
    "kind": "crnn_onnx",
@@ -418,7 +492,9 @@
   "rec/crnn_m_v2_stamp3.onnx": 19060368,
   "rec/crnn_m_v2_stamp3.vocab.json": 1198,
   "rec/crnn_m_v2_stamp3_int8.onnx": 4817737,
-  "font/font_cnn_v2.onnx": 1937813
+  "font/font_cnn_v2.onnx": 1937813,
+  "layout/layout_v4_n_22cls.onnx": 10946514,
+  "layout/layout_v4_n_22cls_int8.onnx": 3296959
  },
  "app": "ThaOCR web"
 }
