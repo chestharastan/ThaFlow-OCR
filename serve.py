@@ -11,7 +11,7 @@ class H(SimpleHTTPRequestHandler):
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if self.path.startswith(("/models/", "/vendor/", "/fonts/")) else "no-cache")
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if self.path.startswith(("/models/", "/vendor/", "/fonts/")) and not self.path.endswith(".json") else "no-cache")
         super().end_headers()
     def log_message(self, fmt, *args):
         if "404" in (args[1] if len(args) > 1 else ""): super().log_message(fmt, *args)

@@ -91,7 +91,7 @@ const docStatus = d => d.status === "failed" ? ["Failed", "bad"] : d.status === 
 /* ---------------------------------------------------------------- device + models */
 let DEVICE = null, RECO = null, LOADING = null;
 async function deviceCheck() { DEVICE = await T.deviceInfo(); await T.loadManifestSafe(); RECO = T.recommend(DEVICE); return RECO; }
-T.loadManifestSafe = async () => { if (T.manifest) return T.manifest; const r = await fetch(T.config.manifestBase + "models.json"); T.manifest = await r.json(); return T.manifest; };
+T.loadManifestSafe = async () => { if (T.manifest) return T.manifest; const r = await fetch(T.config.manifestBase + "models.json", {cache: "no-cache"}); T.manifest = await r.json(); return T.manifest; };
 function chosenModels() { const base = RECO ? RECO.choice : (T.manifest ? T.manifest.defaults : {}); return Object.assign({}, base, store.settings.models || {}); }
 function applyScale() { const sc = RECO ? RECO.scale : {longMin: 1600, longMax: 2200}; T.config.longMin = store.settings.longMin || sc.longMin; T.config.longMax = store.settings.longMax || sc.longMax; T.config.backend = store.settings.backend || "auto"; }
 /** Load the chosen model set (once); onProgress(text, fraction) */
