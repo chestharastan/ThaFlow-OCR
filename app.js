@@ -117,8 +117,8 @@ function fontScale(b, l) { if (!KHMER.test(l.text || "")) return 1; const f = li
 
 /* ---------------------------------------------------------------- drawing: original with boxes */
 function drawOriginal(canvas, img, page, opts) {
-  const S = Math.max(1, page.width / 1000), c = canvas.getContext("2d");
-  canvas.width = page.width; canvas.height = page.height; c.drawImage(img, 0, 0, page.width, page.height);
+  const S = Math.max(1, page.width / 1000), c = canvas.getContext("2d"), k = opts.scale && opts.scale < 1 ? opts.scale : 1;
+  canvas.width = Math.max(1, Math.round(page.width * k)); canvas.height = Math.max(1, Math.round(page.height * k)); c.setTransform(k, 0, 0, k, 0, 0); c.drawImage(img, 0, 0, page.width, page.height);
   if (!opts.boxes) return;
   for (const b of page.blocks) {
     c.strokeStyle = b.color || "#111111"; c.lineWidth = 2 * S; c.setLineDash(CROP_CLASSES.has(b.cls) ? [6 * S, 4 * S] : []);
@@ -467,8 +467,16 @@ function renderReview(id) {
       if (a === "png") pages.forEach((s, i) => setTimeout(() => { const x = document.createElement("a"); x.href = s.image_url; x.download = multi ? `${base} page ${i + 1}.jpg` : s.filename; x.click(); }, i * 400)); }; };
   // page images + canvases
   const imgs = {}; for (const s of pages) { const im = new Image(); im.src = s.image_url; imgs[s.page_id] = im; }
-  const paintPage = s => { const im = imgs[s.page_id], cv = view.querySelector(`canvas[data-pid="${s.page_id}"]`); if (!cv || !im.complete || !im.naturalWidth) return; const page = s.result;
-    drawOriginal(cv, im, page, {boxes: REVIEW.boxes, labels: REVIEW.labels, lines: REVIEW.boxes}); const v = cv.parentElement; v.style.width = Math.min(page.width, (v.parentElement.parentElement.clientWidth - 32)) * REVIEW.zoom + "px"; };
+  // Pages are painted only while near the viewport, at display resolution (a 100-page PDF must not hold 100 full
+  // canvases in memory); the full-size view is the lightbox.
+  const near = new Set(); let io = null;
+  const sizeView = s => { const v = view.querySelector(`.view[data-pid="${s.page_id}"]`); if (!v) return 0; const page = s.result, w = Math.min(page.width, (v.parentElement.parentElement.clientWidth - 32)) * REVIEW.zoom; v.style.width = w + "px"; v.style.height = (w * page.height / page.width) + "px"; return w; };
+  const paintPage = s => { const im = imgs[s.page_id], cv = view.querySelector(`canvas[data-pid="${s.page_id}"]`); if (!cv || !im || !im.complete || !im.naturalWidth) return; const page = s.result, w = sizeView(s);
+    if (multi && !near.has(s.page_id)) { if (cv.width > 1) { cv.width = 1; cv.height = 1; } return; }
+    const k = Math.min(1, (w * (window.devicePixelRatio || 1)) / page.width); drawOriginal(cv, im, page, {boxes: REVIEW.boxes, labels: REVIEW.labels, lines: REVIEW.boxes, scale: k}); cv.style.width = "100%"; cv.style.height = "100%"; };
+  pages.forEach(sizeView);
+  if (orig && multi && window.IntersectionObserver) { io = new IntersectionObserver(es => { for (const e of es) { const pid = e.target.dataset.pid; if (e.isIntersecting) near.add(pid); else near.delete(pid); paintPage(byId[pid]); } }, {root: orig, rootMargin: "150% 0px"}); orig.querySelectorAll(".view[data-pid]").forEach(el => io.observe(el)); }
+  else pages.forEach(s => near.add(s.page_id));
   const paintSnips = () => { for (const c of view.querySelectorAll(".snip canvas")) { const s = byId[c.dataset.pid], im = imgs[c.dataset.pid]; if (!s || !im || !im.complete || !im.naturalWidth) continue; const page = s.result, [bid, lo] = c.dataset.key.split(":"); const b = page.blocks.find(x => x.id === bid), l = b && b.lines.find(x => String(x.reading_order) === lo); if (!l) continue;
       const pad = l.box.height * 0.3, sx = Math.max(0, l.box.x - pad), sy = Math.max(0, l.box.y - pad), sw = Math.min(page.width - sx, l.box.width + 2 * pad), sh = Math.min(page.height - sy, l.box.height + 2 * pad);
       c.width = Math.round(sw * 2); c.height = Math.round(sh * 2); c.getContext("2d").drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height); } };
@@ -483,9 +491,14 @@ function renderReview(id) {
     document.addEventListener("keydown", REVIEW.key); }
   const wrap = $("#r_docwrap");
   if (wrap) {
-    for (const s of pages) { const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`), page = s.result;
-      if (REVIEW.pane === "document" && window.DocView && page.document) { const avail = Math.max(320, wrap.clientWidth - 32); body.appendChild(DocView.render(page, {scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)})); }
-      else { const dp = buildDocPage(s, (b, l, text) => applyEdit(s, b, l, text)); body.appendChild(dp); const fit = () => scaleToFit(body, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); } }
+    const avail = Math.max(320, wrap.clientWidth - 32), rendered = new Set();
+    const renderPage = s => { if (rendered.has(s.page_id)) return; rendered.add(s.page_id); const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`), page = s.result; if (!body) return; body.style.minHeight = "";
+      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
+      else { const dp = buildDocPage(s, (b, l, text) => applyEdit(s, b, l, text)); body.appendChild(dp); const fit = () => scaleToFit(body, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); } };
+    if (multi && window.IntersectionObserver) { // placeholders keep the scroll height; a page is built when it comes near
+      for (const s of pages) { const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`); if (body) body.style.minHeight = (Math.min(1, avail / s.result.width) * s.result.height) + "px"; }
+      const dio = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) { renderPage(byId[e.target.dataset.pid]); dio.unobserve(e.target); } }, {root: wrap, rootMargin: "100% 0px"}); wrap.querySelectorAll(".pgbody").forEach(el => dio.observe(el)); }
+    else pages.forEach(renderPage);
     view.querySelectorAll("#r_pane button").forEach(b => b.onclick = () => { REVIEW.pane = b.dataset.p; renderReview(id); });
   }
   view.querySelectorAll(".rev").forEach(card => { const key = card.dataset.key, s = byId[card.dataset.pid], page = s.result, [bid, lo] = key.split(":"), b = page.blocks.find(x => x.id === bid), l = b.lines.find(x => String(x.reading_order) === lo);
