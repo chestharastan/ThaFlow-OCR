@@ -197,7 +197,7 @@
 .dv-page .dv-rule hr{border:0;border-top:1px solid #999;margin:0}
 .dv-page .dv-row,.dv-page .dv-footer-row{display:flex;align-items:flex-start}.dv-page .dv-col>*{max-width:none}
 .dv-page .dv-low{background:#fff3cd;border-radius:2px}
-.dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.5}.dv-page .dv-table td{padding:.05em .35em;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.dv-page .dv-table.bordered td{border:1px solid #333}.dv-page .dv-table td.dv-span{font-weight:600}
+.dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.5}.dv-page .dv-table td{padding:.05em .35em;white-space:pre-line;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.dv-page .dv-table.bordered td{border:1px solid #333}.dv-page .dv-table td.dv-span{font-weight:600}
 .dv-page .dv-tabline{display:flex;align-items:baseline;white-space:nowrap}.dv-page .dv-tabline .dv-leader{flex:1;min-width:1em;border-bottom:1px dotted currentColor;margin:0 .3em;transform:translateY(-.3em)}.dv-page .dv-tabline .dv-tr{flex:none}
 .dv-page [contenteditable]:focus{outline:2px solid #99f6e4;outline-offset:2px;border-radius:2px}
 .dv-page b{font-weight:700}`;

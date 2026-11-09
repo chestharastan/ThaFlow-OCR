@@ -52,7 +52,14 @@ Device tiers (ocr/device.js): **Best quality** (WebGPU or >= 8 threads and >= 8 
 Layout rules added in the browser version (not in the server): segments of one line are recognised separately and
 joined in reading order; dot leaders become a tab with the page number right-aligned (Document view and Word);
 `table` regions and side-by-side aligned blocks (a list with counts at the right) are rebuilt as cell grids from
-ruling lines or line alignment and exported as real Word tables; line order inside a block is always geometric.
+ruling lines or line alignment and exported as real Word tables; a narrow column of labels at the left margin
+("យោង ៖", "សំណុំលិខិត៖" - bold or ending in a colon) whose rows line up with wider value blocks becomes a borderless
+label/value table, so labels stay beside their values; in a bordered table a faint rule the scan lost is recovered
+from the baseline rows that start a record. Line order inside a block is geometric.
+
+Settings > Page analysis switches these rules off ("Models only"): grouping, reading order and paragraphs then come
+from the layout and structure models alone (`ThaOCR.config.rules = false`). On the test pages this is clearly worse
+(paragraphs split per line, dot-leader lines broken, label columns out of order), so the default keeps the rules.
 
 Doubtful lines (confidence < 0.6, typically handwriting or text under a stamp) get a second opinion from the
 handwriting-trained recogniser (`crnn_m_v2_hw_int8`, loaded on first need); the better-scoring reading wins.

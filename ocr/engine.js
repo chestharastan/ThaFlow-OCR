@@ -34,7 +34,7 @@
   // ortBase: where the onnxruntime-web bundle + wasm come from (jsDelivr sends CORS/CORP headers, so it works under COEP).
   // manifestBase: where models.json and the small *_meta.json live (this site). modelBase: where the ONNX/vocab files
   // are downloaded from (Hugging Face by default, so the static host stays small; must send CORS headers).
-  T.config = {ortBase: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/", manifestBase: "models/", modelBase: "https://huggingface.co/Thareah/ThaOCR-models/resolve/main/", backend: "auto", threads: 0, longMin: 1600, longMax: 2200, cascade: true, font: true, structure: true};
+  T.config = {ortBase: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/", manifestBase: "models/", modelBase: "https://huggingface.co/Thareah/ThaOCR-models/resolve/main/", backend: "auto", threads: 0, rules: true, longMin: 1600, longMax: 2200, cascade: true, font: true, structure: true};
   T.manifest = null; T.sessions = {}; T.active = {}; T.meta = {}; T.backendUsed = null;
   T.listeners = []; T.emit = (ev) => T.listeners.forEach(f => { try { f(ev); } catch (e) { console.warn(e); } });
 

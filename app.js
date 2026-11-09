@@ -32,6 +32,8 @@ const ICONS = {
   "chevron-right": '<path d="m9 6 6 6-6 6"/>',
   "arrow-right": '<path d="M5 12h14M13 6l6 6-6 6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  select: '<path d="M4 7V5a1 1 0 0 1 1-1h2M11 4h2M17 4h2a1 1 0 0 1 1 1v2M20 11v1M4 11v2M4 17v2a1 1 0 0 0 1 1h2M11 20h1"/><path d="m14 13 7 2.6-3.1 1.3-1.3 3.1z"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   panel: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',
   'panel-right': '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
@@ -67,7 +69,7 @@ const LATIN = {"Latin serif": '"Liberation Serif","Times New Roman",serif', "Lat
 const T = window.ThaOCR;
 const store = {
   skey: "thaocr.settings.v1", docs: [], jobs: [],
-  settings: {output: "docx", name: "Local user", models: {}, backend: "auto", tier: null, noticeSeen: false, longMin: null, longMax: null},
+  settings: {output: "docx", name: "Local user", models: {}, backend: "auto", tier: null, noticeSeen: false, longMin: null, longMax: null, rules: true},
   load() { try { Object.assign(this.settings, JSON.parse(localStorage.getItem(this.skey) || "{}")); } catch {} },
   save() { localStorage.setItem(this.skey, JSON.stringify(this.settings)); },
   async init() { this.load(); this.docs = await T.db.all(); for (const d of this.docs) d.image_url = await T.db.imageUrl(d.page_id); },
@@ -93,7 +95,7 @@ let DEVICE = null, RECO = null, LOADING = null;
 async function deviceCheck() { DEVICE = await T.deviceInfo(); await T.loadManifestSafe(); RECO = T.recommend(DEVICE); return RECO; }
 T.loadManifestSafe = async () => { if (T.manifest) return T.manifest; const r = await fetch(T.config.manifestBase + "models.json", {cache: "no-cache"}); T.manifest = await r.json(); return T.manifest; };
 function chosenModels() { const base = RECO ? RECO.choice : (T.manifest ? T.manifest.defaults : {}); return Object.assign({}, base, store.settings.models || {}); }
-function applyScale() { const sc = RECO ? RECO.scale : {longMin: 1600, longMax: 2200}; T.config.longMin = store.settings.longMin || sc.longMin; T.config.longMax = store.settings.longMax || sc.longMax; T.config.backend = store.settings.backend || "auto"; }
+function applyScale() { const sc = RECO ? RECO.scale : {longMin: 1600, longMax: 2200}; T.config.longMin = store.settings.longMin || sc.longMin; T.config.longMax = store.settings.longMax || sc.longMax; T.config.backend = store.settings.backend || "auto"; T.config.rules = store.settings.rules !== false; }
 /** Load the chosen model set (once); onProgress(text, fraction) */
 function ensureModels(onProgress) {
   if (LOADING) return LOADING;
@@ -236,7 +238,7 @@ document.addEventListener("click", e => { if (!e.target.closest(".menu") && !e.t
 /* ---------------------------------------------------------------- scan (home) */
 function pickFiles(cb, camera) { const inp = $("#fileinput"); if (camera) inp.setAttribute("capture", "environment"); else inp.removeAttribute("capture"); inp.value = ""; inp.onchange = () => cb([...inp.files]); inp.click(); }
 function wireDrop(el, cb) { el.ondragover = e => { e.preventDefault(); el.classList.add("on"); }; el.ondragleave = () => el.classList.remove("on"); el.ondrop = e => { e.preventDefault(); el.classList.remove("on"); cb([...e.dataTransfer.files].filter(f => /^image\//.test(f.type) || /\.(tiff?)$/i.test(f.name) || T.pdf.isPdf(f))); }; }
-document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/") || T.pdf.isPdf(x)); if (f.length) addAndShow(f); });
+document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/") || T.pdf.isPdf(x)); if (!f.length) return; if (location.hash.startsWith("#/select")) selAdd(f); else addAndShow(f); });
 async function addFiles(files) {
   for (const f of files) {
     if (T.pdf.isPdf(f)) { const p = {file: f, url: "", w: 0, h: 0, pdf: {pages: 0, error: null}}; pending.push(p);
@@ -598,7 +600,7 @@ function docxParagraphs(D, page) {
     if (e.type === "list") { e.items.forEach(it => out.push(new Paragraph({children: runs(it), bullet: {level: Math.min(8, it.level || 0)}, alignment: align(e.align)}))); return; }
     if (e.type === "figure" || e.type === "decoration") { if (!e.crop) return; try { const wIn = Math.max(0.3, Math.min(6.3, 6.3 * (e.box[2] / contentW))), hIn = wIn * (e.box[3] / Math.max(1, e.box[2])); out.push(new Paragraph({alignment: align(e.align), children: [new ImageRun({type: "png", data: dataUrlBytes(e.crop), transformation: {width: Math.round(wIn * 96), height: Math.round(hIn * 96)}})]})); } catch (err) { console.warn(err); } return; }
     if (e.type === "table" && e.table) { const t = e.table, total = Math.max(1, t.cols[t.cols.length - 1].x1 - t.cols[0].x0), widths = t.cols.map(c => Math.max(300, Math.round(9026 * (c.x1 - c.x0) / total)));
-      out.push(new Table({width: {size: 9026 * Math.min(1, total / contentW), type: WidthType.DXA}, columnWidths: widths, rows: t.rows.map(r => new TableRow({children: r.cells.map((c, i) => new TableCell({width: {size: c.colspan > 1 ? widths.reduce((p, q) => p + q, 0) : widths[i], type: WidthType.DXA}, columnSpan: c.colspan > 1 ? c.colspan : undefined, borders: t.borders ? undefined : noBorders, children: [new Paragraph({alignment: align(c.colspan > 1 ? "left" : t.cols[i].align), children: runs({text: c.text || "", style: e.style}, c.colspan > 1)})]}))}))}));
+      out.push(new Table({width: {size: 9026 * Math.min(1, total / contentW), type: WidthType.DXA}, columnWidths: widths, rows: t.rows.map(r => new TableRow({children: r.cells.map((c, i) => new TableCell({width: {size: c.colspan > 1 ? widths.reduce((p, q) => p + q, 0) : widths[i], type: WidthType.DXA}, columnSpan: c.colspan > 1 ? c.colspan : undefined, borders: t.borders ? undefined : noBorders, children: (c.text || "").split("\n").map(tx => new Paragraph({alignment: align(c.colspan > 1 ? "left" : t.cols[i].align), children: runs({text: tx, style: e.style}, c.colspan > 1)}))}))}))}));
       out.push(new Paragraph({children: [], spacing: {after: 60}})); return; }
     if ((e.text || "").includes("\t") && e.type === "paragraph") { const [before, after] = e.text.split("\t"); out.push(new Paragraph({tabStops: [{type: TabStopType.RIGHT, position: TabStopPosition.MAX, leader: LeaderType.DOT}], children: [...runs({text: before, style: e.style}), new TextRun({children: [new Tab(), after || ""], font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined})]})); return; }
     if (e.type === "heading") { out.push(new Paragraph({children: runs(e, true), heading: e.heading === 1 ? HeadingLevel.HEADING_1 : e.heading === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3, alignment: align(e.align)})); return; }
@@ -644,7 +646,8 @@ async function renderSettings() {
     <button class="btn sm ghost" id="s_reset">Back to the recommended set</button></div>
    <div class="card pad"><h2 style="margin-bottom:12px">Preferences</h2>
     <div class="field"><label>Your name</label><div class="sel"><input id="s_name" value="${esc(store.settings.name)}"></div></div>
-    <div class="field"><label>Default export</label><div class="sel">${outputSel("s_out", store.settings.output)}</div></div></div></div>
+    <div class="field"><label>Default export</label><div class="sel">${outputSel("s_out", store.settings.output)}</div></div>
+    <div class="field"><label>Page analysis</label><div class="sel"><select id="s_rules"><option value="rules" ${store.settings.rules !== false ? "selected" : ""}>Models + layout rules (recommended: paragraphs, label columns, tables from alignment, reading order)</option><option value="model" ${store.settings.rules === false ? "selected" : ""}>Models only (layout + structure model decide grouping and order)</option></select></div><div class="small mut">Applies to the next scan. "Run OCR again" on a document re-reads it with the current choice.</div></div></div></div>
    <div style="display:flex;flex-direction:column;gap:16px"><div class="card pad"><h3>Space used in this browser</h3><p class="small mut" style="margin:8px 0 12px">Everything ThaOCR keeps lives in this browser, on this device. There is no server copy.</p>
      <div class="kv"><span>Documents and page images</span><b>${store.docs.length} document${store.docs.length === 1 ? "" : "s"} · ${fmtSize(bytes)}</b></div>
      <div class="kv"><span>Downloaded models</span><b>${sr.modelFiles ? `${sr.modelFiles} file${sr.modelFiles === 1 ? "" : "s"} · ${fmtSize(sr.models)}` : "none"}</b></div>
@@ -653,6 +656,7 @@ async function renderSettings() {
    <div class="card pad"><h3>Improve the models</h3><p class="small mut" style="margin:8px 0 12px">Every line you correct in a review is a training example. Export them as line images with the right text and send the file to the ThaOCR maintainer, or use it with the training scripts, to retrain the recogniser on your kind of documents. Nothing is sent automatically.</p><button class="btn" id="s_corr">${icon("download")}Export corrected lines (${correctedLines().length})</button></div>
    <div class="card pad" style="border-color:#f3c7c7"><h3>Reset everything</h3><p class="small mut" style="margin:8px 0 12px">Removes all documents, page images, edits, downloaded models, the device measurement and your settings, so this site takes no space in your browser. The page then starts over as on a first visit. Models download again when you next scan.</p><button class="btn danger" id="s_wipe">${icon("trash")}Reset everything</button></div></div></div>`;
   $("#s_out").onchange = e => { store.settings.output = e.target.value; store.save(); };
+  $("#s_rules").onchange = e => { store.settings.rules = e.target.value === "rules"; store.save(); applyScale(); toast(store.settings.rules ? "rules on for the next scan" : "models only for the next scan"); };
   $("#s_name").onchange = e => { store.settings.name = e.target.value.trim() || "Local user"; store.save(); };
   $("#s_backend").onchange = e => { store.settings.backend = e.target.value; store.save(); resetModels(); renderSettings(); };
   view.querySelectorAll("#s_tiers .tier").forEach(t => t.onclick = () => { store.settings.tier = t.dataset.t === RECO.tier ? null : t.dataset.t; store.settings.models = {}; const fake = T.recommend(Object.assign({}, DEVICE, {webgpu: t.dataset.t === "high", mobile: t.dataset.t === "low", threads: t.dataset.t === "high" ? 8 : t.dataset.t === "low" ? 4 : 6, memoryGB: t.dataset.t === "low" ? 4 : 8})); RECO = Object.assign({}, RECO, {choice: fake.choice, scale: fake.scale}); store.settings.longMin = null; store.settings.longMax = null; store.save(); resetModels(); renderSettings(); });
@@ -717,8 +721,129 @@ function renderHelp() {
   <h3>Shortcuts</h3><p><kbd>Ctrl</kbd>+<kbd>V</kbd> pastes an image into the Scan page.</p></div>`;
 }
 
+
+/* ---------------------------------------------------------------- select: drag a box, read just that part, copy it */
+// Files live only in this tab (nothing is saved). Text lines are detected once per image; each box then reads
+// only the lines it covers (lines cut by the box are cut too), so a box is read in well under a second.
+const SEL = {files: [], cur: -1, autoCopy: localStorage.getItem("thaocr.selAutoCopy") === "1"};
+async function selAdd(list) {
+  const add = [];
+  for (const f of list) {
+    if (T.pdf.isPdf(f)) { try { const doc = await T.pdf.open(f), n = doc.numPages, base = f.name.replace(/\.pdf$/i, "");
+        for (let k = 1; k <= n; k++) add.push({name: n > 1 ? `${base} · page ${k}` : f.name, pdf: {doc, k, last: k === n}}); }
+      catch (e) { toast("could not open " + f.name); } }
+    else if (f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|bmp|gif|tiff?)$/i.test(f.name)) add.push({name: f.name, file: f});
+  }
+  if (!add.length) return;
+  for (const e of add) Object.assign(e, {id: Math.random().toString(36).slice(2), boxes: [], img: null, lines: null, thumb: null});
+  SEL.files.push(...add); if (SEL.cur < 0 || location.hash !== "#/select") SEL.cur = SEL.files.length - add.length;
+  if (location.hash !== "#/select") location.hash = "#/select"; else renderSelect();
+}
+async function selImage(f) {  // -> {canvas,width,height}, decoded once
+  if (f.img) return f.img;
+  if (!f.imgP) f.imgP = (async () => { const im = f.pdf ? await T.pdf.render(await f.pdf.doc.getPage(f.pdf.k), 2200) : await T.loadImage(f.file);
+    const t = document.createElement("canvas"), s = 160 / Math.max(im.width, im.height); t.width = Math.round(im.width * s); t.height = Math.round(im.height * s); t.getContext("2d").drawImage(im.canvas, 0, 0, t.width, t.height);
+    f.thumb = t.toDataURL("image/jpeg", 0.7); f.img = im; return im; })();
+  return f.imgP;
+}
+async function selLines(f) {  // text lines of the whole page, detected once
+  if (!f.linesP) f.linesP = (async () => { const hint = $("#s_hint"); if (!T.loaded() && hint) hint.innerHTML = `<span class="spin" style="display:inline-block;vertical-align:-2px"></span> loading the OCR models (first time only)…`;
+    try { await ensureModels(); } finally { const h = $("#s_hint"); if (h) h.textContent = "Drag to select · click a box to see it"; } applyScale(); const im = await selImage(f); const ls = await T.detectLines(im.canvas); return ls.map(l => Object.assign(l, {bbox: l.bbox || T.util.bboxOf(l.quad)})); })();
+  try { return await f.linesP; } catch (e) { f.linesP = null; throw e; }
+}
+/** quad (tl,tr,br,bl) cut to the x range [x0,x1] along its top and bottom edges */
+function cutQuad(q, x0, x1) {
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const at = (a, b, x) => { const dx = b[0] - a[0]; return Math.min(1, Math.max(0, dx ? (x - a[0]) / dx : 0)); };
+  return [lerp(q[0], q[1], at(q[0], q[1], x0)), lerp(q[0], q[1], at(q[0], q[1], x1)), lerp(q[3], q[2], at(q[3], q[2], x1)), lerp(q[3], q[2], at(q[3], q[2], x0))];
+}
+async function selRead(f, box) {
+  const t0 = performance.now(), im = await selImage(f), lines = await selLines(f), [x0, y0, x1, y1] = box.r;
+  const picked = [];
+  for (const l of lines) { const [a, b, c, d] = l.bbox, h = d - b, ov = Math.min(d, y1) - Math.max(b, y0), ox = Math.min(c, x1) - Math.max(a, x0);
+    if (ov < 0.5 * h || ox < Math.min(0.6 * h, 0.5 * (c - a))) continue;            // most of the line height, and a real part of its width
+    const cut = a < x0 - 0.15 * h || c > x1 + 0.15 * h; picked.push({quad: cut ? cutQuad(l.quad, Math.max(a, x0), Math.min(c, x1)) : l.quad, bbox: [Math.max(a, x0), b, Math.min(c, x1), d], h}); }
+  // no detected line inside (a single word in a tight box, a logo text...): read the box itself as one line
+  if (!picked.length) { const h = y1 - y0; if (h < 6 || x1 - x0 < 6) return Object.assign(box, {text: "", conf: 0, ms: 0, state: "done"}); picked.push({quad: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], bbox: [x0, y0, x1, y1], h, whole: true}); }
+  // reading order: rows (centres close in y), left to right inside a row
+  picked.sort((p, q) => (p.bbox[1] + p.bbox[3]) - (q.bbox[1] + q.bbox[3]));
+  const rows = []; for (const p of picked) { const cy = (p.bbox[1] + p.bbox[3]) / 2, r = rows[rows.length - 1]; if (r && Math.abs(cy - r.cy) < 0.5 * Math.min(p.h, r.h)) r.items.push(p); else rows.push({cy, h: p.h, items: [p]}); }
+  const order = rows.flatMap(r => r.items.sort((p, q) => p.bbox[0] - q.bbox[0]));
+  const res = await T.recognize(order.map(p => T.cropLine(im.canvas, p.quad, 48)));
+  let k = 0; const text = rows.map(r => r.items.map(() => (res[k++].text || "").trim()).filter(Boolean).join(r.items.length > 1 ? "\t" : "")).filter(Boolean).join("\n");
+  const conf = res.length ? res.reduce((a, r) => a + r.confidence, 0) / res.length : 0;
+  return Object.assign(box, {text, conf, lines: order.length, ms: performance.now() - t0, state: "done"});
+}
+function selCopy(text) { if (!text) { toast("nothing to copy"); return; } navigator.clipboard.writeText(text).then(() => toast("copied"), () => toast("copy blocked by the browser")); }
+function renderSelect() {
+  const f = SEL.files[SEL.cur];
+  view.innerHTML = `
+  <div class="head"><div class="grow"><h1>Select</h1><p>Add photos, scans or PDFs, then drag a box over any part of a page. That part is read at once, ready to copy. Nothing is saved.</p></div>
+    <div class="tools"><label class="small mut" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer" title="Copy each new result to the clipboard"><input type="checkbox" id="s_auto" ${SEL.autoCopy ? "checked" : ""}> Copy automatically</label>
+      ${SEL.files.length ? `<button class="btn p" id="s_add">${icon("upload")} Add files</button>` : ""}</div></div>
+  ${!SEL.files.length ? `<div class="drop sel-empty" id="s_drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>Drop images or PDFs here</b><div class="small">JPG, PNG, WebP, TIFF, PDF · or paste with Ctrl+V · then drag a box over any part to read it</div></div>
+    <div class="acts"><button class="btn p" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>` : `
+  <div class="sel-grid">
+   <div class="sel-files card" id="s_files">${SEL.files.map((x, i) => `<button class="sel-file ${i === SEL.cur ? "cur" : ""}" data-i="${i}" title="${esc(x.name)}"><span class="th">${x.thumb ? `<img src="${x.thumb}" alt="">` : icon("image")}</span><span class="nm">${esc(x.name)}</span>${x.boxes.length ? `<span class="count">${x.boxes.length}</span>` : ""}<span class="rm" data-rm="${i}" title="Remove">${icon("x", "s")}</span></button>`).join("")}</div>
+   <div class="card sel-stage-card"><div class="panehead"><span style="color:var(--ink)">${esc(f.name)}</span><div class="grow"></div><span class="small mut" id="s_hint">Drag to select · click a box to see it</span></div>
+     <div class="stage sel-stage" id="s_drop"><div class="sel-page" id="s_page"><div class="sel-wait" id="s_wait"><span class="spin"></span> opening…</div></div></div></div>
+   <div class="sel-results" id="s_res"></div>
+  </div>`}`;
+  if ($("#s_add")) $("#s_add").onclick = () => pickFiles(selAdd); if ($("#s_browse")) { $("#s_browse").onclick = () => pickFiles(selAdd); $("#s_cam").onclick = () => pickFiles(selAdd, true); }
+  $("#s_auto").onchange = e => { SEL.autoCopy = e.target.checked; localStorage.setItem("thaocr.selAutoCopy", SEL.autoCopy ? "1" : "0"); };
+  if ($("#s_drop")) wireDrop($("#s_drop"), selAdd);
+  if (!f) return;
+  view.querySelectorAll(".sel-file").forEach(b => b.onclick = e => { const rm = e.target.closest("[data-rm]");
+    if (rm) { const i = +rm.dataset.rm; SEL.files.splice(i, 1); SEL.cur = Math.min(SEL.cur >= i && SEL.cur > 0 ? SEL.cur - 1 : SEL.cur, SEL.files.length - 1); renderSelect(); return; }
+    SEL.cur = +b.dataset.i; renderSelect(); });
+  selResults(f);
+  // thumbnails of files not decoded yet
+  SEL.files.forEach((x, i) => { if (!x.thumb) selImage(x).then(() => { const b = view.querySelector(`.sel-file[data-i="${i}"] .th`); if (b && SEL.files[i] === x) b.innerHTML = `<img src="${x.thumb}" alt="">`; }).catch(() => { }); });
+  selImage(f).then(im => { if (SEL.files[SEL.cur] !== f || !$("#s_page")) return; selMountPage(f, im); selLines(f).catch(e => toast("models: " + e.message)); })
+    .catch(e => { $("#s_wait").textContent = "Could not open this file: " + e.message; });
+}
+function selMountPage(f, im) {
+  const page = $("#s_page"); page.innerHTML = ""; const c = im.canvas; c.className = "sel-canvas"; page.appendChild(c);
+  const layer = document.createElement("div"); layer.className = "sel-layer"; page.appendChild(layer);
+  const toImg = e => { const r = c.getBoundingClientRect(); return [Math.min(im.width, Math.max(0, (e.clientX - r.left) / r.width * im.width)), Math.min(im.height, Math.max(0, (e.clientY - r.top) / r.height * im.height))]; };
+  const pctStyle = r => `left:${r[0] / im.width * 100}%;top:${r[1] / im.height * 100}%;width:${(r[2] - r[0]) / im.width * 100}%;height:${(r[3] - r[1]) / im.height * 100}%`;
+  const draw = () => { layer.innerHTML = f.boxes.map((b, i) => `<div class="sel-box ${b.state} ${b.id === f.focus ? "focus" : ""}" data-id="${b.id}" style="${pctStyle(b.r)}"><span class="tag">${i + 1}</span>${b.state === "reading" ? '<span class="sweep"></span>' : ""}</div>`).join(""); };
+  f.redraw = draw; draw();
+  let start = null, live = null;
+  layer.onpointerdown = e => { if (e.button !== 0) return; const hit = e.target.closest(".sel-box"); if (hit) { selFocus(f, hit.dataset.id); return; }
+    start = toImg(e); live = document.createElement("div"); live.className = "sel-box live"; layer.appendChild(live); layer.setPointerCapture(e.pointerId); e.preventDefault(); };
+  layer.onpointermove = e => { if (!start) return; const p = toImg(e); live.setAttribute("style", pctStyle([Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.max(start[0], p[0]), Math.max(start[1], p[1])])); };
+  layer.onpointerup = async e => { if (!start) return; const p = toImg(e), r = [Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.max(start[0], p[0]), Math.max(start[1], p[1])]; start = null; live.remove();
+    const disp = c.getBoundingClientRect().width / im.width; if ((r[2] - r[0]) * disp < 8 || (r[3] - r[1]) * disp < 8) return;  // a click, not a drag
+    const box = {id: Math.random().toString(36).slice(2), r, state: "reading", text: ""}; f.boxes.push(box); f.focus = box.id; draw(); selResults(f); selFileCount(f);
+    try { await selRead(f, box); if (SEL.autoCopy && box.text) selCopy(box.text); }
+    catch (err) { box.state = "failed"; box.err = err.message; }
+    if (f.redraw) f.redraw(); selResults(f); };
+  layer.onpointercancel = () => { start = null; if (live) live.remove(); };
+}
+function selFileCount(f) { const i = SEL.files.indexOf(f), b = view.querySelector(`.sel-file[data-i="${i}"]`); if (!b) return; let c = b.querySelector(".count"); if (!c) { c = document.createElement("span"); c.className = "count"; b.insertBefore(c, b.querySelector(".rm")); } c.textContent = f.boxes.length || ""; }
+function selFocus(f, id) { f.focus = id; if (f.redraw) f.redraw(); view.querySelectorAll(".sel-item").forEach(el => el.classList.toggle("focus", el.dataset.id === id)); const it = view.querySelector(`.sel-item[data-id="${id}"]`); if (it) it.scrollIntoView({block: "nearest", behavior: "smooth"}); }
+function selResults(f) {
+  const el = $("#s_res"); if (!el) return;
+  const all = f.boxes.filter(b => b.state === "done" && b.text).map(b => b.text).join("\n\n");
+  el.innerHTML = `<div class="card pad sel-reshead"><b class="grow">Selections${f.boxes.length ? ` · ${f.boxes.length}` : ""}</b>${f.boxes.length > 1 ? `<button class="btn sm" id="s_copyall">${icon("copy", "s")} Copy all</button>` : ""}${f.boxes.length ? `<button class="btn sm ghost" id="s_clear" title="Remove all boxes">${icon("trash", "s")}</button>` : ""}</div>
+   ${f.boxes.length ? f.boxes.map((b, i) => `<div class="card sel-item ${b.id === f.focus ? "focus" : ""}" data-id="${b.id}">
+      <div class="sel-ih"><span class="tag">${i + 1}</span><span class="small mut grow">${b.state === "reading" ? "reading…" : b.state === "failed" ? "failed" : `${b.lines || 0} line${b.lines === 1 ? "" : "s"} · ${Math.round((b.conf || 0) * 100)}% sure · ${fmtMs(b.ms || 0)}`}</span>
+        <button class="btn sm" data-copy="${b.id}" ${b.state !== "done" ? "disabled" : ""}>${icon("copy", "s")} Copy</button><button class="btn sm ghost" data-del="${b.id}" title="Remove">${icon("x", "s")}</button></div>
+      ${b.state === "reading" ? `<div class="sel-skel"><i></i><i></i><i></i></div>` : b.state === "failed" ? `<div class="small" style="color:var(--bad)">${esc(b.err || "")}</div>` : `<textarea class="sel-text" data-id="${b.id}" rows="${Math.min(10, Math.max(2, (b.text.match(/\n/g) || []).length + 1))}" spellcheck="false" placeholder="No text found in this box">${esc(b.text)}</textarea>`}</div>`).join("")
+     : `<div class="card pad small mut">Drag a box over the text you want. Each box appears here with a Copy button. You can edit the text before copying.</div>`}`;
+  const byId = id => f.boxes.find(b => b.id === id);
+  el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => selCopy(byId(b.dataset.copy).text));
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { f.boxes = f.boxes.filter(x => x.id !== b.dataset.del); if (f.redraw) f.redraw(); selResults(f); selFileCount(f); });
+  el.querySelectorAll(".sel-text").forEach(t => t.oninput = () => { byId(t.dataset.id).text = t.value; });
+  el.querySelectorAll(".sel-item").forEach(it => it.onmouseenter = () => { if (f.focus !== it.dataset.id) { f.focus = it.dataset.id; if (f.redraw) f.redraw(); } });
+  if ($("#s_copyall")) $("#s_copyall").onclick = () => selCopy(f.boxes.filter(b => b.state === "done" && b.text).map(b => b.text).join("\n\n"));
+  if ($("#s_clear")) $("#s_clear").onclick = () => { f.boxes = []; if (f.redraw) f.redraw(); selResults(f); selFileCount(f); };
+  void all;
+}
+
 /* ---------------------------------------------------------------- router + boot */
-const ROUTES = {scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
+const ROUTES = {select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
 function route() { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); (ROUTES[r] || renderScan)(arg); window.scrollTo(0, 0); }
 window.addEventListener("hashchange", route);
 (async () => {

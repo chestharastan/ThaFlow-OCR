@@ -13,6 +13,11 @@
   const centre = q => [q.reduce((a, p) => a + p[0], 0) / 4, q.reduce((a, p) => a + p[1], 0) / 4];
   const quadOf = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
   const block = (cls, box, score = 1, label = "", source = "layout") => ({cls, box: box.slice(), score, label: label || cls, source, lines: []});
+  /** Model-only mode (default): grouping, reading order and paragraphs come from the layout and structure models alone.
+      With T.config.rules = true the geometric rules run as well (paragraph merging, aligned columns -> table,
+      row-segment joining, XY-cut reading order). */
+  const modelOnly = () => T.config.rules === false;
+  const unionBox = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
 
   /* ---------------------------------------------------------------- stamps over text */
   /** Copy of the page with the coloured ink of each stamp box whitened (red or blue, by the box's dominant hue), so a
@@ -223,6 +228,25 @@
     }
     return blocks;
   }
+  /** After recognition: a narrow column of labels at the left margin ("យោង ៖", "សំណុំលិខិត៖" - bold or ending in a
+      colon) whose rows line up with wider value blocks at the right becomes one borderless table, label column first,
+      so the document keeps each label beside its value instead of listing all labels and then all values. Labels that
+      share one value block (a list beside several labels) join the same table. */
+  const LABEL_END = /[៖:]\s*$/;
+  function mergeLabelColumns(blocks, W) {
+    const txt = b => b.lines.filter(l => l.text);
+    const labelish = b => { const ls = txt(b); return b.cls === "text" && ls.length >= 1 && ls.length <= 8 && b.box[2] - b.box[0] < 0.25 * W && b.box[0] < 0.3 * W && ls.every(l => l.bbox[2] - l.bbox[0] < 0.25 * W) && ls.filter(l => LABEL_END.test(l.text) || l.bold).length >= 0.6 * ls.length; };
+    const partner = (L, b) => { if (b === L || !TEXT_CLASSES.has(b.cls) || ["form_field", "handwriting", "header", "footer", "page_number"].includes(b.cls) || !txt(b).length) return false; const [lx0, ly0, lx1, ly1] = L.box; void lx0;
+      if (b.box[0] < lx1 - 0.02 * W || b.box[0] - lx1 > 0.2 * W || Math.min(ly1, b.box[3]) - Math.max(ly0, b.box[1]) <= 0) return false;
+      const cys = txt(L).map(l => (l.bbox[1] + l.bbox[3]) / 2), hit = cys.filter(cy => txt(b).some(l => Math.abs((l.bbox[1] + l.bbox[3]) / 2 - cy) < 0.6 * (l.bbox[3] - l.bbox[1]))).length; return hit >= 0.6 * cys.length; };
+    const groups = []; // connected sets {labels, values}
+    for (const L of blocks.filter(labelish)) { const vals = blocks.filter(b => partner(L, b)); if (!vals.length) continue;
+      const g = groups.find(g => g.values.some(v => vals.includes(v))); if (g) { g.labels.push(L); for (const v of vals) if (!g.values.includes(v)) g.values.push(v); } else groups.push({labels: [L], values: vals}); }
+    for (const g of groups) { const all = [...g.labels, ...g.values], head = g.labels[0]; if (all.some(b => !blocks.includes(b))) continue;
+      head.box = all.reduce((a, b) => unionBox(a, b.box), head.box); head.lines = all.flatMap(b => b.lines); head.cls = "table"; head.label = "table"; head.source = "labels"; head.borders = false; head.score = Math.max(...all.map(b => b.score || 0));
+      blocks = blocks.filter(b => b === head || !all.includes(b)); }
+    return blocks;
+  }
   /** Dot leaders ("title ........ 23") -> title \t 23. */
   const LEADER_RE = /(?:[.·•]\s?){4,}/;
   function leaderTab(ln) { const m = LEADER_RE.exec(ln.text || ""); if (!m) return; const before = ln.text.slice(0, m.index).replace(/[\s.·•]+$/, "").trim(), after = ln.text.slice(m.index + m[0].length).replace(/^[\s.·•]+/, "").trim();
@@ -252,10 +276,24 @@
   const ROLE_TO_CLS = {title: "title", section_header: "section_header", list_item: "list", header: "header", footer: "footer", page_number: "page_number", caption: "caption", footnote: "footnote", text: "text"};
   /** Lines in reading order, paragraphs, indent levels and (model) roles for every text block. */
   async function structure(blocks, W, H) {
-    const textBlocks = blocks.filter(b => TEXT_CLASSES.has(b.cls)), all = [];
+    let textBlocks = blocks.filter(b => TEXT_CLASSES.has(b.cls)); const all = [];
     for (const b of textBlocks) { b.lines = sortLines(b.lines); if (!["table", "form_field", "handwriting"].includes(b.cls)) all.push(...b.lines.filter(l => l.text)); }
     let preds = null;
     if (all.length >= 2 && T.sessions.structure) { try { const p = await T.predictStructure(all, W, H); preds = new Map(all.map((l, i) => [l, p[i]])); } catch (e) { console.warn("structure model failed", e); } }
+    if (preds && modelOnly()) {
+      // the model's successor pointers give the order of the lines inside every block (and of the blocks, see render)
+      for (const l of all) l.rank = preds.get(l).order;
+      for (const b of textBlocks) if (b.lines.some(l => l.rank != null)) b.lines.sort((p, q) => (p.rank ?? Infinity) - (q.rank ?? Infinity));
+      // lines the layout model left outside every region are one block each; consecutive ones (in the model's order)
+      // that the model does not mark as a paragraph start join the block before them
+      const owner = new Map(); for (const b of textBlocks) if (b.source === "orphan") for (const l of b.lines) owner.set(l, b);
+      const seq = all.filter(l => owner.has(l)).sort((p, q) => p.rank - q.rank); let prev = null;
+      for (const l of seq) { const b = owner.get(l), pb = prev ? owner.get(prev) : null;
+        if (pb && pb !== b && preds.get(l).first_p < 0.5 && !l.bullet && !l.tab && !prev.tab) { pb.lines.push(...b.lines); for (const x of b.lines) owner.set(x, pb); pb.box = unionBox(pb.box, b.box); pb.score = Math.max(pb.score, b.score); b.drop = true; }
+        prev = l; }
+      for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].drop) blocks.splice(i, 1);
+      textBlocks = blocks.filter(b => TEXT_CLASSES.has(b.cls));
+    }
     for (const b of textBlocks) {
       const lines = b.lines.filter(l => l.text), withP = preds && lines.length >= 2 && lines.every(l => preds.has(l));
       // order inside a block is geometric (rows top-down, left-right); the model's pointer order was unreliable
@@ -305,7 +343,7 @@
     for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i += 4) { if ((d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10 < 140) { colC[x]++; rowC[y]++; } }
     const runs = (cnt, n, need, maxW) => { const out = []; let st = -1; for (let i = 0; i <= n; i++) { const on = i < n && cnt[i] >= need; if (on && st < 0) st = i; if (!on && st >= 0) { if (i - st <= maxW) out.push((st + i - 1) / 2); st = -1; } } return out; };
     const thick = Math.max(2, 0.35 * medH);
-    return {vx: runs(colC, w, 0.5 * h, thick).map(x => x + x0), hy: runs(rowC, h, 0.5 * w, thick).map(y => y + y0)};
+    return {vx: runs(colC, w, 0.5 * h, thick).map(x => x + x0), hy: runs(rowC, h, 0.4 * w, thick).map(y => y + y0)};
   }
   const NUMERIC_RE = /^[\d០-៩.,:%\s\-–/នាក់៛]+$/;
   /** Cell grid of a table block. Lines are first de-skewed (photos are rarely straight; a 1° tilt chains the cells of
@@ -330,24 +368,44 @@
       for (const ln of items.slice(1)) { const g = bb(ln), c = (g[1] + g[3]) / 2, h = g[3] - g[1], row = rows[rows.length - 1]; const rc = row.reduce((a, r) => a + (bb(r)[1] + bb(r)[3]) / 2, 0) / row.length, rh = U.median(row.map(r => bb(r)[3] - bb(r)[1]));
         if (Math.abs(c - rc) < 0.5 * Math.min(rh, h)) row.push(ln); else rows.push([ln]); } return rows; };
     let bands = rules.hy.length >= 2 ? rules.hy.slice(0, -1).map((y, i) => [y, rules.hy[i + 1]]) : rowsDeskewed(lines).map(r => [Math.min(...r.map(l => bb(l)[1])), Math.max(...r.map(l => bb(l)[3]))]);
-    if (rules.hy.length >= 2) { const top = Math.min(...lines.map(l => bb(l)[1])), bot = Math.max(...lines.map(l => bb(l)[3])); if (top < bands[0][0] - 2) bands.unshift([top, bands[0][0]]); if (bot > bands[bands.length - 1][1] + 2) bands.push([bands[bands.length - 1][1], bot]); }
+    if (rules.hy.length >= 2) { const top = Math.min(...lines.map(l => bb(l)[1])), bot = Math.max(...lines.map(l => bb(l)[3])); if (top < bands[0][0] - 2) bands.unshift([top, bands[0][0]]); if (bot > bands[bands.length - 1][1] + 2) bands.push([bands[bands.length - 1][1], bot]);
+      // a faint rule the scan lost: a tall band holding several baseline rows that each start a record (text in the
+      // first column) is split at those rows; wrapped lines without a first-column entry stay with the row above
+      const split = []; for (const [y0, y1] of bands) { const ins = lines.filter(l => { const c = (bb(l)[1] + bb(l)[3]) / 2; return c >= y0 && c < y1; }); const rs = ins.length >= 2 && y1 - y0 > 2.2 * medH ? rowsDeskewed(ins) : null;
+        const starts = rs ? rs.map(r => r.some(l => colOf(l) === 0)) : []; if (!rs || starts.filter(Boolean).length < 2) { split.push([y0, y1]); continue; }
+        const ys = rs.map(r => [Math.min(...r.map(l => bb(l)[1])), Math.max(...r.map(l => bb(l)[3]))]); let top = y0; for (let i = 1; i < rs.length; i++) if (starts[i]) { const cut = (ys[i - 1][1] + ys[i][0]) / 2; split.push([top, cut]); top = cut; } split.push([top, y1]); }
+      bands = split; }
     const rowOf = l => { const g = bb(l), c = (g[1] + g[3]) / 2; let best = 0, bd = Infinity; bands.forEach(([y0, y1], i) => { const d = c < y0 ? y0 - c : c > y1 ? c - y1 : 0; if (d < bd) { bd = d; best = i; } }); return best; };
     let grid = bands.map(() => Array.from({length: nCols}, () => []));
     for (const l of lines) grid[rowOf(l)][colOf(l)].push(l);
     // group header: the only text in the row runs across 2+ columns -> one spanning cell
-    const span = grid.map(cells => { const filled = cells.map((c, i) => c.length ? i : -1).filter(i => i >= 0); if (filled.length !== 1) return false; const ls = cells[filled[0]]; return ls.some(l => lastColOf(l) > filled[0]); });
-    if (rules.hy.length < 2) for (let r = grid.length - 1; r > 0; r--) { if (span[r] || span[r - 1]) continue; const first = grid[r].findIndex(c => c.length); if (first > 0 && grid[r - 1][0].length && !grid[r][0].length) { grid[r].forEach((c, ci) => grid[r - 1][ci].push(...c)); grid.splice(r, 1); bands.splice(r, 1); span.splice(r, 1); } }
-    const cellOf = c => { c.sort((p, q) => (bb(p)[1] + bb(p)[3]) - (bb(q)[1] + bb(q)[3]) || bb(p)[0] - bb(q)[0]); return {lines: c, text: paragraphText(c)}; };
+    const span = grid.map(cells => { const filled = cells.map((c, i) => c.length ? i : -1).filter(i => i >= 0); if (filled.length !== 1) return false; if (rules.vx.length < 2 && filled[0] !== 0) return false; // borderless: a group header starts at the left edge (a long value line crossing into the next column is not one)
+      const ls = cells[filled[0]]; return ls.some(l => lastColOf(l) > filled[0]); });
+    if (rules.hy.length < 2) for (let r = 1; r < grid.length;) { // top-down, so a run of continuation rows chains onto the same record
+      const near = bands[r][0] - bands[r - 1][1] < 0.35 * medH; // fragments of one printed line that landed on slightly different baselines
+      if (!span[r] && !span[r - 1] && !grid[r][0].length && grid[r - 1][0].length && (near || grid[r].filter(c => c.length).length === 1)) { /* one wrapped cell; a full row of cells further down is its own record */ grid[r].forEach((c, ci) => grid[r - 1][ci].push(...c)); bands[r - 1] = [bands[r - 1][0], bands[r][1]]; grid.splice(r, 1); bands.splice(r, 1); span.splice(r, 1); } else r++; }
+    const cellOf = c => { c.sort((p, q) => (bb(p)[1] + bb(p)[3]) - (bb(q)[1] + bb(q)[3]) || bb(p)[0] - bb(q)[0]); const multi = c.length >= 2 && c.some(l => l.bullet); // list items inside a cell keep their lines
+      return {lines: c, text: multi ? c.map(l => (l.bullet ? l.bullet + " " : "") + l.text).join("\n") : paragraphText(c)}; };
     const rows = []; grid.forEach((cells, i) => { if (!cells.some(c => c.length)) return; const row = {y0: +bands[i][0].toFixed(1), y1: +bands[i][1].toFixed(1)};
       if (span[i]) { const all = cells.flat(); row.cells = [Object.assign(cellOf(all), {colspan: nCols})]; row.span = true; } else row.cells = cells.map(cellOf); rows.push(row); });
-    if (rows.length < 2) return null;
+    if (rows.length < (b.source === "labels" ? 1 : 2)) return null; // a single label beside its value is still a row
     const cols = []; for (let i = 0; i < nCols; i++) { const cl = rows.filter(r => !r.span).flatMap(r => r.cells[i].lines); cols.push({x0: +edges[i].toFixed(1), x1: +edges[i + 1].toFixed(1), align: cl.length && cl.every(l => NUMERIC_RE.test(l.text)) ? "right" : "left"}); }
     return {borders: rules.vx.length >= 2 || rules.hy.length >= 2, cols, rows, skew: +(ang * 180 / Math.PI).toFixed(2)};
   }
 
+  /** Blocks in the structure model's order: a text block sits where its first line is ranked; a figure / stamp / logo
+      sits just before the nearest ranked line below its top edge (or last, when nothing follows). */
+  function modelOrder(blocks) {
+    const ranked = blocks.flatMap(b => b.lines.filter(l => l.rank != null)).sort((p, q) => p.rank - q.rank);
+    if (!ranked.length) return null;
+    const key = b => { const own = b.lines.filter(l => l.rank != null); if (own.length) return Math.min(...own.map(l => l.rank));
+      const cy = (b.box[1] + b.box[3]) / 2, below = ranked.filter(l => (l.bbox[1] + l.bbox[3]) / 2 >= b.box[1]).sort((p, q) => p.bbox[1] - q.bbox[1])[0]; return below ? below.rank - 0.5 : ranked[ranked.length - 1].rank + 0.5 + cy / 1e6; };
+    return blocks.slice().sort((a, b) => key(a) - key(b) || a.box[1] - b.box[1] || a.box[0] - b.box[0]);
+  }
   function render(img, blocks) {
     const W = img.width, H = img.height, out = [];
-    xyCut(blocks, W, H, b => b.box).forEach((b, k) => { const order = k + 1, cls = b.cls, x0 = Math.max(0, b.box[0]), y0 = Math.max(0, b.box[1]), x1 = Math.min(W, b.box[2]), y1 = Math.min(H, b.box[3]), textCls = TEXT_CLASSES.has(cls);
+    const ordered = (modelOnly() && modelOrder(blocks)) || xyCut(blocks, W, H, b => b.box);
+    ordered.forEach((b, k) => { const order = k + 1, cls = b.cls, x0 = Math.max(0, b.box[0]), y0 = Math.max(0, b.box[1]), x1 = Math.min(W, b.box[2]), y1 = Math.min(H, b.box[3]), textCls = TEXT_CLASSES.has(cls);
       const blk = {id: "b" + order, type: legacyType(cls), label: cls, cls, cls_id: T.CLASSES.indexOf(cls), display: LABELS[cls] || cls, color: hex(COLORS[cls] || [120, 120, 120]), model_label: b.label, score: +b.score.toFixed(4), source: b.source, reading_order: order,
         box: {x: x0, y: y0, width: x1 - x0, height: y1 - y0}, lines: [], crop: null, text: "", recognized: textCls, font_px: b.font_px || null, font_src: b.font_src || null, align: b.align || "left", relabel: b.relabel || null, font: b.font || null, text_color: null};
       if (!textCls) { blk.crop = cropDataUrl(img.canvas, [x0, y0, x1, y1]); out.push(blk); return; }
@@ -357,7 +415,7 @@
           indent_level: ln.indent_level || 0, indent: 0, tab: false, bullet: ln.bullet || null, bullet_box: ln.bullet_box ? ln.bullet_box.map(v => +v.toFixed(1)) : null, baseline: null, core_h: null, font: ln.font ? Object.fromEntries(Object.entries(ln.font).filter(([k]) => k !== "probs")) : null, bold: !!ln.bold, spans: ln.spans || [], text_color: null};
         blk.lines.push(line); rendered.set(ln, line); });
       blk.text = blockText(blk.lines); blk.bold = blk.lines.length > 0 && blk.lines.filter(l => l.text).every(l => l.bold);
-      if (cls === "table") { const tg = tableGrid(b, img); if (tg) { blk.table = {borders: tg.borders, skew: tg.skew, cols: tg.cols, rows: tg.rows.map(r => ({y0: r.y0, y1: r.y1, span: !!r.span, cells: r.cells.map(c => ({text: c.text, colspan: c.colspan || 1, lines: c.lines.map(l => rendered.get(l)).filter(Boolean).map(l => l.reading_order)}))}))}; blk.text = tg.rows.map(r => r.cells.map(c => c.text).join("\t")).join("\n"); } }
+      if (cls === "table") { const tg = tableGrid(b, img); if (tg) { blk.table = {borders: tg.borders, skew: tg.skew, cols: tg.cols, rows: tg.rows.map(r => ({y0: r.y0, y1: r.y1, span: !!r.span, cells: r.cells.map(c => ({text: c.text, colspan: c.colspan || 1, lines: c.lines.map(l => rendered.get(l)).filter(Boolean).map(l => l.reading_order)}))}))}; blk.text = tg.rows.map(r => r.cells.map(c => c.text.replace(/\n/g, " ")).join("\t")).join("\n"); } }
       blk.paragraphs = (b.paras || []).map(p => { const pl = p.lines.map(l => rendered.get(l)).filter(l => l && l.text); if (!pl.length) return null; const levels = pl.map(l => l.indent_level);
         return {indent_level: p.indent_level || 0, bullet: p.bullet || null, text: paragraphText(pl), lines: pl.map(l => l.reading_order), runs: paragraphRuns(pl), first_line_indent: pl.length > 1 && levels[0] > Math.min(...levels.slice(1))}; }).filter(Boolean);
       out.push(blk); });
@@ -418,7 +476,9 @@
       for (const b of blocks) for (const ln of b.lines) if (stampBoxes.some(sb => inter(ln.bbox, sb) > 0.05 * U.bArea(ln.bbox))) ln.stamped = true; }
     const cleanCanvas = stampBoxes.length && T.config.destamp === true ? destamp(img.canvas, stampBoxes) : img.canvas; img.clean = cleanCanvas; // opt-in: whitening the ink also carves the glyphs
     blocks = dropEmptyContainers(blocks); const lineH = lines.length ? U.median(lines.map(l => { const q = U.bboxOf(l.quad); return q[3] - q[1]; })) : 0; for (const b of blocks) fallbackWholeBlock(b, lineH);
-    blocks.push(...groupOrphans(orphans)); blocks = mergeParagraphs(blocks); blocks = mergeAlignedBlocks(blocks, W); mergeRowSegments(blocks); timings.textdet_ms = ms(t); timings.lines_detected = lines.length;
+    if (modelOnly()) blocks.push(...orphans.map(ln => { const g = block("text", ln.bbox, ln.score, "orphan_lines", "orphan"); g.lines.push(ln); return g; })); // grouped later by the structure model
+    else { blocks.push(...groupOrphans(orphans)); blocks = mergeParagraphs(blocks); blocks = mergeAlignedBlocks(blocks, W); mergeRowSegments(blocks); }
+    timings.textdet_ms = ms(t); timings.lines_detected = lines.length; timings.mode = modelOnly() ? "model" : "rules";
     // recognise
     const todo = []; for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) for (const ln of b.lines) todo.push([b, ln]);
     step("rec", "reading the text", {done: 0, total: todo.length}); t = performance.now();
@@ -460,6 +520,7 @@
     const W = img.width, H = img.height, ms = t => +(performance.now() - t).toFixed(1);
     let t = performance.now();
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { b.lines = mergeBulletLines(b.lines); for (const ln of b.lines) if (ln.text && !["table", "form_field"].includes(b.cls)) textBullet(ln); }
+    if (!modelOnly()) blocks = mergeLabelColumns(blocks, W);
     const usedModel = await structure(blocks, W, H); timings.structure_ms = ms(t); timings.structure = usedModel ? "model" : "rules";
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { blockFont(b); if (b.font && b.font.weight !== "bold" && b.lines.length >= 2) for (const ln of b.lines) if (ln.bold && !(ln.spans && ln.spans.length) && !(ln.font && ln.font.weight_confidence >= 0.97 && HEAVY.has(ln.font.family))) ln.bold = false; const pf = b.lines.map(l => l.font_px).filter(Boolean); if (pf.length) { b.font_px = +U.median(pf).toFixed(1); b.font_src = "pdf"; } if (!b.font_px && b.lines.length) { const hs = b.lines.filter(l => l.text).map(l => l.bbox[3] - l.bbox[1]); if (hs.length) { b.font_px = +(U.median(hs) * 0.78).toFixed(1); b.font_src = "image"; } } }
     timings.bullets_found = blocks.reduce((a, b) => a + b.lines.filter(l => l.bullet).length, 0); timings.bold_words = 0;
@@ -473,7 +534,8 @@
       or recognition model is needed; the font and structure models are used when they happen to be loaded. */
   T.fromLines = async function (img, lines, extra) {
     const tStart = performance.now(), timings = {layout_ms: 0, textdet_ms: 0, lines_detected: lines.length, rec_ms: 0, lines_recognized: lines.length, font_ms: 0};
-    let blocks = groupOrphans(lines); blocks = mergeParagraphs(blocks);
+    let blocks; if (modelOnly()) blocks = lines.map(ln => { const g = block("text", ln.bbox, ln.score, "orphan_lines", "orphan"); g.lines.push(ln); return g; }); else { blocks = groupOrphans(lines); blocks = mergeParagraphs(blocks); }
+    timings.mode = modelOnly() ? "model" : "rules";
     let t = performance.now();
     if (T.sessions.font) { try { const sel = lines.filter(ln => (ln.text || "").length >= 2 && !ln.font); const fr = await T.classifyFonts(sel.map(ln => T.cropLine(img.canvas, ln.quad, 32))); sel.forEach((ln, k) => ln.font = fr[k]); } catch (e) { console.warn("font model skipped", e); } }
     timings.font_ms = +(performance.now() - t).toFixed(1);
