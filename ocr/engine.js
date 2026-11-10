@@ -33,8 +33,12 @@
   /* ------------------------------------------------------------------ runtime + model files */
   // ortBase: where the onnxruntime-web bundle + wasm come from (jsDelivr sends CORS/CORP headers, so it works under COEP).
   // manifestBase: where models.json and the small *_meta.json live (this site). modelBase: where the ONNX/vocab files
-  // are downloaded from (Hugging Face by default, so the static host stays small; must send CORS headers).
-  T.config = {ortBase: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/", manifestBase: "models/", modelBase: "https://huggingface.co/Thareah/ThaOCR-models/resolve/main/", backend: "auto", threads: 0, rules: true, longMin: 1600, longMax: 2200, cascade: true, font: true, structure: true};
+  // are downloaded from (Hugging Face by default, so the static host stays small; must send CORS headers). The models live
+  // in one Hugging Face repo per stage (Thareah/ThaOCR-layout, -textdet, -rec, -font, -structure; Thareah/ThaOCR-models is
+  // only the index), so "{stage}" in modelBase is replaced by the first folder of the file path. A plain base such as
+  // "models/" (offline copy) has no placeholder and is used as is.
+  T.config = {ortBase: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/", manifestBase: "models/", modelBase: "https://huggingface.co/Thareah/ThaOCR-{stage}/resolve/main/", backend: "auto", threads: 0, rules: true, longMin: 1600, longMax: 2200, cascade: true, font: true, structure: true};
+  T.modelUrl = file => T.config.modelBase.replace("{stage}", file.split("/")[0]) + file;
   T.manifest = null; T.sessions = {}; T.active = {}; T.meta = {}; T.backendUsed = null;
   T.listeners = []; T.emit = (ev) => T.listeners.forEach(f => { try { f(ev); } catch (e) { console.warn(e); } });
 
@@ -95,13 +99,13 @@
       if (stage === "font" && !T.config.font) continue; if (stage === "structure" && !T.config.structure) continue;
       if (T.active[stage] === id && T.sessions[stage]) continue;
       const spec = T.spec(id); if (!spec) throw new Error(`unknown model ${id}`);
-      const url = T.config.modelBase + spec.file;
+      const url = T.modelUrl(spec.file);
       const buf = await fetchCached(url, (got, total, fromCache) => onProgress && onProgress({stage, id, got, total, fromCache}));
       // the recogniser is tiny-batch sequential work: wasm is as fast as WebGPU and avoids per-run GPU sync
       const {sess, ep} = await session(buf, stage === "rec" || stage === "structure" || stage === "font" ? ["wasm"] : eps);
       if (T.sessions[stage] && T.sessions[stage].sess.release) { try { await T.sessions[stage].sess.release(); } catch { } }
       T.sessions[stage] = {sess, ep, spec}; T.active[stage] = id;
-      if (stage === "rec") { const v = await (await fetch(T.config.modelBase + spec.vocab)).json(); T.meta.vocab = v.itos || v; T.meta.recStride = null; T.sessions.rec.vocab = T.meta.vocab; }
+      if (stage === "rec") { const v = await (await fetch(T.modelUrl(spec.vocab))).json(); T.meta.vocab = v.itos || v; T.meta.recStride = null; T.sessions.rec.vocab = T.meta.vocab; }
       if (stage === "layout") T.meta.layoutNames = spec.classes || CLASSES;
       if (stage === "font") { const mf = await (await fetch(T.config.manifestBase + "font/font_meta.json")).json(); T.meta.font = mf; }
       if (stage === "structure") { const ms = await (await fetch(T.config.manifestBase + "structure/struct_meta.json")).json(); T.meta.structure = ms; }
@@ -115,8 +119,8 @@
   T.loadAltRec = async function (id, onProgress) {
     if (T.sessions.rec_alt && T.sessions.rec_alt.spec.id === id) return T.sessions.rec_alt;
     const spec = T.spec(id); if (!spec) throw new Error("unknown model " + id);
-    const buf = await fetchCached(T.config.modelBase + spec.file, (got, total, fromCache) => onProgress && onProgress({stage: "rec_alt", id, got, total, fromCache}));
-    const {sess, ep} = await session(buf, ["wasm"]); const v = await (await fetch(T.config.modelBase + spec.vocab)).json();
+    const buf = await fetchCached(T.modelUrl(spec.file), (got, total, fromCache) => onProgress && onProgress({stage: "rec_alt", id, got, total, fromCache}));
+    const {sess, ep} = await session(buf, ["wasm"]); const v = await (await fetch(T.modelUrl(spec.vocab))).json();
     T.sessions.rec_alt = {sess, ep, spec, vocab: v.itos || v}; return T.sessions.rec_alt;
   };
 
