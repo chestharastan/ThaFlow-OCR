@@ -13,7 +13,7 @@ ocr/pdf.js                      PDF input (pdf.js from jsDelivr): text-layer pag
 ocr/device.js                   device check, model-set recommendation, benchmark, time estimate
 ocr/store.js                    IndexedDB documents + page images
 models/                         models.json (manifest) + font/structure *_meta.json; the ONNX files themselves are
-                                pulled from the Thareah/ThaOCR-<stage> repos on Hugging Face (default set 41 MB)
+                                pulled from https://huggingface.co/Thareah/ThaOCR-models (default set 41 MB)
 (no vendor folder)              onnxruntime-web 1.31.1 and docx 9.15.3 load from jsDelivr (ThaOCR.config.ortBase);
                                 a local copy in vendor/ is git-ignored and only needed for offline work
 fonts/                          Khmer fonts for the reflowed view (OFL / LGPL)
@@ -27,10 +27,7 @@ Runtime: `ThaOCR.config.ortBase` is the jsDelivr URL of onnxruntime-web 1.31.1 (
 works under the isolation headers, threads included); the docx library loads from jsDelivr too. For offline work copy
 the `dist/` files of onnxruntime-web into `vendor/` and set `ortBase` to `"vendor/"`.
 
-Models: the files live in one Hugging Face repo per stage (`Thareah/ThaOCR-layout`, `-textdet`, `-rec`, `-font`,
-`-structure`); `Thareah/ThaOCR-models` is only the index and holds no model files. `ThaOCR.config.modelBase`
-(ocr/engine.js) is a resolve URL template, `https://huggingface.co/Thareah/ThaOCR-{stage}/resolve/main/`, where
-`{stage}` becomes the first folder of the file path in `models.json` (`ThaOCR.modelUrl(file)`); the
+Models: `ThaOCR.config.modelBase` (ocr/engine.js) is the Hugging Face resolve URL of `Thareah/ThaOCR-models`; the
 browser fetches only the chosen set, once, into the Cache API. The manifest and the small meta JSON files stay in
 `models/` on the site. To work offline, copy the ONNX/vocab files into `models/` (they are git-ignored) and set
 `modelBase` to `"models/"`.

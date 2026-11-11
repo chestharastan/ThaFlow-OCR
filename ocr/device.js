@@ -42,7 +42,7 @@
     const files = []; let bytes = 0, cachedFiles = 0;
     const sizes = (T.manifest && T.manifest.sizes) || {};
     for (const [stage, id] of Object.entries(choice)) { const s = T.spec(id); if (!s) continue; if ((stage === "font" && !T.config.font) || (stage === "structure" && !T.config.structure)) continue;
-      const url = T.modelUrl(s.file), cached = await T.isCached(url); const size = sizes[s.file] || 0; files.push({stage, id, file: s.file, size, cached}); if (cached) cachedFiles++; else bytes += size; }
+      const url = T.config.modelBase + s.file, cached = await T.isCached(url); const size = sizes[s.file] || 0; files.push({stage, id, file: s.file, size, cached}); if (cached) cachedFiles++; else bytes += size; }
     const rt = {wasm: 15.1e6, webgpu: 29.6e6}; const rtFile = "vendor/ort-wasm-simd-threaded" + (T.backendUsed === "webgpu" ? ".jsep" : "") + ".wasm";
     files.unshift({stage: "runtime", id: "onnxruntime-web", file: rtFile, size: T.backendUsed === "webgpu" ? rt.webgpu : rt.wasm, cached: await T.isCached(rtFile)});
     if (!files[0].cached) bytes += files[0].size;
