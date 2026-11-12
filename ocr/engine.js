@@ -133,12 +133,21 @@
       const buf = await fetchCached(url, (got, total, fromCache) => onProgress && onProgress({stage, id, got, total, fromCache}));
       // the recogniser is tiny-batch sequential work: wasm is as fast as WebGPU and avoids per-run GPU sync
       const {sess, ep} = await session(buf, stage === "rec" || stage === "structure" || stage === "font" ? ["wasm"] : eps);
+      // everything the stage needs next to the model (recogniser vocab, font/structure meta) is fetched BEFORE the stage is registered:
+      // a stage registered without its vocab/meta is skipped as "already active" by the next load and then fails on first use
+      // ("Cannot read properties of undefined (reading '114')" in the recogniser)
+      let vocab = null, fontMeta = null, structMeta = null;
+      try {
+        if (stage === "rec") { const v = await fetchJSON(T.config.modelBase + spec.vocab); vocab = v.itos || v; }
+        if (stage === "font") fontMeta = await (await fetch(T.config.manifestBase + "font/font_meta.json")).json();
+        if (stage === "structure") structMeta = await (await fetch(T.config.manifestBase + "structure/struct_meta.json")).json();
+      } catch (e) { try { sess.release && await sess.release(); } catch { } throw e; }
       if (T.sessions[stage] && T.sessions[stage].sess.release) { try { await T.sessions[stage].sess.release(); } catch { } }
       T.sessions[stage] = {sess, ep, spec}; T.active[stage] = id;
-      if (stage === "rec") { const v = await fetchJSON(T.config.modelBase + spec.vocab); T.meta.vocab = v.itos || v; T.meta.recStride = null; T.sessions.rec.vocab = T.meta.vocab; }
+      if (stage === "rec") { T.meta.vocab = vocab; T.meta.recStride = null; T.sessions.rec.vocab = vocab; }
       if (stage === "layout") T.meta.layoutNames = spec.classes || CLASSES;
-      if (stage === "font") { const mf = await (await fetch(T.config.manifestBase + "font/font_meta.json")).json(); T.meta.font = mf; }
-      if (stage === "structure") { const ms = await (await fetch(T.config.manifestBase + "structure/struct_meta.json")).json(); T.meta.structure = ms; }
+      if (stage === "font") T.meta.font = fontMeta;
+      if (stage === "structure") T.meta.structure = structMeta;
     }
     T.emit({type: "loaded"});
     return T.active;

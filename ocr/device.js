@@ -26,13 +26,17 @@
     const has = id => !T.manifest || T.manifest.models.some(m => m.id === id);
     if (tier === "high") { if (has("crnn_m_v2_stamp3")) choice.rec = "crnn_m_v2_stamp3"; }
     else if (tier === "mid") { if (has(d.rec + "_int8")) choice.rec = d.rec + "_int8"; }
-    else { if (has(d.rec + "_int8")) choice.rec = d.rec + "_int8"; }
+    else { if (has(d.rec + "_int8")) choice.rec = d.rec + "_int8";
+      // phones also get the int8 layout model (3.3 MB instead of 10.9 MB: a much smaller first download, about the same speed).
+      // It can miss a faint region the full model finds (measured on synthetic pages), so Settings > Model set (Balanced / Best
+      // quality) or Settings > Models > Layout switches back to the full-precision one.
+      if (info.mobile && has(d.layout + "_int8")) choice.layout = d.layout + "_int8"; }
     const scale = tier === "high" ? {longMin: 1600, longMax: 2200} : tier === "mid" ? {longMin: 1600, longMax: 1800} : {longMin: 1100, longMax: 1300};
     const reasons = [];
     if (info.webgpu) reasons.push("WebGPU available: the layout and line detectors run on the GPU");
     else reasons.push("no WebGPU: everything runs on the CPU (WebAssembly)");
     if (!info.threadsOK) reasons.push("single-thread mode (this host does not send the cross-origin isolation headers)"); else reasons.push(`${Math.min(8, info.threads - 1)} worker threads`);
-    if (info.mobile) reasons.push("phone or tablet: smaller detector scale and the int8 recogniser");
+    if (info.mobile) reasons.push("phone or tablet: smaller detector scale, int8 recogniser" + (choice.layout !== d.layout ? " and int8 layout model" : ""));
     if (info.memoryGB && info.memoryGB <= 4) reasons.push("4 GB memory or less: int8 recogniser");
     return {tier, choice, scale, reasons};
   };
