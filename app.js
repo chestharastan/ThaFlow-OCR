@@ -193,7 +193,6 @@ function sidebar() {
   const running = JOB && JOB.status === "running";
   $("#running").classList.toggle("hide", !running || r === "process");
   if (running) { $("#running_pct").textContent = Math.round(JOB.done / JOB.total * 100) + "%"; }
-  $("#dev").textContent = T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") + " · models ready" : DEVICE ? `${DEVICE.threads} threads${DEVICE.webgpu ? " · WebGPU" : ""}` : "checking device…";
 }
 const docTitle = d => d.filename.replace(/\.[^.]+$/, "");
 /* A multi-page PDF is one document made of several page records (one per page). Pages share a group key. */
@@ -209,19 +208,18 @@ function groupConf(g) { const n = g.reduce((a, d) => a + d.lines, 0); return n ?
 const groupText = g => g.length === 1 ? pageText(g[0].result) : g.map((d, i) => `----- page ${i + 1} -----\n\n` + pageText(d.result)).join("\n\n");
 async function deleteGroup(g) { for (const d of g) await store.del(d.page_id); }
 async function rerunGroup(g) { for (const d of g) await rerun(d, g.length > 1 ? `page ${pageNo(d)} of ${g.length}` : "", true); toast("done"); route(); }
-const outputSel = (id, cur) => `<select id="${id}">${[["docx", "Word (.docx)"], ["txt", "Plain text"], ["json", "JSON"]].map(([k, t]) => `<option value="${k}" ${cur === k ? "selected" : ""}>${t}</option>`).join("")}</select>`;
 const TIER_LABEL = {high: "Best quality", mid: "Balanced", low: "Light"};
 
 /* ---------------------------------------------------------------- documents table (shared) */
 function docsTable(docs) {
   const gs = groups(docs);
-  if (!gs.length) return `<div class="empty">No documents yet. Scan a page to start.</div>`;
-  return `<table class="tbl"><thead><tr><th>Document</th><th>Status</th><th>Confidence</th><th>Scanned</th><th></th></tr></thead><tbody>
-  ${gs.map(g => { const d = g[0], [st, cls] = groupStatus(g), pc = Math.round(groupConf(g) * 1000) / 10, lines = g.reduce((a, x) => a + x.lines, 0), size = g.reduce((a, x) => a + (x.size || 0), 0), pdfText = g.filter(x => x.result && x.result.source === "pdf-text").length; return `<tr class="click" data-id="${d.page_id}" data-g="${esc(groupKey(d))}">
-   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt=""></div><div><b>${esc(groupName(d))}</b><span>${g.length > 1 ? `${g.length} pages · ` : ""}${lines} lines · ${g.length > 1 ? "" : d.width + "×" + d.height}${size ? (g.length > 1 ? "" : " · ") + fmtSize(size) : ""}${pdfText ? ` · ${g.length > 1 && pdfText < g.length ? `${pdfText} page${pdfText === 1 ? "" : "s"} ` : ""}PDF text` : ""}</span></div></div></td>
+  if (!gs.length) return `<div class="empty">No documents yet</div>`;
+  return `<table class="tbl"><thead><tr><th>Document</th><th>Status</th><th class="c-x">Confidence</th><th class="c-x">Scanned</th><th></th></tr></thead><tbody>
+  ${gs.map(g => { const d = g[0], [st, cls] = groupStatus(g), pc = Math.round(groupConf(g) * 1000) / 10, lines = g.reduce((a, x) => a + x.lines, 0); return `<tr class="click" data-id="${d.page_id}" data-g="${esc(groupKey(d))}">
+   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt=""></div><div><b>${esc(groupName(d))}</b><span>${g.length > 1 ? `${g.length} pages · ` : ""}${lines} line${lines === 1 ? "" : "s"}</span></div></div></td>
    <td><span class="badge ${cls}"><span class="dot"></span>${st}</span></td>
-   <td><span class="acc"><span class="bar"><i class="${pc >= 95 ? "ok" : "warn"}" style="width:${pc}%"></i></span><span class="mono">${pc.toFixed(1)}%</span></span></td>
-   <td class="mut">${when(d.created)}</td>
+   <td class="c-x"><span class="acc"><span class="bar"><i class="${pc >= 95 ? "ok" : "warn"}" style="width:${pc}%"></i></span><span class="mono">${pc.toFixed(1)}%</span></span></td>
+   <td class="mut c-x">${when(d.created)}</td>
    <td style="width:48px"><div class="rel"><button class="btn ghost sm more" data-id="${d.page_id}" title="More">${icon("more")}</button></div></td></tr>`; }).join("")}</tbody></table>`;
 }
 function wireDocsTable() {
@@ -248,44 +246,31 @@ async function addFiles(files) {
     pending.push({file: f, url, w: dims[0], h: dims[1]}); }
 }
 async function addAndShow(files) { await addFiles(files); const was = location.hash; location.hash = "#/scan"; if (was === "#/scan") route(); }
-function devicePanel() {
-  if (!DEVICE || !RECO) return `<div class="card pad small mut">Checking what this device can do…</div>`;
-  const b = T.benchmarkStored(), est = b ? T.estimate(b, 40) : null, tier = store.settings.tier || RECO.tier;
-  const perf = est ? `about ${est} s per page` : T.loaded() ? "measuring…" : "measured after the models load";
-  return `<div class="devpanel">
-    <div><div class="k">Your device</div><div class="v">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB" : ""}${DEVICE.mobile ? " · phone" : ""}</div><div class="s">${DEVICE.webgpu ? "WebGPU available" : "CPU only (WebAssembly)"}${DEVICE.threadsOK ? "" : " · single thread"}</div></div>
-    <div><div class="k">Model set</div><div class="v">${TIER_LABEL[tier]}${tier !== RECO.tier ? " (manual)" : " (recommended)"}</div><div class="s" id="dl_line">${T.loaded() ? "models ready on this device" : "checking download size…"}</div></div>
-    <div><div class="k">Speed</div><div class="v">${perf}</div><div class="s">for a typical 40-line page · updates after each scan</div></div></div>`;
-}
-async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await T.downloadPlan(chosenModels()); const dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} to download once${DEVICE.downlinkMbps ? ` (about ${Math.max(1, Math.round(dl * 8 / (DEVICE.downlinkMbps * 1e6)))} s on your connection)` : ""}` : "already on this device"; } catch { el.textContent = ""; } }
+const isTouch = () => !!(DEVICE && DEVICE.mobile) || matchMedia("(pointer:coarse)").matches;
+const fmtSecs = s => s >= 90 ? Math.round(s / 60) + " min" : s + " s";
 function renderScan() {
-  const n = pending.length, lowres = pending.filter(p => p.w && p.w < 1000), recent = store.docs.slice(0, 5), b = T.benchmarkStored();
+  const n = pending.length, recent = store.docs.slice(0, 5), b = T.benchmarkStored(), touch = isTouch();
   const nPages = pending.reduce((a, p) => a + (p.pdf ? Math.max(1, p.pdf.pages) : 1), 0), hasPdf = pending.some(p => p.pdf);
   const est = b ? Math.max(2, Math.round(nPages * T.estimate(b, 40))) : null;
   view.innerHTML = `
-  <div class="head"><div class="grow"><h1>Scan a document</h1><p>Drop a photo, a scan or a PDF. ThaOCR reads Khmer and English on this device and gives you editable text and a Word file. PDF pages that already contain text are taken as they are, without OCR.</p></div></div>
-  ${devicePanel()}
-  <div class="drop ${n ? "compact" : ""}" id="drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>${n ? "Add more files" : "Drop images or PDFs here"}</b><div class="small">JPG, PNG, WebP, TIFF, PDF · or paste with Ctrl+V · processed on this device only</div></div>
-    <div class="acts"><button class="btn ${n ? "" : "p"}" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>
-  ${n ? `<div class="card">
-    <div class="rowhead"><h2>${n} file${n === 1 ? "" : "s"} ready</h2><div class="grow"></div><button class="btn ghost sm" id="s_clear">Clear</button></div>
-    <div class="flist">${pending.map((p, i) => `<div class="frow">${p.url ? `<img src="${p.url}" alt="">` : `<div class="fico">${icon("file")}</div>`}<div class="grow"><b title="${esc(p.file.name)}">${esc(p.file.name)}</b><span class="small mut">${fmtSize(p.file.size)}${p.pdf ? (p.pdf.pages ? ` · PDF · ${p.pdf.pages} page${p.pdf.pages === 1 ? "" : "s"}` : " · PDF") : (p.w ? " · " + p.w + "×" + p.h : "")}</span></div>
-      ${p.pdf && p.pdf.error ? `<span class="badge bad"><span class="dot"></span>${esc(p.pdf.error)}</span>` : ""}${p.w && p.w < 1000 ? '<span class="badge warn"><span class="dot"></span>Low resolution</span>' : ""}<button class="x" data-i="${i}" title="Remove">${icon("x", "s")}</button></div>`).join("")}</div>
-    ${lowres.length ? `<div class="note" style="margin:0 18px 14px">${icon("alert")}<div>${esc(lowres[0].file.name)} is only ${lowres[0].w} px wide${lowres.length > 1 ? ` (and ${lowres.length - 1} more)` : ""}. Small Khmer vowel signs may be missed. A closer photo or a 300 DPI scan reads better.</div></div>` : ""}
-    <div class="startbar"><div class="opts"><label>Output ${outputSel("s_out", store.settings.output)}</label></div><div class="grow"></div>
-      <span class="small mut">${hasPdf ? `${nPages} page${nPages === 1 ? "" : "s"} · ` : ""}${est ? `${hasPdf ? "up to " : "about "}${est} s on this device${hasPdf ? ", less for PDF pages with text" : ""}` : "time is measured on the first run"}</span><button class="btn p lg" id="s_start">Start OCR ${icon("arrow-right")}</button></div></div>` : ""}
-  <div class="privacy">${icon("info")}<div><b>Your files stay here.</b> There is no server and no account: documents are kept only in this browser's storage on this device, and are lost if you clear site data or switch devices. Export what you want to keep.</div></div>
+  <div class="head"><div class="grow"><h1>Scan</h1></div></div>
+  ${n ? `<div class="card" id="drop">
+    <div class="rowhead"><h2>${n} file${n === 1 ? "" : "s"}</h2><div class="grow"></div><button class="btn sm" id="s_browse">${icon("plus", "s")}Add</button><button class="btn ghost sm" id="s_clear">Clear</button></div>
+    <div class="flist">${pending.map((p, i) => `<div class="frow">${p.url ? `<img src="${p.url}" alt="">` : `<div class="fico">${icon("file")}</div>`}<div class="grow"><b title="${esc(p.file.name)}">${esc(p.file.name)}</b>${p.pdf && p.pdf.pages ? `<span class="small mut">${p.pdf.pages} page${p.pdf.pages === 1 ? "" : "s"}</span>` : ""}</div>
+      ${p.pdf && p.pdf.error ? `<span class="badge bad"><span class="dot"></span>${esc(p.pdf.error)}</span>` : ""}${p.w && p.w < 1000 ? '<span class="badge warn" title="Small text may be missed. A closer photo reads better."><span class="dot"></span>Low resolution</span>' : ""}<button class="x" data-i="${i}" title="Remove">${icon("x", "s")}</button></div>`).join("")}</div>
+    <div class="startbar"><div class="grow"></div>${est ? `<span class="small mut">${hasPdf ? "up to" : "about"} ${fmtSecs(est)}</span>` : ""}<button class="btn p lg" id="s_start">Start ${icon("arrow-right")}</button></div></div>`
+  : `<div class="drop" id="drop"><div class="ico">${icon("upload", "l")}</div><b>${touch ? "Add" : "Drop"} a photo or PDF</b><div class="small">Khmer and English · nothing is uploaded</div>
+    <div class="acts">${touch ? `<button class="btn p" id="s_cam">${icon("camera")}Camera</button>` : ""}<button class="btn ${touch ? "" : "p"}" id="s_browse">${icon("folder")}Choose files</button></div></div>`}
   ${recent.length ? `<div class="sec"><div class="rowhead" style="padding-left:0;padding-right:0"><h2>Recent</h2><div class="grow"></div><a href="#/documents">All documents ${icon("chevron-right", "s")}</a></div><div class="card">${docsTable(recent)}</div></div>` : ""}`;
-  fillDownloadLine();
-  wireDrop($("#drop"), async f => { await addFiles(f); renderScan(); });
-  $("#s_browse").onclick = () => pickFiles(async f => { await addFiles(f); renderScan(); });
-  $("#s_cam").onclick = () => pickFiles(async f => { await addFiles(f); renderScan(); }, true);
+  const add = async f => { await addFiles(f); renderScan(); }, drop = $("#drop");
+  wireDrop(drop, add);
+  $("#s_browse").onclick = e => { e.stopPropagation(); pickFiles(add); };
+  if ($("#s_cam")) $("#s_cam").onclick = e => { e.stopPropagation(); pickFiles(add, true); };
   if (n) {
     $("#s_clear").onclick = () => { pending = []; renderScan(); };
     view.querySelectorAll(".frow .x").forEach(b => b.onclick = () => { pending.splice(+b.dataset.i, 1); renderScan(); });
-    $("#s_out").onchange = e => { store.settings.output = e.target.value; store.save(); };
     $("#s_start").onclick = startJob;
-  }
+  } else drop.onclick = () => pickFiles(add);   // the whole zone opens the file picker
   wireDocsTable();
 }
 
@@ -333,29 +318,30 @@ function startJob() {
 }
 function renderIfProcess() { if (location.hash === "#/process") renderProcess(); }
 function renderProcess() {
-  if (!JOB) { view.innerHTML = `<div class="head"><div class="grow"><h1>Processing</h1></div></div><div class="card empty">Nothing is running. <a href="#/scan">Scan a document</a>.</div>`; return; }
+  if (!JOB) { view.innerHTML = `<div class="head"><div class="grow"><h1>Processing</h1></div></div><div class="card empty">Nothing is running. <a href="#/scan">Scan</a></div>`; return; }
   const cur = JOB.files[Math.min(JOB.current ?? 0, JOB.files.length - 1)], last = JOB.results[JOB.results.length - 1], running = JOB.status === "running";
   const stepIdx = {pdf: 0, decode: 0, layout: 1, textdet: 2, rec: 3, font: 4, structure: 4, done: 5}; const si = JOB.step ? stepIdx[JOB.step.stage] : -1;
   const recFrac = JOB.step && JOB.step.stage === "rec" && JOB.step.total ? JOB.step.done / JOB.step.total : 0;
   const fileFrac = cur.status === "running" ? Math.min(0.95, (si < 0 ? 0 : si === 3 ? 0.35 + 0.5 * recFrac : si >= 4 ? 0.9 : si * 0.12)) : 0;
   const pct = JOB.load ? Math.round(JOB.load.frac * 100) : Math.round((JOB.done + (running ? fileFrac : 0)) / JOB.total * 100);
-  const t = last ? last.timings : null, blocks = last ? last.blocks : [], n = cls => blocks.filter(b => b.cls === cls).length;
+  const t = last ? last.timings : null;
   const stepsHtml = [
-    ["Read the file", last ? `${last.width}×${last.height} px` : "", si > 0 || !!last, null],
-    ["Find regions", t ? `${blocks.length} regions · ${n("table")} table${n("table") === 1 ? "" : "s"} · ${n("stamp")} stamp${n("stamp") === 1 ? "" : "s"}` : "paragraphs, tables, stamps, logos", si > 1 || !!t, t && t.layout_ms],
-    ["Find text lines", t ? `${t.lines_detected} lines` : "", si > 2 || !!t, t && t.textdet_ms],
-    ["Read the text", t ? `Khmer + English · ${t.lines_recognized} lines` : (JOB.step && JOB.step.stage === "rec" && JOB.step.total ? `${JOB.step.done} of ${JOB.step.total} lines` : "Khmer + English"), si > 3 || !!t, t && t.rec_ms],
-    ["Fonts, paragraphs, order", t ? `${t.structure === "model" ? "learned structure" : "rules"} · fonts per line` : "", si > 4 || !!t, t && ((t.font_ms || 0) + (t.structure_ms || 0))],
-    ["Build the document", t ? "ready to review and export" : "", !!t, null]];
+    ["Read the file", "", si > 0 || !!last],
+    ["Find regions", "", si > 1 || !!t],
+    ["Find text lines", "", si > 2 || !!t],
+    ["Read the text", !t && JOB.step && JOB.step.stage === "rec" && JOB.step.total ? `${JOB.step.done} of ${JOB.step.total} lines` : "", si > 3 || !!t],
+    ["Format the page", "", si > 4 || !!t],
+    ["Build the document", "", !!t]];
   const failed = JOB.files.filter(f => f.status === "failed");
-  const b = T.benchmarkStored(), remaining = running ? (JOB.load ? "" : `about ${Math.max(1, Math.round((JOB.total - JOB.done - fileFrac) * (b ? T.estimate(b, 40) : 8)))} s left`) : `took ${fmtMs(Date.now() - JOB.started)}`;
-  const headHtml = `<div class="grow"><h1>${JOB.load ? "Getting ready…" : running ? "Reading your document…" : "Done"}</h1><p>${esc(JOB.name)}${JOB.total > 1 ? ` · file ${Math.min(JOB.done + 1, JOB.total)} of ${JOB.total}` : ""} · on this device</p></div>
-    ${running ? `<a class="btn" href="#/scan">Keep working, I'll wait</a>` : `<a class="btn p lg" href="#/review/${esc((JOB.files.find(x => x.page_id) || {}).page_id || "")}">Review results ${icon("arrow-right")}</a>`}`;
-  const badgeCls = `badge ${running ? "ink" : "ok"}`, badgeTxt = JOB.load ? "Loading models" : running ? "Working" : "Finished";
+  const b = T.benchmarkStored(), remaining = running ? (JOB.load ? "" : `about ${fmtSecs(Math.max(1, Math.round((JOB.total - JOB.done - fileFrac) * (b ? T.estimate(b, 40) : 8))))} left`) : `took ${fmtMs(Date.now() - JOB.started)}`;
+  const firstId = (JOB.files.find(x => x.page_id) || {}).page_id;
+  const headHtml = `<div class="grow"><h1>${JOB.load ? "Getting ready…" : running ? "Reading…" : firstId ? "Done" : "Failed"}</h1><p>${esc(JOB.name)}${JOB.total > 1 && running ? ` · ${Math.min(JOB.done + 1, JOB.total)} of ${JOB.total}` : ""}</p></div>
+    ${running || !firstId ? "" : `<a class="btn p lg" href="#/review/${esc(firstId)}">Review ${icon("arrow-right")}</a>`}`;
+  const badgeCls = `badge ${running ? "ink" : firstId ? "ok" : "bad"}`, badgeTxt = JOB.load ? "Loading" : running ? "Working" : firstId ? "Done" : "Failed";
   const msg = JOB.load ? JOB.load.msg : remaining;
-  const note = JOB.load ? `First visit: the OCR models are downloaded once and kept in this browser. Later scans start immediately.` : "";
-  const steps = stepsHtml.map(([tt, s, done, ms], i) => ({cls: `step ${done ? "done" : running && !JOB.load && i === Math.max(0, si) ? "run" : ""}`, done, tt, s, ms}));
-  const stepHtml = (st, i) => `<div class="${st.cls}" data-i="${i}"><span class="n">${st.done ? icon("check", "s") : i + 1}</span><div class="grow"><b>${st.tt}</b><span class="sub">${esc(st.s || "")}</span></div><span class="ms mono">${st.ms != null ? fmtMs(st.ms) : ""}</span></div>`;
+  const note = JOB.load ? "The models download once." : "";
+  const steps = stepsHtml.map(([tt, s, done], i) => ({cls: `step ${done ? "done" : running && !JOB.load && i === Math.max(0, si) ? "run" : ""}`, done, tt, s}));
+  const stepHtml = (st, i) => `<div class="${st.cls}" data-i="${i}"><span class="n">${st.done ? icon("check", "s") : i + 1}</span><div class="grow"><b>${st.tt}</b><span class="sub">${esc(st.s || "")}</span></div></div>`;
   const filesHtml = JOB.total > 1 ? `<div class="card pad">${JOB.files.map(f => `<div class="kv"><span style="color:var(--ink)">${esc(f.name)}</span><span class="badge ${f.status === "done" ? "ok" : f.status === "failed" ? "bad" : f.status === "running" ? "ink" : ""}">${f.status === "done" ? "Done" : f.status === "failed" ? "Failed" : f.status === "running" ? "Working" : "Waiting"}</span></div>`).join("")}</div>` : "";
   const failedHtml = failed.length ? `<div class="note">${icon("alert")}<div>${failed.map(f => `<b>${esc(f.name)}</b>: ${esc(f.error)}`).join("<br>")}</div></div>` : "";
   const overlay = !!(last && last.page_id === cur.page_id), imgSrc = overlay ? JOB.lastImage : cur.url;
@@ -367,10 +353,10 @@ function renderProcess() {
   if (!PVIEW || PVIEW.key !== key || !$("#p_stage")) {
     view.innerHTML = `
   <div class="head" id="p_head">${headHtml}</div>
-  <div class="grid g-main">
+  <div class="grid g-main proc">
    <div class="card"><div class="panehead"><span style="color:var(--ink)" id="p_name">${esc(cur.name)}</span><div class="grow"></div><span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
     <div class="stage"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" style="display:block;max-width:100%;max-height:70vh"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
-   <div style="display:flex;flex-direction:column;gap:16px">
+   <div class="col">
     <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" style="width:${pct}%;transition:none"></i></div>
       <div class="small mut" id="p_note" style="margin-top:10px${note ? "" : ";display:none"}">${note}</div></div>
     <div class="card pad"><div class="pipe" id="p_steps">${steps.map(stepHtml).join("")}</div></div>
@@ -392,7 +378,7 @@ function renderProcess() {
   if (sl) { if (scan) sl.className = scan; else sl.remove(); }
   $("#p_steps").querySelectorAll(".step").forEach((el, i) => { const st = steps[i];
     if (el.className !== st.cls) { const wasDone = el.classList.contains("done"); el.className = st.cls; if (wasDone !== st.done) el.querySelector(".n").innerHTML = st.done ? icon("check", "s") : String(i + 1); }
-    el.querySelector(".sub").textContent = st.s || ""; el.querySelector(".ms").textContent = st.ms != null ? fmtMs(st.ms) : ""; });
+    el.querySelector(".sub").textContent = st.s || ""; });
   if (PVIEW.phase !== phase) { PVIEW.phase = phase; PVIEW.disp = Math.min(PVIEW.disp, pct); } // new phase: the bar may start again from 0
   PVIEW.target = pct; PVIEW.running = running; progressLoop();
 }
@@ -498,7 +484,7 @@ function renderReview(id) {
    ${REVIEW.mode === "text" ? `<div><div class="panehead"><span>Text in reading order</span></div><div class="panebody white"><div class="textout" id="r_text">${pages.map((s, i) => (multi ? `<div class="lbl" style="margin:${i ? 28 : 0}px 0 10px;font:12px Inter,system-ui;color:var(--mut-2);letter-spacing:.06em;text-transform:uppercase">Page ${i + 1}</div>` : "") + textOut(s)).join("")}</div></div></div>` : ""}
    ${REVIEW.side ? `<div><div class="panehead"><b style="color:var(--ink)">Check these lines</b><div class="grow"></div><span class="badge ${lows.length ? "warn" : "ok"}">${lows.length}</span><button class="tool" id="r_side_close" title="Close panel">${icon("x", "s")}</button></div>
     <div class="panebody white" style="max-height:none">
-     <div id="r_lows">${lows.length ? lows.slice(0, 12).map((x, i) => `<div class="rev ${i === 0 ? "cur" : ""}" data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"><div class="w"><span>${esc(x.l.text.length > 28 ? x.l.text.slice(0, 28) + "…" : x.l.text)}</span><span class="pc">${multi ? `p.${pageNo(x.d)} · ` : ""}${Math.round(x.l.confidence * 100)}%</span></div><div class="snip"><canvas data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"></canvas></div><input value="${esc(x.l.text)}"><div class="acts"><button class="btn p sm" data-a="accept">${icon("check", "s")}Accept</button><button class="btn sm" data-a="ignore">Ignore</button></div></div>`).join("") : `<div class="small mut" style="padding:8px 0 16px">Every line was read with good confidence.</div>`}</div>
+     <div id="r_lows">${lows.length ? lows.slice(0, 12).map((x, i) => `<div class="rev ${i === 0 ? "cur" : ""}" data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"><div class="w"><span>${esc(x.l.text.length > 28 ? x.l.text.slice(0, 28) + "…" : x.l.text)}</span><span class="pc">${multi ? `p.${pageNo(x.d)} · ` : ""}${Math.round(x.l.confidence * 100)}%</span></div><div class="snip"><canvas data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"></canvas></div><input value="${esc(x.l.text)}"><div class="acts"><button class="btn p sm" data-a="accept">${icon("check", "s")}Accept</button><button class="btn sm" data-a="ignore">Ignore</button></div></div>`).join("") : `<div class="small mut" style="padding:8px 0 16px">Nothing to check.</div>`}</div>
      ${lows.length ? `<button class="btn" style="width:100%;margin-bottom:18px" id="r_acceptall">${icon("check-circle")}Accept all</button>` : ""}
      <h3 style="margin:4px 0 6px">About this ${multi ? "document" : "page"}</h3>
      ${multi ? `<div class="kv"><span>Pages</span><b>${pages.length}</b></div>` : ""}
@@ -621,43 +607,39 @@ async function exportDocx(docs) {
 /* ---------------------------------------------------------------- documents / settings / help */
 function renderDocuments() {
   const filter = q => store.docs.filter(d => !q || d.filename.toLowerCase().includes(q.toLowerCase()) || pageText(d.result).includes(q));
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1><p>${groups(store.docs).length} document${groups(store.docs).length === 1 ? "" : "s"} kept in this browser, on this device only.</p></div>
-    <label class="search">${icon("search", "s")}<input id="q" placeholder="Search by name or text"></label><a class="btn p" href="#/scan">${icon("plus")}Scan</a></div><div class="card" id="doclist">${docsTable(store.docs)}</div>
-    <div class="privacy">${icon("info")}<div>These documents exist only in this browser. They are not backed up anywhere. Export the ones you need to keep.</div></div>`;
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1></div>
+    <label class="search">${icon("search", "s")}<input id="q" placeholder="Search"></label><a class="btn p" href="#/scan">${icon("plus")}Scan</a></div><div class="card" id="doclist">${docsTable(store.docs)}</div>
+    <div class="hint">${icon("info", "s")}Saved in this browser only. Export what you want to keep.</div>`;
   wireDocsTable();
   $("#q").oninput = e => { $("#doclist").innerHTML = docsTable(filter(e.target.value.trim())); wireDocsTable(); };
 }
+let ADV_OPEN = false;   // Settings > Advanced stays open across re-renders
 async function renderSettings() {
   view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1></div></div>`;
   await T.loadManifestSafe(); if (!RECO) await deviceCheck();
   const choice = chosenModels(), b = T.benchmarkStored(), tier = store.settings.tier || RECO.tier;
-  const stage = (k, title, sub) => { const opts = T.modelsFor(k); return `<div class="field"><label>${title}</label><div class="sel"><select data-stage="${k}">${opts.map(m => `<option value="${esc(m.id)}" ${m.id === choice[k] ? "selected" : ""}>${esc(m.label || m.id)}${T.manifest.sizes && T.manifest.sizes[m.file] ? " · " + T.fmtBytes(T.manifest.sizes[m.file]) : ""}</option>`).join("")}</select></div><div class="small mut">${sub}</div></div>`; };
+  const stage = (k, title) => { const opts = T.modelsFor(k); return `<div class="field"><label>${title}</label><div class="sel"><select data-stage="${k}">${opts.map(m => `<option value="${esc(m.id)}" ${m.id === choice[k] ? "selected" : ""}>${esc(m.label || m.id)}${T.manifest.sizes && T.manifest.sizes[m.file] ? " · " + T.fmtBytes(T.manifest.sizes[m.file]) : ""}</option>`).join("")}</select></div></div>`; };
   const sr = await storageReport(); const bytes = Math.max(0, sr.usage - sr.models);
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1><p>Models, device and local data. Everything here applies to this browser only.</p></div></div>
+  const TIER_SUB = {high: "Most accurate", mid: "Faster", low: "Fastest"};
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1></div></div>
   <div class="grid g-main"><div style="display:flex;flex-direction:column;gap:16px">
-   <div class="card pad"><h2 style="margin-bottom:4px">Your device</h2><div class="small mut" style="margin-bottom:14px">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB memory" : ""} · ${DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU"} · ${DEVICE.threadsOK ? "multi-thread" : "single-thread"} WebAssembly${DEVICE.mobile ? " · mobile" : ""}</div>
-    <div class="small mut" style="margin-bottom:10px">${RECO.reasons.map(esc).join(" · ")}</div>
-    <div class="field"><label>Model set</label><div class="tiers" id="s_tiers">${["high", "mid", "low"].map(t => `<div class="tier ${tier === t ? "on" : ""}" data-t="${t}"><b>${TIER_LABEL[t]}${RECO.tier === t ? " · recommended" : ""}</b>${t === "high" ? "fp32 recogniser v2.4, detector at 2200 px" : t === "mid" ? "int8 recogniser, detector at 1800 px" : "int8 recogniser and layout model, detector at 1300 px, for phones"}</div>`).join("")}</div></div>
-    <div class="field"><label>Compute</label><div class="sel"><select id="s_backend"><option value="auto" ${store.settings.backend === "auto" ? "selected" : ""}>Automatic (GPU when available)</option><option value="webgpu" ${store.settings.backend === "webgpu" ? "selected" : ""}>WebGPU</option><option value="wasm" ${store.settings.backend === "wasm" ? "selected" : ""}>CPU (WebAssembly)</option></select></div></div>
-    ${b ? `<div class="kv"><span>Measured speed</span><b>regions ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per text line · ${b.backend}</b></div><div class="kv"><span>Estimate</span><b>about ${T.estimate(b, 40)} s for a 40-line page</b></div>` : `<div class="small mut">Speed is measured when the models are first loaded.</div>`}
-    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" id="s_bench">${icon("refresh")}Measure again</button><button class="btn sm" id="s_load">${icon("download")}Load models now</button></div></div>
-   <div class="card pad"><h2 style="margin-bottom:12px">Models <span class="small mut" style="font-weight:400">(overrides the model set)</span></h2>
-    ${stage("layout", "Layout", "Finds paragraphs, titles, tables, stamps, logos and handwriting.")}${stage("textdet", "Text lines", "Finds each line of text.")}${stage("rec", "Text recogniser", "Reads Khmer and English. int8 = smaller and faster, fp32 = slightly more accurate.")}${stage("font", "Font classifier", "Typeface, weight, slant and size per line.")}${stage("structure", "Structure", "Paragraphs, roles and reading order.")}
-    <button class="btn sm ghost" id="s_reset">Back to the recommended set</button></div>
-   <div class="card pad"><h2 style="margin-bottom:12px">Preferences</h2>
-    <div class="field"><label>Your name</label><div class="sel"><input id="s_name" value="${esc(store.settings.name)}"></div></div>
-    <div class="field"><label>Default export</label><div class="sel">${outputSel("s_out", store.settings.output)}</div></div>
-    <div class="field"><label>Page analysis</label><div class="sel"><select id="s_rules"><option value="rules" ${store.settings.rules !== false ? "selected" : ""}>Models + layout rules (recommended: paragraphs, label columns, tables from alignment, reading order)</option><option value="model" ${store.settings.rules === false ? "selected" : ""}>Models only (layout + structure model decide grouping and order)</option></select></div><div class="small mut">Applies to the next scan. "Run OCR again" on a document re-reads it with the current choice.</div></div></div></div>
-   <div style="display:flex;flex-direction:column;gap:16px"><div class="card pad"><h3>Space used in this browser</h3><p class="small mut" style="margin:8px 0 12px">Everything ThaOCR keeps lives in this browser, on this device. There is no server copy.</p>
-     <div class="kv"><span>Documents and page images</span><b>${store.docs.length} document${store.docs.length === 1 ? "" : "s"} · ${fmtSize(bytes)}</b></div>
-     <div class="kv"><span>Downloaded models</span><b>${sr.modelFiles ? `${sr.modelFiles} file${sr.modelFiles === 1 ? "" : "s"} · ${fmtSize(sr.models)}` : "none"}</b></div>
-     <div class="kv"><span>Total for this site</span><b>${sr.usage ? `${fmtSize(sr.usage)}${sr.quota ? ` of ${fmtSize(sr.quota)} available` : ""}` : "unknown"}</b></div>
-     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="s_clear">Delete all documents</button><button class="btn" id="s_cache">Remove cached models</button></div></div>
-   <div class="card pad"><h3>Improve the models</h3><p class="small mut" style="margin:8px 0 12px">Every line you correct in a review is a training example. Export them as line images with the right text and send the file to the ThaOCR maintainer, or use it with the training scripts, to retrain the recogniser on your kind of documents. Nothing is sent automatically.</p><button class="btn" id="s_corr">${icon("download")}Export corrected lines (${correctedLines().length})</button></div>
-   <div class="card pad" style="border-color:#f3c7c7"><h3>Reset everything</h3><p class="small mut" style="margin:8px 0 12px">Removes all documents, page images, edits, downloaded models, the device measurement and your settings, so this site takes no space in your browser. The page then starts over as on a first visit. Models download again when you next scan.</p><button class="btn danger" id="s_wipe">${icon("trash")}Reset everything</button></div></div></div>`;
-  $("#s_out").onchange = e => { store.settings.output = e.target.value; store.save(); };
+   <div class="card pad"><h2 style="margin-bottom:12px">Quality</h2>
+    <div class="tiers" id="s_tiers">${["high", "mid", "low"].map(t => `<div class="tier ${tier === t ? "on" : ""}" data-t="${t}"><b>${TIER_LABEL[t]}${RECO.tier === t ? " · recommended" : ""}</b>${TIER_SUB[t]}</div>`).join("")}</div>
+    <div class="small mut" style="margin-top:12px">${b ? `About ${fmtSecs(T.estimate(b, 40))} per page on this device` : "Speed is measured on the first scan"}</div></div>
+   <details class="card pad adv" id="s_adv" ${ADV_OPEN ? "open" : ""}><summary>Advanced</summary>
+    <div class="small mut" style="margin:12px 0 14px">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB" : ""} · ${DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU"} · ${DEVICE.threadsOK ? "multi-thread" : "single-thread"}${DEVICE.mobile ? " · mobile" : ""}${b ? `<br>layout ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per line · ${esc(b.backend)}` : ""}</div>
+    <div class="field"><label>Compute</label><div class="sel"><select id="s_backend"><option value="auto" ${store.settings.backend === "auto" ? "selected" : ""}>Automatic</option><option value="webgpu" ${store.settings.backend === "webgpu" ? "selected" : ""}>GPU</option><option value="wasm" ${store.settings.backend === "wasm" ? "selected" : ""}>CPU</option></select></div></div>
+    ${stage("layout", "Layout")}${stage("textdet", "Text lines")}${stage("rec", "Text recogniser")}${stage("font", "Fonts")}${stage("structure", "Structure")}
+    <div class="field"><label>Page analysis</label><div class="sel"><select id="s_rules"><option value="rules" ${store.settings.rules !== false ? "selected" : ""}>Models + rules (recommended)</option><option value="model" ${store.settings.rules === false ? "selected" : ""}>Models only</option></select></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="s_bench">${icon("refresh")}Measure speed</button><button class="btn sm" id="s_load">${icon("download")}Load models</button><button class="btn sm" id="s_corr">${icon("download")}Export corrected lines (${correctedLines().length})</button><button class="btn sm ghost" id="s_reset">Reset to recommended</button></div></details></div>
+   <div style="display:flex;flex-direction:column;gap:16px"><div class="card pad"><h3 style="margin-bottom:8px">Storage</h3>
+     <div class="kv"><span>Documents</span><b>${fmtSize(bytes)}</b></div>
+     <div class="kv"><span>Models</span><b>${sr.modelFiles ? fmtSize(sr.models) : "none"}</b></div>
+     <div class="kv"><span>Total</span><b>${sr.usage ? fmtSize(sr.usage) : "unknown"}</b></div>
+     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn sm" id="s_clear">Delete documents</button><button class="btn sm" id="s_cache">Remove models</button></div></div>
+   <div class="card pad" style="border-color:#f3c7c7"><h3>Reset</h3><p class="small mut" style="margin:8px 0 12px">Removes all documents, models and settings from this browser.</p><button class="btn danger" id="s_wipe">${icon("trash")}Reset everything</button></div></div></div>`;
+  $("#s_adv").ontoggle = e => { ADV_OPEN = e.target.open; };
   $("#s_rules").onchange = e => { store.settings.rules = e.target.value === "rules"; store.save(); applyScale(); toast(store.settings.rules ? "rules on for the next scan" : "models only for the next scan"); };
-  $("#s_name").onchange = e => { store.settings.name = e.target.value.trim() || "Local user"; store.save(); };
   $("#s_backend").onchange = e => { store.settings.backend = e.target.value; store.save(); resetModels(); renderSettings(); };
   view.querySelectorAll("#s_tiers .tier").forEach(t => t.onclick = () => { store.settings.tier = t.dataset.t === RECO.tier ? null : t.dataset.t; store.settings.models = {}; const fake = T.recommend(Object.assign({}, DEVICE, {webgpu: t.dataset.t === "high", mobile: t.dataset.t === "low", threads: t.dataset.t === "high" ? 8 : t.dataset.t === "low" ? 4 : 6, memoryGB: t.dataset.t === "low" ? 4 : 8})); RECO = Object.assign({}, RECO, {choice: fake.choice, scale: fake.scale}); store.settings.longMin = null; store.settings.longMax = null; store.save(); resetModels(); renderSettings(); });
   view.querySelectorAll("select[data-stage]").forEach(sel => sel.onchange = () => { store.settings.models = Object.assign({}, store.settings.models, {[sel.dataset.stage]: sel.value}); store.save(); resetModels(); toast("model changed; it loads on the next scan"); });
@@ -710,15 +692,14 @@ async function resetEverything() {
 }
 function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1><p>How ThaOCR works and how to get the best results.</p></div></div>
-  <div class="card pad help"><h3>Where your files go</h3><p>Nowhere. The page downloads the ONNX runtime from the jsDelivr CDN and the OCR models (about 40 MB) from Hugging Face once, and runs them inside your browser with WebAssembly or WebGPU. Photos, text and edits never leave your device. There is no account and no server-side copy: documents live in this browser's storage and disappear if you clear site data, use a private window or change device. Export what you want to keep.</p>
-  <h3>PDF files</h3><p>Drop a PDF and each page becomes a document. If a page already contains text (a PDF made from Word, a website, or a scanner with its own OCR layer), that text is used directly and nothing is recognised, so it is exact and takes well under a second. Pages that are only pictures are read with OCR like a photo. The two kinds can be mixed in one file. If the text layer of a page is wrong, open the page and use <b>Run OCR instead</b>.</p>
-  <h3>Speed</h3><p>The first visit downloads the models and measures your device, then shows an estimate per page. A laptop takes a few seconds per page; a phone can take half a minute. Smaller photos process faster. Settings lets you pick a lighter model set or force CPU or GPU.</p>
-  <h3>Scanning</h3><p>Photograph or scan pages flat and evenly lit, at 300 DPI or at least about 1500 px wide for an A4 page. Khmer subscripts and vowel signs are small; below 1000 px they start to be missed.</p>
-  <h3>What is read</h3><p>Paragraphs, titles, headers, footers, tables, lists, logos, stamps, signatures and handwriting regions; Khmer and English text; list markers, paragraphs and reading order; the font family, weight, slant and size of each line.</p>
-  <h3>Checking the result</h3><p>Lines read below ${Math.round(LOW * 100)}% confidence are listed on the right of the review page and highlighted in the page. Click any text to edit it in place. Accept keeps the text, Ignore hides the warning.</p>
-  <h3>Export</h3><p>Word (.docx) keeps headings, paragraphs, alignment, indents, bullets, fonts and sizes, and places logos and stamps as pictures. Plain text keeps tabs for indents. JSON is the full result.</p>
-  <h3>Shortcuts</h3><p><kbd>Ctrl</kbd>+<kbd>V</kbd> pastes an image into the Scan page.</p></div>`;
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1></div></div>
+  <div class="card pad help"><h3>Privacy</h3><p>Everything runs in your browser. Nothing is uploaded. Documents are saved only in this browser and are lost if you clear its data, so export what you want to keep. The OCR engine (from jsDelivr) and the models (from Hugging Face) download once.</p>
+  <h3>Good scans</h3><p>Flat, evenly lit, and about 1500 px wide or more for an A4 page. Below 1000 px, small Khmer signs are missed.</p>
+  <h3>PDF</h3><p>Each page becomes a document. Pages that already contain text are used as they are; scanned pages are read with OCR. If the text is wrong, open the page and use <b>Run OCR instead</b>.</p>
+  <h3>Checking</h3><p>Lines read below ${Math.round(LOW * 100)}% confidence are highlighted. Click any text to edit it.</p>
+  <h3>Export</h3><p>Word keeps headings, tables, fonts and pictures. Plain text and JSON are also available.</p>
+  <h3>Speed</h3><p>A laptop needs a few seconds per page, a phone longer. Settings has faster model sets.</p>
+  <h3>Shortcut</h3><p><kbd>Ctrl</kbd>+<kbd>V</kbd> pastes an image.</p></div>`;
 }
 
 
@@ -747,8 +728,8 @@ async function selImage(f) {  // -> {canvas,width,height}, decoded once
   return f.imgP;
 }
 async function selLines(f) {  // text lines of the whole page, detected once
-  if (!f.linesP) f.linesP = (async () => { const hint = $("#s_hint"); if (!T.loaded() && hint) hint.innerHTML = `<span class="spin" style="display:inline-block;vertical-align:-2px"></span> loading the OCR models (first time only)…`;
-    try { await ensureModels(); } finally { const h = $("#s_hint"); if (h) h.textContent = "Drag to select · click a box to see it"; } applyScale(); const im = await selImage(f); const ls = await T.detectLines(im.canvas); return ls.map(l => Object.assign(l, {bbox: l.bbox || T.util.bboxOf(l.quad)})); })();
+  if (!f.linesP) f.linesP = (async () => { const hint = $("#s_hint"); if (!T.loaded() && hint) hint.innerHTML = `<span class="spin" style="display:inline-block;vertical-align:-2px"></span> Loading models…`;
+    try { await ensureModels(); } finally { const h = $("#s_hint"); if (h) h.textContent = "Drag over text"; } applyScale(); const im = await selImage(f); const ls = await T.detectLines(im.canvas); return ls.map(l => Object.assign(l, {bbox: l.bbox || T.util.bboxOf(l.quad)})); })();
   try { return await f.linesP; } catch (e) { f.linesP = null; throw e; }
 }
 /** quad (tl,tr,br,bl) cut to the x range [x0,x1] along its top and bottom edges */
@@ -776,20 +757,21 @@ async function selRead(f, box) {
 }
 function selCopy(text) { if (!text) { toast("nothing to copy"); return; } navigator.clipboard.writeText(text).then(() => toast("copied"), () => toast("copy blocked by the browser")); }
 function renderSelect() {
-  const f = SEL.files[SEL.cur];
+  const f = SEL.files[SEL.cur], touch = isTouch();
   view.innerHTML = `
-  <div class="head"><div class="grow"><h1>Select</h1><p>Add photos, scans or PDFs, then drag a box over any part of a page. That part is read at once, ready to copy. Nothing is saved.</p></div>
-    <div class="tools"><label class="small mut" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer" title="Copy each new result to the clipboard"><input type="checkbox" id="s_auto" ${SEL.autoCopy ? "checked" : ""}> Copy automatically</label>
-      ${SEL.files.length ? `<button class="btn p" id="s_add">${icon("upload")} Add files</button>` : ""}</div></div>
-  ${!SEL.files.length ? `<div class="drop sel-empty" id="s_drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>Drop images or PDFs here</b><div class="small">JPG, PNG, WebP, TIFF, PDF · or paste with Ctrl+V · then drag a box over any part to read it</div></div>
-    <div class="acts"><button class="btn p" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>` : `
+  <div class="head"><div class="grow"><h1>Select</h1></div>
+    <div class="tools"><label class="small mut" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer" title="Copy each new result to the clipboard"><input type="checkbox" id="s_auto" ${SEL.autoCopy ? "checked" : ""}> Auto-copy</label>
+      ${SEL.files.length ? `<button class="btn p" id="s_add">${icon("plus")}Add</button>` : ""}</div></div>
+  ${!SEL.files.length ? `<div class="drop" id="s_drop"><div class="ico">${icon("upload", "l")}</div><b>${touch ? "Add" : "Drop"} a photo or PDF</b><div class="small">Then drag a box over the text you want to copy</div>
+    <div class="acts">${touch ? `<button class="btn p" id="s_cam">${icon("camera")}Camera</button>` : ""}<button class="btn ${touch ? "" : "p"}" id="s_browse">${icon("folder")}Choose files</button></div></div>` : `
   <div class="sel-grid">
    <div class="sel-files card" id="s_files">${SEL.files.map((x, i) => `<button class="sel-file ${i === SEL.cur ? "cur" : ""}" data-i="${i}" title="${esc(x.name)}"><span class="th">${x.thumb ? `<img src="${x.thumb}" alt="">` : icon("image")}</span><span class="nm">${esc(x.name)}</span>${x.boxes.length ? `<span class="count">${x.boxes.length}</span>` : ""}<span class="rm" data-rm="${i}" title="Remove">${icon("x", "s")}</span></button>`).join("")}</div>
-   <div class="card sel-stage-card"><div class="panehead"><span style="color:var(--ink)">${esc(f.name)}</span><div class="grow"></div><span class="small mut" id="s_hint">Drag to select · click a box to see it</span></div>
+   <div class="card sel-stage-card"><div class="panehead"><span style="color:var(--ink)">${esc(f.name)}</span><div class="grow"></div><span class="small mut" id="s_hint">Drag over text</span></div>
      <div class="stage sel-stage" id="s_drop"><div class="sel-page" id="s_page"><div class="sel-wait" id="s_wait"><span class="spin"></span> opening…</div></div></div></div>
    <div class="sel-results" id="s_res"></div>
   </div>`}`;
-  if ($("#s_add")) $("#s_add").onclick = () => pickFiles(selAdd); if ($("#s_browse")) { $("#s_browse").onclick = () => pickFiles(selAdd); $("#s_cam").onclick = () => pickFiles(selAdd, true); }
+  if ($("#s_add")) $("#s_add").onclick = () => pickFiles(selAdd);
+  if ($("#s_browse")) { $("#s_browse").onclick = e => { e.stopPropagation(); pickFiles(selAdd); }; if ($("#s_cam")) $("#s_cam").onclick = e => { e.stopPropagation(); pickFiles(selAdd, true); }; $("#s_drop").onclick = () => pickFiles(selAdd); }
   $("#s_auto").onchange = e => { SEL.autoCopy = e.target.checked; localStorage.setItem("thaocr.selAutoCopy", SEL.autoCopy ? "1" : "0"); };
   if ($("#s_drop")) wireDrop($("#s_drop"), selAdd);
   if (!f) return;
@@ -828,10 +810,10 @@ function selResults(f) {
   const all = f.boxes.filter(b => b.state === "done" && b.text).map(b => b.text).join("\n\n");
   el.innerHTML = `<div class="card pad sel-reshead"><b class="grow">Selections${f.boxes.length ? ` · ${f.boxes.length}` : ""}</b>${f.boxes.length > 1 ? `<button class="btn sm" id="s_copyall">${icon("copy", "s")} Copy all</button>` : ""}${f.boxes.length ? `<button class="btn sm ghost" id="s_clear" title="Remove all boxes">${icon("trash", "s")}</button>` : ""}</div>
    ${f.boxes.length ? f.boxes.map((b, i) => `<div class="card sel-item ${b.id === f.focus ? "focus" : ""}" data-id="${b.id}">
-      <div class="sel-ih"><span class="tag">${i + 1}</span><span class="small mut grow">${b.state === "reading" ? "reading…" : b.state === "failed" ? "failed" : `${b.lines || 0} line${b.lines === 1 ? "" : "s"} · ${Math.round((b.conf || 0) * 100)}% sure · ${fmtMs(b.ms || 0)}`}</span>
+      <div class="sel-ih"><span class="tag">${i + 1}</span><span class="small mut grow">${b.state === "reading" ? "reading…" : b.state === "failed" ? "failed" : `${Math.round((b.conf || 0) * 100)}% sure`}</span>
         <button class="btn sm" data-copy="${b.id}" ${b.state !== "done" ? "disabled" : ""}>${icon("copy", "s")} Copy</button><button class="btn sm ghost" data-del="${b.id}" title="Remove">${icon("x", "s")}</button></div>
-      ${b.state === "reading" ? `<div class="sel-skel"><i></i><i></i><i></i></div>` : b.state === "failed" ? `<div class="small" style="color:var(--bad)">${esc(b.err || "")}</div>` : `<textarea class="sel-text" data-id="${b.id}" rows="${Math.min(10, Math.max(2, (b.text.match(/\n/g) || []).length + 1))}" spellcheck="false" placeholder="No text found in this box">${esc(b.text)}</textarea>`}</div>`).join("")
-     : `<div class="card pad small mut">Drag a box over the text you want. Each box appears here with a Copy button. You can edit the text before copying.</div>`}`;
+      ${b.state === "reading" ? `<div class="sel-skel"><i></i><i></i><i></i></div>` : b.state === "failed" ? `<div class="small" style="color:var(--bad)">${esc(b.err || "")}</div>` : `<textarea class="sel-text" data-id="${b.id}" rows="${Math.min(10, Math.max(2, (b.text.match(/\n/g) || []).length + 1))}" spellcheck="false" placeholder="No text found">${esc(b.text)}</textarea>`}</div>`).join("")
+     : `<div class="card pad small mut">Drag a box over text. The result appears here.</div>`}`;
   const byId = id => f.boxes.find(b => b.id === id);
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => selCopy(byId(b.dataset.copy).text));
   el.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { f.boxes = f.boxes.filter(x => x.id !== b.dataset.del); if (f.redraw) f.redraw(); selResults(f); selFileCount(f); });
