@@ -48,8 +48,9 @@ them, otherwise the text comes out in visual order with subscripts lost. A text 
 page forces OCR for a page.
 
 Device tiers (ocr/device.js): **Best quality** (WebGPU or >= 8 threads and >= 8 GB) = fp32 recogniser v2.4, detector at
-1600-2200 px; **Balanced** = int8 recogniser, 1600-1800 px; **Light** (phones, <= 4 threads or <= 4 GB) = int8,
-1100-1300 px. A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
+1600-2200 px; **Balanced** = int8 recogniser, 1600-1800 px; **Light** (phones, <= 4 threads or <= 4 GB) = int8 recogniser,
+1100-1300 px; phones also get the int8 layout model (3.3 MB instead of 10.9 MB), which Settings can switch back
+(Model set -> Balanced, or Models -> Layout). A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
 
 Layout rules added in the browser version (not in the server): segments of one line are recognised separately and
 joined in reading order; dot leaders become a tab with the page number right-aligned (Document view and Word);
