@@ -42,18 +42,45 @@
   T.modelsFor = stage => (T.manifest ? T.manifest.models.filter(m => m.stage === stage && m.kind !== "ultralytics_pt") : []);
   T.spec = id => T.manifest && T.manifest.models.find(m => m.id === id);
 
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  /** GET a file with progress -> ArrayBuffer. Phones drop connections mid-download, so a failed attempt is retried (with
+   *  backoff) and continues with a Range request from the bytes already received; if the server will not resume it starts
+   *  over. HTTP 4xx (except 408/429) is not retried: the file is not there or not allowed. */
+  async function download(url, onProgress, tries = 5) {
+    const name = url.split("/").pop(); let chunks = [], got = 0, total = 0, resume = true, last;
+    for (let attempt = 0; attempt < tries; attempt++) {
+      if (attempt) await sleep(Math.min(8000, 700 * 2 ** (attempt - 1)));
+      const before = got;
+      try {
+        const res = await fetch(url, got && resume ? {headers: {Range: `bytes=${got}-`}} : undefined);
+        if (!res.ok) { const e = new Error(`cannot download ${url} (${res.status})`); e.http = res.status; throw e; }
+        if (got && res.status === 206) { const m = /^bytes (\d+)-\d+\/(\d+)$/.exec(res.headers.get("content-range") || ""); if (!m || +m[1] !== got) throw new Error("bad range reply"); total = +m[2]; }
+        else { chunks = []; got = 0; total = +(res.headers.get("content-length") || 0); }   // full body (first try, or the server ignored Range)
+        if (!res.body) { const b = new Uint8Array(await res.arrayBuffer()); chunks.push(b); got += b.length; onProgress && onProgress(got, total || got); }
+        else { const reader = res.body.getReader(); for (;;) { const {done, value} = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress && onProgress(got, total || got); } }
+        if (total && got !== total) throw new Error(`truncated download of ${name} (${got} of ${total} bytes)`);
+        const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+        return out.buffer;
+      } catch (e) {
+        last = e; console.warn(`download ${name}: attempt ${attempt + 1}/${tries} failed at ${got} bytes:`, e.message || e);
+        if (e.http && e.http < 500 && e.http !== 408 && e.http !== 429) throw e;
+        if (got === before && before > 0) { resume = false; chunks = []; got = 0; }   // the resumed request itself failed: start over from zero
+      }
+    }
+    throw new Error(`connection lost while downloading ${name} (${got}${total ? " of " + total : ""} bytes): ${last && last.message || last}. Check your network and try again.`);
+  }
+
   /** Fetch a model file through the Cache API (downloaded once per browser), reporting progress. -> ArrayBuffer */
   async function fetchCached(url, onProgress) {
     let cache = null; try { cache = await caches.open("thaocr-models-v1"); } catch { /* file:// or private mode */ }
-    let res = cache ? await cache.match(url) : null, fromCache = !!res;
-    if (!res) { res = await fetch(url); if (!res.ok) throw new Error(`cannot download ${url} (${res.status})`); if (cache) { try { await cache.put(url, res.clone()); } catch { /* quota */ } } }
-    const total = +(res.headers.get("content-length") || 0);
-    if (!res.body || !onProgress) { const b = await res.arrayBuffer(); onProgress && onProgress(b.byteLength, b.byteLength, fromCache); return b; }
-    const reader = res.body.getReader(), chunks = []; let got = 0;
-    for (;;) { const {done, value} = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got, total || got, fromCache); }
-    const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
-    return out.buffer;
+    const hit = cache ? await cache.match(url) : null;
+    if (hit) { const b = await hit.arrayBuffer(); onProgress && onProgress(b.byteLength, b.byteLength, true); return b; }
+    const buf = await download(url, (got, total) => onProgress && onProgress(got, total, false));
+    if (cache) { try { await cache.put(url, new Response(buf)); } catch { /* quota */ } }   // only a complete file is stored
+    return buf;
   }
+  const fetchJSON = async url => JSON.parse(new TextDecoder().decode(await fetchCached(url)));
   T.isCached = async url => { try { const c = await caches.open("thaocr-models-v1"); return !!(await c.match(url)); } catch { return false; } };
   T.clearModelCache = async () => { try { await caches.delete("thaocr-models-v1"); } catch { } };
 
@@ -63,7 +90,14 @@
     if (window.ort) return Promise.resolve(window.ort);
     if (ortLoading) return ortLoading;
     const file = T.config.ortBase + (eps[0] === "webgpu" ? "ort.webgpu.min.js" : "ort.wasm.min.js");
-    ortLoading = new Promise((res, rej) => { const s = document.createElement("script"); s.src = file; s.onload = () => res(window.ort); s.onerror = () => rej(new Error("cannot load " + file)); document.head.appendChild(s); });
+    // retried, and a failure is not remembered (a rejected promise kept here would break every later scan until a page reload)
+    ortLoading = (async () => {
+      for (let i = 0; ; i++) {
+        const s = document.createElement("script");
+        try { await new Promise((res, rej) => { s.src = file; s.onload = res; s.onerror = () => rej(new Error("cannot load " + file)); document.head.appendChild(s); }); return window.ort; }
+        catch (e) { s.remove(); if (i >= 2) { ortLoading = null; throw new Error(e.message + " - check your network and try again"); } await sleep(700 * 2 ** i); }
+      }
+    })();
     return ortLoading;
   }
   function ortEnv() {
@@ -101,7 +135,7 @@
       const {sess, ep} = await session(buf, stage === "rec" || stage === "structure" || stage === "font" ? ["wasm"] : eps);
       if (T.sessions[stage] && T.sessions[stage].sess.release) { try { await T.sessions[stage].sess.release(); } catch { } }
       T.sessions[stage] = {sess, ep, spec}; T.active[stage] = id;
-      if (stage === "rec") { const v = await (await fetch(T.config.modelBase + spec.vocab)).json(); T.meta.vocab = v.itos || v; T.meta.recStride = null; T.sessions.rec.vocab = T.meta.vocab; }
+      if (stage === "rec") { const v = await fetchJSON(T.config.modelBase + spec.vocab); T.meta.vocab = v.itos || v; T.meta.recStride = null; T.sessions.rec.vocab = T.meta.vocab; }
       if (stage === "layout") T.meta.layoutNames = spec.classes || CLASSES;
       if (stage === "font") { const mf = await (await fetch(T.config.manifestBase + "font/font_meta.json")).json(); T.meta.font = mf; }
       if (stage === "structure") { const ms = await (await fetch(T.config.manifestBase + "structure/struct_meta.json")).json(); T.meta.structure = ms; }
@@ -116,7 +150,7 @@
     if (T.sessions.rec_alt && T.sessions.rec_alt.spec.id === id) return T.sessions.rec_alt;
     const spec = T.spec(id); if (!spec) throw new Error("unknown model " + id);
     const buf = await fetchCached(T.config.modelBase + spec.file, (got, total, fromCache) => onProgress && onProgress({stage: "rec_alt", id, got, total, fromCache}));
-    const {sess, ep} = await session(buf, ["wasm"]); const v = await (await fetch(T.config.modelBase + spec.vocab)).json();
+    const {sess, ep} = await session(buf, ["wasm"]); const v = await fetchJSON(T.config.modelBase + spec.vocab);
     T.sessions.rec_alt = {sess, ep, spec, vocab: v.itos || v}; return T.sessions.rec_alt;
   };
 
