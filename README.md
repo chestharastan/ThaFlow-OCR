@@ -28,7 +28,9 @@ works under the isolation headers, threads included); the docx library loads fro
 the `dist/` files of onnxruntime-web into `vendor/` and set `ortBase` to `"vendor/"`.
 
 Models: `ThaOCR.config.modelBase` (ocr/engine.js) is the Hugging Face resolve URL of `Thareah/ThaOCR-models`; the
-browser fetches only the chosen set, once, into the Cache API. The manifest and the small meta JSON files stay in
+browser fetches only the chosen set, once, into the Cache API (a file is stored only when it arrived complete; a
+dropped connection is retried up to 5 times and resumes with a `Range` request, so a flaky phone connection does not
+restart a file from zero). The manifest and the small meta JSON files stay in
 `models/` on the site. To work offline, copy the ONNX/vocab files into `models/` (they are git-ignored) and set
 `modelBase` to `"models/"`.
 
