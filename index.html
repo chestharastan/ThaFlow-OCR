@@ -42,10 +42,13 @@
   <a class="nav help" data-r="help" href="#/help" aria-label="Help"><svg class="i" aria-hidden="true"><use href="#i-help"/></svg><span class="t">Help</span></a>
   <div class="foot">
    <span class="devchip" title="Nothing leaves this device"><svg class="i s" aria-hidden="true"><use href="#i-shield"/></svg><span id="dev">…</span></span>
-   <button class="iconbtn" id="themetog" type="button" title="Dark mode" aria-label="Switch to dark mode"><svg class="i ic-moon" aria-hidden="true"><use href="#i-moon"/></svg><svg class="i ic-sun" aria-hidden="true"><use href="#i-sun"/></svg></button>
+   <button class="iconbtn themetog" type="button" title="Dark mode" aria-label="Switch to dark mode"><svg class="i ic-moon" aria-hidden="true"><use href="#i-moon"/></svg><svg class="i ic-sun" aria-hidden="true"><use href="#i-sun"/></svg></button>
   </div>
  </aside>
- <main class="page" id="view" tabindex="-1"></main>
+ <div class="main">
+  <div class="topbar"><button class="btn icon themetog tip" id="themetog" type="button" data-tip="Dark mode" aria-label="Switch to dark mode"><svg class="i ic-moon" aria-hidden="true"><use href="#i-moon"/></svg><svg class="i ic-sun" aria-hidden="true"><use href="#i-sun"/></svg></button></div>
+  <main class="page" id="view" tabindex="-1"></main>
+ </div>
 </div>
 <input id="fileinput" type="file" accept="image/*,application/pdf,.pdf" multiple hidden>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>

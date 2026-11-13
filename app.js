@@ -107,7 +107,8 @@ function applyTheme(animate) {
   if (animate && !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) { root.classList.add("theme-anim"); clearTimeout(applyTheme.t); applyTheme.t = setTimeout(() => root.classList.remove("theme-anim"), 320); }
   root.dataset.theme = dark ? "dark" : "light";
   const meta = $('meta[name="theme-color"]'); if (meta) meta.content = dark ? "#0f0f10" : "#f7f7f5";
-  const b = $("#themetog"); if (b) { const to = dark ? "Light mode" : "Dark mode"; b.title = to; b.setAttribute("aria-label", "Switch to " + to.toLowerCase()); }
+  const to = dark ? "Light mode" : "Dark mode";  // top-right button (desktop) and top-bar button (phones)
+  document.querySelectorAll(".themetog").forEach(b => { b.dataset.tip = to; b.setAttribute("aria-label", "Switch to " + to.toLowerCase()); if (!b.classList.contains("tip")) b.title = to; });
   document.querySelectorAll("#s_theme button").forEach(x => { const on = x.dataset.v === pref; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); });
 }
 function setTheme(t) { try { if (t === "system") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch { } applyTheme(true); }
@@ -663,11 +664,14 @@ function renderDocuments() {
   const filter = q => store.docs.filter(d => !q || d.filename.toLowerCase().includes(q.toLowerCase()) || pageText(d.result).includes(q));
   const n = groups(store.docs).length;
   view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1><p>${n ? `${plural(n, "document")} on this device` : "Nothing saved yet"}</p></div>
-    ${n ? `<label class="search">${icon("search", "s")}<input id="q" type="search" placeholder="Search name or text" aria-label="Search documents"></label>` : ""}<a class="btn p" href="#/scan">${icon("plus")}New scan</a></div>
+    <div class="tools">${n ? `<label class="search">${icon("search", "s")}<input id="q" type="search" placeholder="Search name or text" aria-label="Search documents"></label><button class="btn danger" id="d_clear">${icon("trash")}Clear all</button>` : ""}<a class="btn p" href="#/scan">${icon("plus")}New scan</a></div></div>
     <div class="card" id="doclist">${docsTable(store.docs)}</div>
     ${n ? `<p class="fine">${icon("shield", "s")}Stored in this browser only, with no backup. Export what you need.</p>` : ""}`;
   wireDocsTable();
   if ($("#q")) $("#q").oninput = e => { const q = e.target.value.trim(); $("#doclist").innerHTML = docsTable(filter(q), !!q); wireDocsTable(); };
+  if ($("#d_clear")) $("#d_clear").onclick = async () => {
+    if (!confirm(`Delete all ${plural(n, "document")} from this browser?\n\nExport anything you want to keep first. This cannot be undone.`)) return;
+    await store.clear(); sidebar(); renderDocuments(); toast("All documents deleted"); };
 }
 async function renderSettings() {
   view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1></div></div><div class="chips"><span class="chip"><span class="spin"></span>Loading…</span></div>`;
@@ -901,7 +905,7 @@ function route(e) { closeMenus(); const [, r = "scan", arg = ""] = location.hash
 }
 window.addEventListener("hashchange", route);
 (async () => {
-  applyTheme(); $("#themetog").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  applyTheme(); document.querySelectorAll(".themetog").forEach(b => b.onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   setSideCollapsed(localStorage.getItem("thaocr.sideCollapsed") === "1");
   try { const m = sessionStorage.getItem("thaocr.resetMsg"); if (m) { sessionStorage.removeItem("thaocr.resetMsg"); setTimeout(() => toast(m), 600); } } catch { }
   $("#sidetog").onclick = () => setSideCollapsed(!$("#shell").classList.contains("collapsed"));

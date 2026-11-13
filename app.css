@@ -93,8 +93,12 @@ nav.tabs{display:flex;flex-direction:column;gap:2px}
 .iconbtn{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:var(--r-s);border:0;background:transparent;color:var(--mut);flex:none;transition:background .15s,color .15s}
 .iconbtn:hover{background:var(--surface-2);color:var(--ink)}
 .ic-sun{display:none}[data-theme=dark] .ic-sun{display:block}[data-theme=dark] .ic-moon{display:none}
+@media(min-width:861px){.foot .themetog{display:none}}
 
-.page{padding:32px 40px 64px;display:flex;flex-direction:column;gap:20px;max-width:1240px;width:100%;margin:0 auto}
+/* main column: a slim top bar (theme button at the top right, desktop) above the page */
+.main{min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:14px 40px 0}
+.page{padding:10px 40px 64px;display:flex;flex-direction:column;gap:20px;max-width:1240px;width:100%;margin:0 auto}
 .page.wide{max-width:none}
 .page:focus{outline:none}
 .page.enter>*{animation:rise .25s var(--ease) both}
@@ -102,6 +106,7 @@ nav.tabs{display:flex;flex-direction:column;gap:2px}
 .head{display:flex;align-items:flex-end;gap:12px 16px;flex-wrap:wrap}
 .head>.grow{flex:1 1 320px;min-width:min(320px,100%)}
 .head .tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;max-width:100%}
+@media(min-width:861px){.head .tools{flex-shrink:0;margin-left:auto;justify-content:flex-end}}  /* tools move to their own row as a group, kept right */
 .head p{margin:4px 0 0;color:var(--mut)}
 .back{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--mut);margin:0 0 6px -2px;padding:2px;border-radius:6px}
 .back:hover{color:var(--ink)}
@@ -372,7 +377,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
  .shell.collapsed .brand>div,.shell.collapsed .nav .t,.shell.collapsed .nav .count,.shell.collapsed .devchip,.shell.collapsed .running .grow,.shell.collapsed .running b{display:none}
  .shell.collapsed .nav{justify-content:center;padding:0;height:40px}
  .shell.collapsed .running{justify-content:center;padding:0}
- .shell.collapsed .foot{justify-content:center;padding:10px 0 0}
+ .shell.collapsed .foot{display:none}
  .shell.collapsed .nav:hover::after{content:attr(aria-label);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:var(--accent);color:var(--on-accent);font-size:12px;font-weight:500;line-height:1;padding:7px 9px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:60;box-shadow:var(--shadow-2)}
  /* review: the "To check" panel can be closed */
  .review.noside{grid-template-columns:96px minmax(0,1.3fr) minmax(0,1fr)}
@@ -383,7 +388,8 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 
 /* ---------- responsive review */
 @media(max-width:1280px){
- .page{padding:28px 24px 56px}
+ .topbar{padding:14px 24px 0}
+ .page{padding:10px 24px 56px}
  .review{grid-template-columns:72px minmax(0,1fr) minmax(0,1fr)}
  .review.text,.review.original{grid-template-columns:72px minmax(0,1fr)}
  .review.one{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
@@ -407,6 +413,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 /* ---------- phones: top bar + bottom tab bar */
 @media(max-width:860px){
  .shell{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+ .topbar{display:none}
  .side{position:sticky;top:0;z-index:40;height:auto;flex-direction:row;align-items:center;gap:2px;padding:8px 8px 8px 10px;padding-top:calc(8px + env(safe-area-inset-top));border-right:0;background:transparent}
  /* the blur sits on a pseudo-element: backdrop-filter on .side itself would trap the fixed tab bar inside it */
  .side::before{content:"";position:absolute;inset:0;z-index:-1;background:var(--bg);background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
