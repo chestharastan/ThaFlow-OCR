@@ -181,7 +181,10 @@
       const b = e.box || [0, 0, 0, 0]; return [b[0], b[1], b[0] + b[2], b[1] + b[3]]; };
     const size = st => { const f = st && st.font_px ? Math.min(2.2, Math.max(0.8, st.font_px / bodyPx)) : 1; return (BASE * f).toFixed(1) + "px"; };
     const fstyle = st => { const s = st || {}; return `font-family:${family(s)};font-size:${size(s)};color:${s.color || "#1a1a1a"};${s.slant === "italic" ? "font-style:italic;" : ""}${s.weight === "bold" && !s.heavy ? "font-weight:700;" : ""}`; };
-    const edit = (el, e) => { if (!opts.editable) return; el.contentEditable = "true"; el.spellcheck = false; el.addEventListener("blur", () => { const t = el.innerText.replace(/\s+$/, ""); if (t !== e.text && opts.onEdit) opts.onEdit(e.block, e.lines, t); }); };
+    // saved only when the text was really changed (compared with what was shown on focus: kept breaks are "\n" there)
+    const edit = (el, e) => { if (!opts.editable) return; el.contentEditable = "true"; el.spellcheck = false; let shown = null;
+      el.addEventListener("focus", () => { shown = el.innerText.replace(/\s+$/, ""); });
+      el.addEventListener("blur", () => { const t = el.innerText.replace(/\s+$/, ""); if (shown != null && t !== shown && opts.onEdit) opts.onEdit(e.block, e.lines, t); shown = null; }); };
     // lines centred on each other (a motto or letterhead set right of the page centre): centred in the flow too
     const stackCentred = lb => { if (lb.length < 2) return false; const cs = lb.map(b => b.x + b.width / 2), ws = lb.map(b => b.width), w = Math.max(...ws); return Math.max(...cs) - Math.min(...cs) < 0.05 * w && w - Math.min(...ws) > 0.08 * w; };
     const alignCss = a => a === "center" ? "text-align:center;" : a === "right" ? "text-align:right;" : "";  // never justify: Khmer has few spaces to stretch
@@ -189,6 +192,7 @@
     // a paragraph's text from its CURRENT lines: wrapped lines joined, kept breaks ("\n", rendered by pre-line) where the photo
     // has stacked lines (titles, letterheads, addresses); see ThaOCR.pipeline.softBreaks
     const TP = window.ThaOCR && window.ThaOCR.pipeline;
+    const textW = Math.max(1, W - (doc.margins ? doc.margins.left + doc.margins.right : 0)), colW = id => (opts.columnWidth ? opts.columnWidth(id) : textW);
     const runsOf = (e, cw) => { const b = blocks[e.block]; if (!TP || !TP.runsWithBreaks || !b || !b.lines || !(e.lines || []).length) return e.runs; const want = new Set(e.lines), pl = b.lines.filter(l => want.has(l.reading_order) && l.text); return pl.length ? TP.runsWithBreaks(pl, cw) : e.runs; };
     const root = document.createElement("div"); root.className = "dv-page dv-flow";
     const m = doc.margins || {left: 0, right: 0}; flowInto(root, doc.elements, m.left, W - m.right, doc.margins ? doc.margins.top : 0);
@@ -228,7 +232,7 @@
         for (const it of e.items) { const ie = extent(it), li = document.createElement("div"); li.className = "dv-li";
           const bx = it.bullet_box ? it.bullet_box.x : ie[0];
           li.style.cssText = fstyle(it.style) + `margin-left:min(${px(ems(bx - x0), 0, 8)},30%);margin-top:${prev == null ? "0" : px(ems(ie[1] - prev), 0.15, 1.6)};`;
-          li.innerHTML = `<span class="dv-bullet">${esc(it.bullet)}</span><span class="dv-text">${runsHtml(runsOf(it, x1 - x0), it.style && it.style.heavy, it.low)}</span>`;
+          li.innerHTML = `<span class="dv-bullet">${esc(it.bullet)}</span><span class="dv-text">${runsHtml(runsOf(it, colW(it.block)), it.style && it.style.heavy, it.low)}</span>`;
           edit(li.lastElementChild, it); ul.appendChild(li); prev = Math.max(prev == null ? -Infinity : prev, ie[3]); }
         return ul;
       }
@@ -243,7 +247,7 @@
       if ((e.text || "").includes("\t") && lb.length <= 1) { // dot-leader line: title ... page number
         const [before, after] = e.text.split("\t"); p.className += " dv-tabline"; p.style.textAlign = "left";
         p.innerHTML = `<span class="dv-tl">${esc(before)}</span><span class="dv-leader"></span><span class="dv-tr">${esc(after)}</span>`; return p; }
-      p.innerHTML = runsHtml(runsOf(e, x1 - x0), e.style && e.style.heavy, e.low); edit(p, e);
+      p.innerHTML = runsHtml(runsOf(e, colW(e.block)), e.style && e.style.heavy, e.low); edit(p, e);
       return p;
     }
   }
@@ -292,7 +296,8 @@
 .dv-page.dv-flow{width:100%;max-width:100%;padding:clamp(20px,6%,64px) clamp(18px,7%,76px);line-height:1.85;overflow:visible;overflow-wrap:break-word;border-radius:3px}
 .dv-flow p,.dv-flow h1,.dv-flow h2,.dv-flow h3,.dv-flow .dv-text{white-space:pre-line}
 .dv-flow .dv-frow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:0 2em}.dv-flow .dv-fcol{min-width:min(14em,100%)}
-.dv-flow .dv-twrap{overflow-x:auto;max-width:100%}.dv-flow .dv-table{table-layout:fixed;line-height:1.6}.dv-flow .dv-table td{padding:.2em .45em}
+.dv-flow h1,.dv-flow h2,.dv-flow h3{line-height:inherit;letter-spacing:normal}
+.dv-flow .dv-twrap{overflow-x:auto;max-width:100%}.dv-flow .dv-table{table-layout:auto;line-height:1.6}.dv-flow .dv-table td{padding:.2em .45em;overflow-wrap:normal;word-break:normal}
 .dv-flow .dv-li{line-height:1.85}.dv-flow .dv-tabline{white-space:normal}`;
   function injectCss() { const old = document.getElementById("dv-css"); if (old) old.remove(); const st = document.createElement("style"); st.id = "dv-css"; st.textContent = CSS; document.head.appendChild(st); }
   injectCss();

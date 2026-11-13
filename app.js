@@ -206,14 +206,24 @@ function blockParas(b) {
   for (const l of lines) if (!used.has(l)) out.push({level: l.indent_level || 0, bullet: l.bullet || null, lines: [l]});
   return out.sort((p, q) => p.lines[0].reading_order - q.lines[0].reading_order);
 }
-/** width of the text column each block sits in: a side-by-side row's column, else the page's text area (decides which
-    line breaks are wraps; see T.pipeline.softBreaks) */
+/** width of the text column each block sits in (decides which line breaks are wraps; see T.pipeline.softBreaks):
+    - blocks of a side-by-side header/footer row (letterhead, motto): the page's text width, so their stacked lines stay;
+    - body blocks with another block beside them over several lines (two-column text, text next to a figure): the
+      span between those neighbours; otherwise the page's text width. */
 function columnWidths(page) {
-  const doc = page.document, m = doc && doc.margins, full = m ? page.width - m.left - m.right : 0.84 * page.width, out = new Map();
-  const walk = (e, cw) => { if (e.columns) e.columns.forEach(c => c.elements.forEach(x => walk(x, c.x1 != null && c.x0 != null ? c.x1 - c.x0 : cw))); else if (e.items) e.items.forEach(x => walk(x, cw)); else if (e.block && !out.has(e.block)) out.set(e.block, cw); };
-  if (doc && doc.elements) doc.elements.forEach(e => walk(e, full));
-  return id => out.get(id) || full;
+  const doc = page.document, W = page.width, m = doc && doc.margins, left = m ? m.left : 0.08 * W, right = m ? W - m.right : 0.92 * W, full = Math.max(1, right - left);
+  const inRow = new Set(), mark = e => { if (e.columns) e.columns.forEach(c => c.elements.forEach(mark)); else if (e.items) e.items.forEach(mark); else if (e.block) inRow.add(e.block); };
+  if (doc && doc.elements) doc.elements.forEach(e => { if (e.columns) mark(e); });
+  const boxes = (page.blocks || []).map(b => ({id: b.id, x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.width, y1: b.box.y + b.box.height, lh: U_median((b.lines || []).map(l => l.box.height)) || 0}));
+  const cache = new Map();
+  return id => { if (cache.has(id)) return cache.get(id); let w = full; const me = boxes.find(b => b.id === id);
+    if (me && !inRow.has(id) && me.lh) { let L = left, R = right;
+      for (const o of boxes) { if (o.id === id) continue; const ov = Math.min(me.y1, o.y1) - Math.max(me.y0, o.y0); if (ov < 2.5 * me.lh) continue;
+        if (o.x0 >= me.x1 - 2) R = Math.min(R, o.x0); else if (o.x1 <= me.x0 + 2) L = Math.max(L, o.x1); }
+      w = Math.max(1, R - L); }
+    cache.set(id, w); return w; };
 }
+const U_median = a => { if (!a.length) return 0; const v = a.slice().sort((x, y) => x - y); return v[v.length >> 1]; };
 const hasJoin = () => !!(T.pipeline && T.pipeline.joinLines);
 const paraText = (p, cw) => hasJoin() ? T.pipeline.joinLines(p.lines, cw) : p.lines.reduce((a, l) => joinWrapped(a, l.text), "");
 const paraHtml = (p, cw) => (hasJoin() ? T.pipeline.runsWithBreaks(p.lines, cw) : [{text: paraText(p, cw)}]).map(r => r.bold ? `<b>${esc(r.text)}</b>` : esc(r.text)).join("");
@@ -559,7 +569,7 @@ function renderReview(id) {
   const hasDoc = !!(window.DocView && pages.some(s => s.result.document)), regions = pages.reduce((a, s) => a + s.result.blocks.length, 0), nLines = pages.reduce((a, s) => a + s.lines, 0), nChars = pages.reduce((a, s) => a + s.chars, 0), totalMs = pages.reduce((a, s) => a + (s.timings.total_ms || 0), 0);
   const fonts = [...new Set(pages.flatMap(s => s.result.blocks.map(b => b.font && b.font.family)).filter(Boolean))].slice(0, 3), pdfTextPages = pages.filter(s => s.result.source === "pdf-text").length, conf = groupConf(pages);
   const pageLabel = (s, i, ocr) => multi ? `<div class="pglabel">Page ${i + 1}${s.result.source === "pdf-text" ? " · PDF text" : ""}${ocr ? ` · <button class="linkbtn" data-ocr="${s.page_id}" title="Read this page again with OCR">${s.result.source === "pdf-text" ? "OCR this page" : "OCR again"}</button>` : ""}</div>` : "";
-  const textOut = s => [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => { const cw = columnWidths(s.result)(b.id); return `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : blockParas(b).map(p => `<div class="para"${p.level ? ` style="padding-left:${p.level * 2}em"` : ""}>${p.bullet ? esc(p.bullet) + " " : ""}${paraHtml(p, cw)}</div>`).join("")}</div>`; }).join("");
+  const textOut = s => { const colW = columnWidths(s.result); return [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => { const cw = colW(b.id); return `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : blockParas(b).map(p => `<div class="para"${p.level ? ` style="padding-left:${p.level * 2}em"` : ""}>${p.bullet ? esc(p.bullet) + " " : ""}${paraHtml(p, cw)}</div>`).join("")}</div>`; }).join(""); };
   const source = pdfTextPages === pages.length ? "PDF text · no OCR" : pdfTextPages ? `PDF text on ${pdfTextPages} / ${pages.length} pages` : (d.result.pdf_text && d.result.pdf_text.reason ? `OCR (PDF text: ${esc(d.result.pdf_text.reason)})` : "");
   const doubtful = pages.filter(s => s.result.source === "pdf-text" && s.result.pdf_text && s.result.pdf_text.broken > 0.01);
   const ocrLabel = pdfTextPages ? "Run OCR instead" : "Run OCR again", ocrTip = pdfTextPages ? "Ignore the PDF text and read the page images with OCR" : "Read the document again";
@@ -594,7 +604,8 @@ function renderReview(id) {
   view.querySelectorAll("#r_mode button").forEach(b => b.onclick = () => { REVIEW.mode = b.dataset.m; renderReview(id); });
   for (const [sel, on] of [["#r_side_close", false], ["#r_side_open", true]]) { const b = view.querySelector(sel); if (b) b.onclick = () => { REVIEW.side = on; localStorage.setItem("thaocr.reviewSide", on ? "1" : "0"); renderReview(id); }; }
   // page strip: scroll both panes to that page
-  const scrollToPage = pid => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${pid}"]`)) el.scrollIntoView({block: "start", behavior: "smooth"}); view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === pid)); REVIEW.cur = pid; };
+  let buildDocUpTo = null;  // set by the Document pane: builds the flowing pages up to a page so a jump lands on it
+  const scrollToPage = pid => { if (buildDocUpTo) buildDocUpTo(pid); for (const el of view.querySelectorAll(`.pagewrap[data-pid="${pid}"]`)) el.scrollIntoView({block: "start", behavior: "smooth"}); view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === pid)); REVIEW.cur = pid; };
   view.querySelectorAll(".thumbs .th").forEach(t => { t.onclick = () => scrollToPage(t.dataset.id); t.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); scrollToPage(t.dataset.id); } }; });
   const orig = $("#r_orig"); if (orig && multi && window.IntersectionObserver) { const io = new IntersectionObserver(es => { const top = es.filter(e => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]; if (top) view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === top.target.dataset.pid)); }, {root: orig, threshold: [0.25, 0.5, 0.75]}); orig.querySelectorAll(".pagewrap").forEach(el => io.observe(el)); }
   $("#r_copy").onclick = () => navigator.clipboard.writeText(groupText(pages)).then(() => toast("Copied"), () => toast("Copy blocked by the browser"));
@@ -636,7 +647,8 @@ function renderReview(id) {
   if (wrap) {
     const avail = Math.max(320, wrap.clientWidth - 32), rendered = new Set();
     const renderPage = s => { if (rendered.has(s.page_id)) return; rendered.add(s.page_id); const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`), page = s.result; if (!body) return; body.style.minHeight = "";
-      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {flow: true, scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
+    buildDocUpTo = pid => { const k = pages.findIndex(x => x.page_id === pid); pages.slice(0, k + 1).forEach(renderPage); };
+      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {flow: true, columnWidth: columnWidths(page), scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
       else { const dp = buildDocPage(s, (b, l, text) => applyEdit(s, b, l, text)); body.appendChild(dp); const fit = () => scaleToFit(body, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); } };
     if (multi && window.IntersectionObserver) { // placeholders keep the scroll height; a page is built when it comes near
       for (const s of pages) { const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`); if (body) body.style.minHeight = (Math.min(1, avail / s.result.width) * s.result.height) + "px"; }
@@ -654,7 +666,8 @@ function renderReview(id) {
 function applyParagraphEdit(d, blockId, orders, text) {
   const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
   const lines = orders.map(o => b.lines.find(l => l.reading_order === o)).filter(Boolean); if (!lines.length) return;
-  lines.forEach((l, i) => { if (l.confidence_before == null) l.confidence_before = l.confidence; l.text = i ? "" : text; l.spans = []; l.confidence = Math.max(l.confidence, 0.99); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = "edited"; });
+  const parts = text.split("\n"), perLine = lines.length > 1 && parts.length === lines.length;  // kept breaks still there: one piece per line
+  lines.forEach((l, i) => { if (l.confidence_before == null) l.confidence_before = l.confidence; l.text = perLine ? parts[i] : i ? "" : text; l.spans = []; l.confidence = Math.max(l.confidence, 0.99); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = "edited"; });
   b.text = blockTextMd(b);
   const para = (b.paragraphs || []).find(p => p.lines.join() === orders.join()); if (para) { para.text = text; para.runs = [{text, bold: false}]; }
   const de = (d.result.document || {elements: []}).elements; for (const e of de) { const items = e.type === "list" ? e.items : e.columns ? e.columns.flatMap(c => c.elements) : [e]; for (const it of items) if (it.block === blockId && (it.lines || []).join() === orders.join()) { it.text = text; it.runs = [{text, bold: false}]; it.low = false; } }
@@ -666,7 +679,7 @@ function syncDocument(d) {
   const page = d.result, doc = page.document; if (!doc || !doc.elements || !(T.pipeline && T.pipeline.paragraphRuns)) return;
   const blocks = Object.fromEntries(page.blocks.map(b => [b.id, b])), rev = d.reviewed || {};
   const fix = e => { const b = blocks[e.block]; if (!b || !(e.lines || []).length && !e.table) return; const byOrder = new Map((b.lines || []).map(l => [l.reading_order, l]));
-    if (e.type === "table" && e.table) { for (const r of e.table.rows) for (const c of r.cells) if ((c.lines || []).some(o => { const l = byOrder.get(o); return l && rev[lineKey(b, l)] === "edited"; })) c.text = c.lines.map(o => byOrder.get(o)).filter(l => l && l.text).map(l => l.text).join("\n"); return; }
+    if (e.type === "table" && e.table) { for (const r of e.table.rows) for (const c of r.cells) if ((c.lines || []).some(o => { const l = byOrder.get(o); return l && rev[lineKey(b, l)] === "edited"; })) { const cl = c.lines.map(o => byOrder.get(o)).filter(l => l && l.text); c.text = cl.length >= 2 && cl.some(l => l.bullet) ? cl.map(l => (l.bullet ? l.bullet + " " : "") + l.text).join("\n") : cl.reduce((a, l) => T.pipeline.joinWrapped(a, l.text), ""); } return; }
     const pl = e.lines.map(o => byOrder.get(o)).filter(l => l && l.text);
     e.runs = pl.length ? T.pipeline.paragraphRuns(pl) : []; e.text = e.runs.map(r => r.text).join(""); e.low = pl.some(l => l.confidence < LOW && !rev[lineKey(b, l)]); };
   const walk = e => { if (e.columns) e.columns.forEach(c => c.elements.forEach(walk)); else if (e.type === "list") e.items.forEach(fix); else fix(e); };

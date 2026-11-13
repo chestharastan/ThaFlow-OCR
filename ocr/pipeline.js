@@ -256,27 +256,40 @@
   function isBulletGlyph(text, ln) { const w = ln.bbox[2] - ln.bbox[0], h = ln.bbox[3] - ln.bbox[1]; if (!(w <= 1.6 * h && h <= 1.6 * w)) return false;
     if (BULLET_READINGS.has(text)) return true; const t = text.replace(/\s/g, ""); return t.length > 0 && t.length <= 2 && (ln.confidence || 0) < 0.75; } // a small badly-read blob left of a line is a bullet glyph
   const bulletGlyph = g => /^[-–—]$/.test(g) ? "-" : /^[>»›➤➢►]$/.test(g) ? "➢" : /^[❖✧√✔✓]$/.test(g) ? "❖" : "•";
+  const HANG_LABEL_RE = /^\s*\S{1,24}\s?[៖:]/;  // "កម្មវត្ថុ៖", "យោង៖", "Subject:" at the start of a hanging-indent paragraph
   const isKhmer = ch => ch >= "ក" && ch <= "៿";
   const isKhDigit = ch => ch >= "០" && ch <= "៩";
-  function joinWrapped(a, b) { if (!a) return b; if (!b) return a; const x = a[a.length - 1], y = b[0]; return isKhmer(x) && isKhmer(y) && !isKhDigit(x) && !isKhDigit(y) ? a + b : a + " " + b; }
+  const wrapGlue = (x, y) => isKhmer(x) && isKhmer(y) && !isKhDigit(x) && !isKhDigit(y) ? "" : " ";  // Khmer syllables join directly; a space before/after Khmer digits and Latin
+  function joinWrapped(a, b) { if (!a) return b; if (!b) return a; return a + wrapGlue(a[a.length - 1], b[0]) + b; }
   const paragraphText = lines => lines.reduce((a, l) => joinWrapped(a, l.text), "");
-  function paragraphRuns(lines) { const runs = []; const push = (t, bold) => { if (!t) return; if (runs.length) { const last = runs[runs.length - 1]; const glue = isKhmer(last.text[last.text.length - 1] || "") && isKhmer(t[0]) ? "" : " "; if (last.bold === bold) { last.text += glue + t; return; } last.text += glue; } runs.push({text: t, bold}); };
-    for (const ln of lines) { if (ln.spans && ln.spans.length) { ln.spans.forEach(sp => push(sp.text, !!sp.bold)); } else push(ln.text, !!ln.bold); } return runs; }
+  function paragraphRuns(lines) { const runs = []; const push = (t, bold, g) => { if (!t) return; if (runs.length) { const last = runs[runs.length - 1]; const glue = g != null ? g : wrapGlue(last.text[last.text.length - 1] || "", t[0]); if (last.bold === bold) { last.text += glue + t; return; } last.text += glue; } runs.push({text: t, bold}); };
+    for (const ln of lines) { if (ln.spans && ln.spans.length) { ln.spans.forEach((sp, k) => push(sp.text, !!sp.bold, k ? " " : null)); } else push(ln.text, !!ln.bold); } return runs; }  // spans of a line were split at a space
   /** Where did the text wrap? For consecutive lines of one paragraph -> true = it wrapped there (join the lines),
       false = the line was ended on purpose (keep the break). Kept: stacked short lines (titles, letterheads, addresses,
       signatures - the widest line is under 55% of the text column), centred lines (equal gaps left and right), a line
-      that stops well before the paragraph's right edge, a next line that does not start at its left edge.
-      lines: [{box:{x,y,width,height}} | {bbox}] in reading order; columnW: width of the text column (page or row column). */
+      that stops short of the paragraph's right edge by more than the next line's first word would need, a next line
+      that does not start at the paragraph's left edge. A hanging indent (កម្មវត្ថុ៖ / យោង៖ / Subject:) measures the
+      continuation lines from their own edge. lines: [{box:{x,y,width,height}} | {bbox}, text] in reading order;
+      columnW: width of the text column the block sits in. */
+  /** estimated width of a line's first unbreakable chunk + a space: up to the first space or zero-width space (Khmer typed
+      without ZWSP only wraps at spaces, so the chunk can be a whole phrase). A ragged line may end that much short. */
+  function firstWordW(l, b) { const t = ((l && l.text) || "").trim(); if (!t) return 0; const n = (/^[^\s\u200b]+/.exec(t) || [t])[0].length; return b.width * Math.min(1, (n + 1) / t.length); }
   function softBreaks(lines, columnW) {
     const n = lines.length; if (n < 2) return [];
     const bx = lines.map(l => l.box || {x: l.bbox[0], y: l.bbox[1], width: l.bbox[2] - l.bbox[0], height: l.bbox[3] - l.bbox[1]});
     const L = Math.min(...bx.map(b => b.x)), R = Math.max(...bx.map(b => b.x + b.width)), w = Math.max(1, R - L), h = U.median(bx.map(b => b.height)) || 1;
     if (columnW && w < 0.55 * columnW) return new Array(n - 1).fill(false);
-    const tolR = Math.max(0.08 * w, 2 * h), tolL = Math.max(0.03 * w, h);
-    return bx.slice(0, -1).map((b, i) => { const gapR = R - (b.x + b.width), ind = b.x - L;
-      if (gapR > tolR || bx[i + 1].x - L > tolL) return false;
-      if (i > 0) return ind <= tolL;
-      return !(ind > tolL && gapR > 0.5 * h && Math.abs(gapR - ind) < 0.35 * ind); });  // first line: an indent is fine, a centred line is not
+    // a centred stack (motto, centred letterhead): centres agree while BOTH edges differ (left-aligned lines share their left edge)
+    const cs = bx.map(b => b.x + b.width / 2), ls = bx.map(b => b.x), rs = bx.map(b => b.x + b.width), edge = Math.max(0.02 * w, 0.3 * h);
+    if (Math.max(...cs) - Math.min(...cs) < 0.05 * w && Math.max(...ls) - Math.min(...ls) > edge && Math.max(...rs) - Math.min(...rs) > edge) return new Array(n - 1).fill(false);
+    const tolR0 = Math.max(0.08 * w, 2 * h), tolL = Math.max(0.03 * w, h);
+    const Lb = Math.min(...bx.slice(1).map(b => b.x)), hang = Lb - bx[0].x > tolL && Lb - bx[0].x < 0.35 * w, Lc = hang ? Lb : L;
+    return bx.slice(0, -1).map((b, i) => { const gapR = R - (b.x + b.width), tolR = Math.max(tolR0, Math.min(0.25 * w, 1.2 * firstWordW(lines[i + 1], bx[i + 1])));
+      if (gapR > tolR || bx[i + 1].x - Lc > tolL) return false;
+      if (i > 0) return b.x - Lc <= tolL;
+      if (hang) return true;  // the label line runs to the right edge: the text wraps under the indent
+      const ind = b.x - L; if (ind > 0.25 * w) return false;  // far more than a first-line indent: a separate line (a right-set date above a title)
+      return !(ind > Math.max(tolL, 0.1 * w) && gapR > 0.1 * w && Math.abs(gapR - ind) < 0.35 * ind); });  // a centred first line, not a first-line indent
   }
   /** a paragraph's text: wrapped lines joined (no space between Khmer syllables), purposeful breaks kept as "\n" */
   function joinLines(lines, columnW) { const soft = softBreaks(lines, columnW); return lines.reduce((a, l, i) => i === 0 ? l.text : soft[i - 1] ? joinWrapped(a, l.text) : a + "\n" + l.text, ""); }
@@ -324,7 +337,10 @@
       const paras = []; let cur = null;
       lines.forEach((l, i) => { const p = withP ? preds.get(l) : null; const prev = i ? lines[i - 1] : null;
         let starts = i === 0 || !!l.bullet || !!l.tab || !!(prev && prev.tab) || (p ? p.first_p >= 0.5 : false);
-        if (!p && prev) { const gap = l.bbox[1] - prev.bbox[3], indent = l.bbox[0] - Math.min(...lines.map(x => x.bbox[0])); if (gap > 0.7 * medH || indent > 0.8 * medH && prev.bbox[0] < l.bbox[0] - 0.8 * medH || prev.bbox[2] < l.bbox[2] - 3 * medH) starts = true; }
+        if (!p && prev) { const gap = l.bbox[1] - prev.bbox[3], indent = l.bbox[0] - Math.min(...lines.map(x => x.bbox[0])); if (gap > 0.7 * medH || indent > 0.8 * medH && prev.bbox[0] < l.bbox[0] - 0.8 * medH || prev.bbox[2] < l.bbox[2] - 3 * medH) starts = true;
+          // hanging indent: a label line (កម្មវត្ថុ៖ / យោង៖ / Subject:) that runs to the right edge continues under its indent
+          const right = Math.max(...lines.map(x => x.bbox[2])), hang = l.bbox[0] - prev.bbox[0];
+          if (starts && gap <= 0.7 * medH && cur && cur.lines.length === 1 && cur.lines[0] === prev && HANG_LABEL_RE.test(prev.text || "") && prev.bbox[2] >= right - 2 * medH && hang > 0.8 * medH && hang < 0.35 * (right - prev.bbox[0])) starts = false; }
         if (starts || !cur) { cur = {lines: [l], bullet: l.bullet || null, indent_level: p ? p.level : (l.bullet ? 1 : 0)}; paras.push(cur); } else cur.lines.push(l);
         l.indent_level = p ? p.level : (l.bullet ? 1 : 0); });
       b.paras = paras;
