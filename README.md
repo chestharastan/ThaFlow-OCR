@@ -7,6 +7,7 @@ server-side storage; the app says so before first use.
 ```
 index.html / app.js / app.css   the UI (same look as the backend-served app)
 docview.js                      reflowed, editable page view (shared with the backend app)
+export.js                       Word (.docx) and PDF export from one document model (window.ThaExport)
 ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure)
 ocr/pipeline.js                 regions -> blocks -> text -> paragraphs -> page result (same schema as POST /process)
 ocr/pdf.js                      PDF input (pdf.js from jsDelivr): text-layer pages are read without OCR, image pages are OCRed
@@ -14,8 +15,9 @@ ocr/device.js                   device check, model-set recommendation, benchmar
 ocr/store.js                    IndexedDB documents + page images
 models/                         models.json (manifest) + font/structure *_meta.json; the ONNX files themselves are
                                 pulled from https://huggingface.co/Thareah/ThaOCR-models (default set 41 MB)
-(no vendor folder)              onnxruntime-web 1.31.1 and docx 9.15.3 load from jsDelivr (ThaOCR.config.ortBase);
-                                a local copy in vendor/ is git-ignored and only needed for offline work
+(no vendor folder)              onnxruntime-web 1.31.1, docx 9.15.3 and harfbuzzjs 1.6.4 load from jsDelivr
+                                (ThaOCR.config.ortBase, ThaExport.config.docx / .harfbuzz); a local copy in vendor/
+                                is git-ignored and only needed for offline work
 fonts/                          Khmer fonts for the reflowed view (OFL / LGPL)
 serve.py, vercel.json, _headers dev server and hosting headers (COOP/COEP -> multi-threaded WebAssembly)
 test.html                       engine test page: ?img=<your image>&backend=wasm|webgpu&bench=1 (no sample images are shipped)
@@ -67,6 +69,23 @@ from the layout and structure models alone (`ThaOCR.config.rules = false`). On t
 Doubtful lines (confidence < 0.6, typically handwriting or text under a stamp) get a second opinion from the
 handwriting-trained recogniser (`crnn_m_v2_hw_int8`, loaded on first need); the better-scoring reading wins.
 Tables are de-skewed before the cell grid is built and group-header rows span the table.
+
+Export (export.js): Word and PDF are written from one model built from `page.document`, so they agree.
+- One body font size for the whole file: the median size measured on the scan, rounded to half a point (9-14 pt),
+  used for every paragraph, list item and table cell. No Word run carries a size; the size lives in the document
+  default and the three heading styles (body +2 / +1 / +0 pt), so changing "Normal" in Word resizes everything.
+- Structure is kept as editable Word structure: justified paragraphs and first-line indents, scanned numbers
+  ("១.", "ក.") kept as text with a hanging indent (Word never renumbers them), real bullets for bullet markers,
+  dot-leader lines as a right tab with a dot leader, tables as real tables (fixed column widths, merged group rows,
+  borders only when the scan had them, column alignment from where the text sits in its cell, rows never split),
+  side-by-side blocks as one borderless row, pictures inline, landscape scans on landscape pages.
+- PDF: the browser lays the model out in a hidden box (it breaks Khmer lines with its dictionary and justifies),
+  the position of every word is read back, each word is shaped with HarfBuzz using the same font file and written
+  with the font embedded (Type0/Identity-H). Every word carries `/ActualText`, so text selects, searches and copies
+  in the right order. A table or text line never breaks across a page; a heading moves with what follows it.
+- Pages that were read from a PDF text layer carry no table structure (no layout model runs on them); use "Run
+  OCR instead" on such a page to get its tables.
+- Offline: copy the two library files into `vendor/` and point `ThaExport.config.docx` / `.harfbuzz` there.
 
 Training data from use: every line a user edits in the review is a (line image, corrected text) pair. Settings ->
 "Export corrected lines" writes them as JSON (PNG crops, base64) for fine-tuning the recogniser with `training/rec`.

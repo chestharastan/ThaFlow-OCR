@@ -86,9 +86,11 @@
       if (e.type === "row" || e.type === "footer_row") {
         const cols = e.columns.map(c => { const xs = c.elements.map(extent); return {c, a: c.x0 ?? Math.min(...xs.map(b => b[0])), b: c.x1 ?? Math.max(...xs.map(b => b[2]))}; }).filter(k => k.b > k.a).sort((p, q) => p.a - q.a);
         if (!cols.length) return null;
-        let px = cx0; const outCols = [];
-        for (const k of cols) { const left = Math.max(k.a, px), right = Math.max(left + 10, k.b);
-          outCols.push({left: Math.max(0, (left - px) / cw), w: Math.min(1, (right - left) / cw), blocks: k.c.elements.map(x => conv(x, left, right, k.c.align)).filter(Boolean)}); px = right; }
+        // a column runs from its first text to just before the next column (the last one to the container's edge): a
+        // line that only just fitted in the scan must not wrap; every block keeps its own position inside the column
+        let px = cx0; const outCols = [], gapPx = 0.02 * cw;
+        cols.forEach((k, i) => { const left = Math.max(k.a, px), next = cols[i + 1], right = Math.max(left + 10, next ? Math.max(k.b, next.a - gapPx) : Math.max(k.b, cx1));
+          outCols.push({left: Math.max(0, (left - px) / cw), w: Math.min(1, (right - left) / cw), blocks: k.c.elements.map(x => conv(x, left, right, k.c.align)).filter(Boolean)}); px = right; });
         return {k: "cols", cols: outCols};
       }
       if (e.type === "list") {
@@ -110,9 +112,21 @@
         tx0 = Math.max(tx0, cx0); tx1 = Math.max(tx0 + 10, Math.min(tx1, cx1 + 0.02 * cw));
         const total = Math.max(1, tx1 - tx0), edge = (c, i) => [i ? c.x0 : tx0, i === n - 1 ? tx1 : c.x1];
         let left = snap((tx0 - cx0) / cw), w = Math.min(1, total / cw); if (left + w > 1) left = Math.max(0, 1 - w);
-        const rows = t.rows.map(r => { const cells = []; let ci = 0;
-          for (const c of r.cells) { if (ci >= n) break; const span = clamp(c.colspan || 1, 1, n - ci);
-            cells.push({lines: String(c.text || "").split("\n"), span, align: span > 1 ? "left" : (t.cols[ci].align || "left"), bold: span > 1 || undefined}); ci += span; }
+        // where the text sits in its cell: gaps to the left and right rule, per cell, then a vote per column
+        const blk = blocksById[e.block], byOrder = new Map(((blk && blk.lines) || []).map(l => [l.reading_order, l.box]));
+        const gaps = c0 => (c, ci) => { const bs = (c.lines || []).map(o => byOrder.get(o)).filter(Boolean); if (!bs.length || (c.colspan || 1) > 1) return null; const [a, b] = edge(t.cols[ci], ci), cwid = Math.max(1, b - a);
+          const gl = (Math.min(...bs.map(q => q.x)) - a) / cwid, gr = (b - Math.max(...bs.map(q => q.x + q.width))) / cwid; return {gl, gr, mid: Math.abs(gl - gr) <= 0.14 && gl > 0.1}; };
+        const cellGap = gaps(), perCol = t.cols.map(() => []);
+        t.rows.forEach(r => { let ci = 0; for (const c of r.cells) { if (ci >= n) break; const g = cellGap(c, ci); if (g) perCol[ci].push(g); ci += clamp(c.colspan || 1, 1, n - ci); } });
+        const sd = a => { const m = median(a); return median(a.map(v => Math.abs(v - m))); };  // median deviation: a centred header cell does not count
+        const colAlign = t.cols.map((c, i) => { if (c.align && c.align !== "left") return c.align; const g = perCol[i]; if (g.length < 3) return "left";
+          if (g.filter(x => x.mid).length >= 0.6 * g.length) return "center";
+          // right: the gap to the right rule is small and the same in every row while the left one is much larger
+          const sl = sd(g.map(x => x.gl)), sr = sd(g.map(x => x.gr)), ml = median(g.map(x => x.gl)), mr = median(g.map(x => x.gr));
+          return sr < 0.03 && sr <= sl + 0.01 && mr < 0.15 && ml > 2.5 * Math.max(mr, 0.02) ? "right" : "left"; });
+        const rows = t.rows.map((r, ri) => { const cells = []; let ci = 0;
+          for (const c of r.cells) { if (ci >= n) break; const span = clamp(c.colspan || 1, 1, n - ci), g = cellGap(c, ci);
+            cells.push({lines: String(c.text || "").split("\n"), span, align: span > 1 ? "left" : (g && g.mid && colAlign[ci] === "left" && !ri ? "center" : colAlign[ci]), bold: span > 1 || undefined}); ci += span; }
           while (ci < n) { cells.push({lines: [""], span: 1, align: "left"}); ci++; }
           return {cells}; });
         return Object.assign({k: "table", borders: !!t.borders, left, w, cols: t.cols.map((c, i) => { const [a, b] = edge(c, i); return Math.max(0.02, (b - a) / total); }), rows}, look(e.style));
@@ -126,7 +140,9 @@
       const flush = align === "left" || align === "justify";
       let first = 0; if (flush && lb.length >= 2) { const ind = lb[0].x - Math.min(...lb.slice(1).map(b => b.x)); if (ind > 0.01 * cw) first = Math.min(0.2, ind / cw); } else if (flush && e.first_line_indent) first = 0.05;
       const bodyLeft = lb.length >= 2 ? Math.min(...lb.slice(1).map(b => b.x)) : ext[0];
-      const p = Object.assign({k: "p", runs: runsOf(e, !!heading), align, heading, left: flush ? snap((bodyLeft - cx0) / cw) : 0, right: align === "justify" ? snap((cx1 - ext[2]) / cw) : 0, first}, look(e.style));
+      let left = flush ? snap((bodyLeft - cx0) / cw) : 0, right = align === "justify" || align === "right" ? snap((cx1 - ext[2]) / cw) : 0;
+      if (align === "center") { const off = ((ext[0] + ext[2]) / 2 - (cx0 + cx1) / 2) / cw; if (off > 0.02) left = Math.min(0.9, 2 * off); else if (off < -0.02) right = Math.min(0.9, -2 * off); }  // centred on its own axis, not the container's
+      const p = Object.assign({k: "p", runs: runsOf(e, !!heading), align, heading, left, right, first}, look(e.style));
       if (e.type === "paragraph" && (e.text || "").includes("\t")) { const [before, ...rest] = e.text.split("\t"); p.tab = {before, after: rest.join(" ")}; p.align = "left"; p.first = 0; p.right = 0; }
       return p;
     }
@@ -148,7 +164,8 @@
     const borders = on => on ? {top: line, bottom: line, left: line, right: line} : {top: none, bottom: none, left: none, right: none};
     const tableBorders = on => Object.assign(borders(on), {insideHorizontal: on ? line : none, insideVertical: on ? line : none});
     // Latin-only text keeps a Latin face Word always has; the Khmer (complex script) slot keeps the document font
-    const fontOf = b => b.family ? b.family : b.latin ? {ascii: b.latin === "serif" ? "Times New Roman" : "Arial", hAnsi: b.latin === "serif" ? "Times New Roman" : "Arial", cs: M.family, eastAsia: M.family} : undefined;
+    const KHMER_ONLY = /^Noto (Sans|Serif) Khmer/;
+    const fontOf = b => b.family && KHMER_ONLY.test(b.family) ? {ascii: /Serif/.test(b.family) ? "Times New Roman" : "Arial", hAnsi: /Serif/.test(b.family) ? "Times New Roman" : "Arial", cs: b.family, eastAsia: b.family} : b.family ? b.family : b.latin ? {ascii: b.latin === "serif" ? "Times New Roman" : "Arial", hAnsi: b.latin === "serif" ? "Times New Roman" : "Arial", cs: M.family, eastAsia: M.family} : undefined;
     // no size here on purpose: every run takes the one size of the document default (or of its heading style)
     const run = (r, b, extra) => new TextRun(Object.assign({text: r.text, bold: r.bold || undefined, italics: b.italic || undefined, font: fontOf(b), color: b.color || undefined}, extra));
     const runs = (b, rs) => (rs || b.runs).map(r => run(r, b));
@@ -236,8 +253,11 @@
     pfonts.set(file, pr); pr.catch(() => pfonts.delete(file));
     return pr;
   }
-  /** Font files for a family: {regular, bold (a real bold file, or null -> the PDF thickens the regular one)}. */
-  function filesOf(family) { const t = fontTable(), f = t[family] || t[CFG.bodyFont] || ["KhmerOSsiemreap.ttf"]; return {regular: f[0], bold: f.length > 1 && !/\[wght\]/.test(f[1]) ? f[1] : null}; }
+  /** Font files for a family: {regular, bold (a bold file of the same design, or null -> the PDF thickens the regular one)}. */
+  function filesOf(family) { const t = fontTable(), f = t[family] || t[CFG.bodyFont] || ["KhmerOSsiemreap.ttf"], stem = x => x.replace(/\.[a-z0-9]+$/i, "").replace(/-(Regular|Bold)$/i, "");
+    // "Khmer OS Battambang" is paired with Google's Battambang Bold on screen, a different drawing with a smaller body:
+    // in a file where every paragraph has one size that looks like a smaller font, so only a true pair is used as bold
+    return {regular: f[0], bold: f.length > 1 && stem(f[0]) === stem(f[1]) ? f[1] : null}; }
   const IGNORABLE = cp => cp === 0x200B || cp === 0x200C || cp === 0x200D || cp === 0xFEFF || cp === 0xAD || cp === 0x20 || cp === 0xA0 || cp === 9;
   /** Split text by the first font of the chain that has each character, so the browser never falls back to a system
    *  font the PDF could not embed. */
@@ -385,6 +405,7 @@
       let pen = 0, want = 0, rise = 0, arr = [], hexrun = "";
       const flushHex = () => { if (hexrun) { arr.push(`<${hexrun}>`); hexrun = ""; } }, flush = () => { flushHex(); if (arr.length) { out.push(`[${arr.join(" ")}] TJ`); arr = []; } };
       for (const g of glyphs) { const u = 1000 / f.upem, gx = want + g.dx * u, gr = g.dy * u * size / 1000;
+        if (!g.g) { want += g.ax * u; continue; }  // .notdef: the font has no such character; leave the space, keep the text in /ActualText
         if (Math.abs(gr - rise) > 0.005) { flush(); rise = gr; out.push(`${num(rise)} Ts`); }
         if (Math.abs(gx - pen) > 0.5) { flushHex(); arr.push(num(pen - gx)); pen = gx; }
         hexrun += hex4(g.g); pen += widthOf(f, g.g); want += g.ax * u; }
