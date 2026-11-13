@@ -262,6 +262,28 @@
   const paragraphText = lines => lines.reduce((a, l) => joinWrapped(a, l.text), "");
   function paragraphRuns(lines) { const runs = []; const push = (t, bold) => { if (!t) return; if (runs.length) { const last = runs[runs.length - 1]; const glue = isKhmer(last.text[last.text.length - 1] || "") && isKhmer(t[0]) ? "" : " "; if (last.bold === bold) { last.text += glue + t; return; } last.text += glue; } runs.push({text: t, bold}); };
     for (const ln of lines) { if (ln.spans && ln.spans.length) { ln.spans.forEach(sp => push(sp.text, !!sp.bold)); } else push(ln.text, !!ln.bold); } return runs; }
+  /** Where did the text wrap? For consecutive lines of one paragraph -> true = it wrapped there (join the lines),
+      false = the line was ended on purpose (keep the break). Kept: stacked short lines (titles, letterheads, addresses,
+      signatures - the widest line is under 55% of the text column), centred lines (equal gaps left and right), a line
+      that stops well before the paragraph's right edge, a next line that does not start at its left edge.
+      lines: [{box:{x,y,width,height}} | {bbox}] in reading order; columnW: width of the text column (page or row column). */
+  function softBreaks(lines, columnW) {
+    const n = lines.length; if (n < 2) return [];
+    const bx = lines.map(l => l.box || {x: l.bbox[0], y: l.bbox[1], width: l.bbox[2] - l.bbox[0], height: l.bbox[3] - l.bbox[1]});
+    const L = Math.min(...bx.map(b => b.x)), R = Math.max(...bx.map(b => b.x + b.width)), w = Math.max(1, R - L), h = U.median(bx.map(b => b.height)) || 1;
+    if (columnW && w < 0.55 * columnW) return new Array(n - 1).fill(false);
+    const tolR = Math.max(0.08 * w, 2 * h), tolL = Math.max(0.03 * w, h);
+    return bx.slice(0, -1).map((b, i) => { const gapR = R - (b.x + b.width), ind = b.x - L;
+      if (gapR > tolR || bx[i + 1].x - L > tolL) return false;
+      if (i > 0) return ind <= tolL;
+      return !(ind > tolL && gapR > 0.5 * h && Math.abs(gapR - ind) < 0.35 * ind); });  // first line: an indent is fine, a centred line is not
+  }
+  /** a paragraph's text: wrapped lines joined (no space between Khmer syllables), purposeful breaks kept as "\n" */
+  function joinLines(lines, columnW) { const soft = softBreaks(lines, columnW); return lines.reduce((a, l, i) => i === 0 ? l.text : soft[i - 1] ? joinWrapped(a, l.text) : a + "\n" + l.text, ""); }
+  /** the same as runs [{text, bold}] (bold words kept); a kept break ends a run with "\n" */
+  function runsWithBreaks(lines, columnW) { const soft = softBreaks(lines, columnW), out = []; let seg = [];
+    const flush = () => { if (!seg.length) return; const r = paragraphRuns(seg); if (out.length && r.length) out[out.length - 1].text += "\n"; out.push(...r); seg = []; };
+    lines.forEach((l, i) => { if (i && !soft[i - 1]) flush(); seg.push(l); }); flush(); return out; }
   function mergeBulletLines(lines) { // a line read as a bullet glyph joins the text line of its row
     const bullets = lines.filter(l => l.isBullet), rest = lines.filter(l => !l.isBullet);
     for (const bl of bullets) { const cy = (bl.bbox[1] + bl.bbox[3]) / 2; let best = null, bd = Infinity;
@@ -543,5 +565,5 @@
     return assemble(img, blocks, timings, tStart, extra || {});
   };
 
-  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf};
+  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, runsWithBreaks};
 })();

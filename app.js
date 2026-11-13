@@ -196,8 +196,29 @@ const lineKey = (b, l) => `${b.id}:${l.reading_order}`;
 function scaleToFit(wrapper, inner, pageW, pageH) { const k = Math.min(1, (wrapper.clientWidth - 2) / pageW); inner.style.transform = `scale(${k})`; inner.style.transformOrigin = "top left"; wrapper.style.height = pageH * k + "px"; }
 
 /* ---------------------------------------------------------------- text output */
-function blockTextMd(b) { if (b.table) return b.table.rows.map(r => r.cells.map(c => c.text || "").join("\t")).join("\n"); return (b.lines || []).filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? l.bullet + " " : "") + l.text).join("\n"); }
-function pageText(page) { return [...page.blocks].sort((a, b) => a.reading_order - b.reading_order).map(blockTextMd).filter(Boolean).join("\n\n"); }
+/* Paragraphs flow as one text: the lines of a paragraph are joined the way the pipeline joins them (no space between
+   Khmer syllables, a space otherwise), from the CURRENT line texts so edits are included. */
+const joinWrapped = (a, b) => T.pipeline && T.pipeline.joinWrapped ? T.pipeline.joinWrapped(a, b) : (a && b ? a + " " + b : a || b);
+/** a text block's paragraphs in reading order -> [{level, bullet, lines}] (a line outside every paragraph keeps its own row) */
+function blockParas(b) {
+  const lines = (b.lines || []).filter(l => l.text), byOrder = new Map(lines.map(l => [l.reading_order, l])), used = new Set(), out = [];
+  for (const p of b.paragraphs || []) { const pl = (p.lines || []).map(o => byOrder.get(o)).filter(l => l && !used.has(l)); if (!pl.length) continue; pl.forEach(l => used.add(l)); out.push({level: p.indent_level || 0, bullet: p.bullet || pl[0].bullet || null, lines: pl}); }
+  for (const l of lines) if (!used.has(l)) out.push({level: l.indent_level || 0, bullet: l.bullet || null, lines: [l]});
+  return out.sort((p, q) => p.lines[0].reading_order - q.lines[0].reading_order);
+}
+/** width of the text column each block sits in: a side-by-side row's column, else the page's text area (decides which
+    line breaks are wraps; see T.pipeline.softBreaks) */
+function columnWidths(page) {
+  const doc = page.document, m = doc && doc.margins, full = m ? page.width - m.left - m.right : 0.84 * page.width, out = new Map();
+  const walk = (e, cw) => { if (e.columns) e.columns.forEach(c => c.elements.forEach(x => walk(x, c.x1 != null && c.x0 != null ? c.x1 - c.x0 : cw))); else if (e.items) e.items.forEach(x => walk(x, cw)); else if (e.block && !out.has(e.block)) out.set(e.block, cw); };
+  if (doc && doc.elements) doc.elements.forEach(e => walk(e, full));
+  return id => out.get(id) || full;
+}
+const hasJoin = () => !!(T.pipeline && T.pipeline.joinLines);
+const paraText = (p, cw) => hasJoin() ? T.pipeline.joinLines(p.lines, cw) : p.lines.reduce((a, l) => joinWrapped(a, l.text), "");
+const paraHtml = (p, cw) => (hasJoin() ? T.pipeline.runsWithBreaks(p.lines, cw) : [{text: paraText(p, cw)}]).map(r => r.bold ? `<b>${esc(r.text)}</b>` : esc(r.text)).join("");
+function blockTextMd(b, cw) { if (b.table) return b.table.rows.map(r => r.cells.map(c => c.text || "").join("\t")).join("\n"); return blockParas(b).map(p => "\t".repeat(p.level) + (p.bullet ? p.bullet + " " : "") + paraText(p, cw)).join("\n"); }
+function pageText(page) { const cw = columnWidths(page); return [...page.blocks].sort((a, b) => a.reading_order - b.reading_order).map(b => blockTextMd(b, cw(b.id))).filter(Boolean).join("\n\n"); }
 
 
 /* ---------------------------------------------------------------- shell */
@@ -538,7 +559,7 @@ function renderReview(id) {
   const hasDoc = !!(window.DocView && pages.some(s => s.result.document)), regions = pages.reduce((a, s) => a + s.result.blocks.length, 0), nLines = pages.reduce((a, s) => a + s.lines, 0), nChars = pages.reduce((a, s) => a + s.chars, 0), totalMs = pages.reduce((a, s) => a + (s.timings.total_ms || 0), 0);
   const fonts = [...new Set(pages.flatMap(s => s.result.blocks.map(b => b.font && b.font.family)).filter(Boolean))].slice(0, 3), pdfTextPages = pages.filter(s => s.result.source === "pdf-text").length, conf = groupConf(pages);
   const pageLabel = (s, i, ocr) => multi ? `<div class="pglabel">Page ${i + 1}${s.result.source === "pdf-text" ? " · PDF text" : ""}${ocr ? ` · <button class="linkbtn" data-ocr="${s.page_id}" title="Read this page again with OCR">${s.result.source === "pdf-text" ? "OCR this page" : "OCR again"}</button>` : ""}</div>` : "";
-  const textOut = s => [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : b.lines.filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? esc(l.bullet) + " " : "") + ((l.spans && l.spans.length) ? l.spans.map(sp => sp.bold ? `<b>${esc(sp.text)}</b>` : esc(sp.text)).join(" ") : (l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)))).join("\n")}</div>`).join("");
+  const textOut = s => [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => { const cw = columnWidths(s.result)(b.id); return `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : blockParas(b).map(p => `<div class="para"${p.level ? ` style="padding-left:${p.level * 2}em"` : ""}>${p.bullet ? esc(p.bullet) + " " : ""}${paraHtml(p, cw)}</div>`).join("")}</div>`; }).join("");
   const source = pdfTextPages === pages.length ? "PDF text · no OCR" : pdfTextPages ? `PDF text on ${pdfTextPages} / ${pages.length} pages` : (d.result.pdf_text && d.result.pdf_text.reason ? `OCR (PDF text: ${esc(d.result.pdf_text.reason)})` : "");
   const doubtful = pages.filter(s => s.result.source === "pdf-text" && s.result.pdf_text && s.result.pdf_text.broken > 0.01);
   const ocrLabel = pdfTextPages ? "Run OCR instead" : "Run OCR again", ocrTip = pdfTextPages ? "Ignore the PDF text and read the page images with OCR" : "Read the document again";
@@ -615,7 +636,7 @@ function renderReview(id) {
   if (wrap) {
     const avail = Math.max(320, wrap.clientWidth - 32), rendered = new Set();
     const renderPage = s => { if (rendered.has(s.page_id)) return; rendered.add(s.page_id); const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`), page = s.result; if (!body) return; body.style.minHeight = "";
-      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
+      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {flow: true, scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
       else { const dp = buildDocPage(s, (b, l, text) => applyEdit(s, b, l, text)); body.appendChild(dp); const fit = () => scaleToFit(body, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); } };
     if (multi && window.IntersectionObserver) { // placeholders keep the scroll height; a page is built when it comes near
       for (const s of pages) { const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`); if (body) body.style.minHeight = (Math.min(1, avail / s.result.width) * s.result.height) + "px"; }
@@ -626,9 +647,9 @@ function renderReview(id) {
   view.querySelectorAll(".rev").forEach(card => { const key = card.dataset.key, s = byId[card.dataset.pid], page = s.result, [bid, lo] = key.split(":"), b = page.blocks.find(x => x.id === bid), l = b.lines.find(x => String(x.reading_order) === lo);
     card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); const ln = view.querySelector(`.pgbody[data-pid="${s.page_id}"] .docpage .ln[data-key="${key}"]`); if (ln && !e.target.closest("button,input")) { ln.scrollIntoView({block: "center", behavior: "smooth"}); ln.focus(); } else if (multi && !e.target.closest("button,input")) scrollToPage(s.page_id); };
     card.querySelector('[data-a="accept"]').onclick = () => { applyEdit(s, b, l, card.querySelector("input").value); renderReview(id); };
-    card.querySelector('[data-a="ignore"]').onclick = () => { s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; store.put(s); renderReview(id); }; });
+    card.querySelector('[data-a="ignore"]').onclick = () => { s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; syncDocument(s); store.put(s); renderReview(id); }; });
   if (RERUN) markRerunButtons();
-  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) store.put(s); renderReview(id); toast("All lines accepted"); };
+  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) { syncDocument(s); store.put(s); } renderReview(id); toast("All lines accepted"); };
 }
 function applyParagraphEdit(d, blockId, orders, text) {
   const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
@@ -639,10 +660,22 @@ function applyParagraphEdit(d, blockId, orders, text) {
   const de = (d.result.document || {elements: []}).elements; for (const e of de) { const items = e.type === "list" ? e.items : e.columns ? e.columns.flatMap(c => c.elements) : [e]; for (const it of items) if (it.block === blockId && (it.lines || []).join() === orders.join()) { it.text = text; it.runs = [{text, bold: false}]; it.low = false; } }
   recount(d); store.put(d); const s = $("#r_saved"); if (s) s.textContent = "Saved just now";
 }
+/** Line edits (Accept, Ignore, typing in the Overlay) also update the structured document, so the Document view and the
+    Word export show the corrected text and drop the "check" highlight of lines that were looked at. */
+function syncDocument(d) {
+  const page = d.result, doc = page.document; if (!doc || !doc.elements || !(T.pipeline && T.pipeline.paragraphRuns)) return;
+  const blocks = Object.fromEntries(page.blocks.map(b => [b.id, b])), rev = d.reviewed || {};
+  const fix = e => { const b = blocks[e.block]; if (!b || !(e.lines || []).length && !e.table) return; const byOrder = new Map((b.lines || []).map(l => [l.reading_order, l]));
+    if (e.type === "table" && e.table) { for (const r of e.table.rows) for (const c of r.cells) if ((c.lines || []).some(o => { const l = byOrder.get(o); return l && rev[lineKey(b, l)] === "edited"; })) c.text = c.lines.map(o => byOrder.get(o)).filter(l => l && l.text).map(l => l.text).join("\n"); return; }
+    const pl = e.lines.map(o => byOrder.get(o)).filter(l => l && l.text);
+    e.runs = pl.length ? T.pipeline.paragraphRuns(pl) : []; e.text = e.runs.map(r => r.text).join(""); e.low = pl.some(l => l.confidence < LOW && !rev[lineKey(b, l)]); };
+  const walk = e => { if (e.columns) e.columns.forEach(c => c.elements.forEach(walk)); else if (e.type === "list") e.items.forEach(fix); else fix(e); };
+  doc.elements.forEach(walk);
+}
 function applyEdit(d, b, l, text) {
   const changed = text !== l.text; if (changed && l.confidence_before == null) l.confidence_before = l.confidence; l.text = text; if (changed) { l.spans = []; l.confidence = Math.max(l.confidence, 0.99); }
   b.text = blockTextMd(b); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = changed ? "edited" : "accepted";
-  recount(d); store.put(d); const s = $("#r_saved"); if (s) s.textContent = "Saved just now";
+  syncDocument(d); recount(d); store.put(d); const s = $("#r_saved"); if (s) s.textContent = "Saved just now";
 }
 function recount(d) { const all = d.result.blocks.flatMap(x => x.lines || []).filter(x => x.text); d.chars = all.reduce((a, x) => a + x.text.length, 0); d.avg_conf = all.reduce((a, x) => a + x.confidence, 0) / Math.max(1, all.length); d.low = all.filter(x => x.confidence < LOW).length; }
 function download(name, data, type) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([data], {type})); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
@@ -656,7 +689,10 @@ function docxParagraphs(D, page) {
   const none = {style: BorderStyle.NONE, size: 0, color: "FFFFFF"}, noBorders = {top: none, bottom: none, left: none, right: none};
   const contentW = Math.max(1, W - ((doc && doc.margins) ? doc.margins.left + doc.margins.right : 0.16 * W)), pageWidthTwips = 9026; // A4 text width at 2 cm margins
   const align = a => a === "center" ? AlignmentType.CENTER : a === "right" ? AlignmentType.RIGHT : a === "justify" ? AlignmentType.JUSTIFIED : AlignmentType.LEFT;
-  const runs = (e, fallbackBold) => (e.runs && e.runs.length ? e.runs : [{text: e.text || "", bold: !!fallbackBold}]).map(r => new TextRun({text: r.text, bold: !!r.bold || !!fallbackBold, italics: e.style && e.style.slant === "italic", font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined, size: e.style && e.style.font_px ? Math.max(16, Math.round(e.style.font_px / W * 1190)) : undefined}));
+  const byId = Object.fromEntries(page.blocks.map(b => [b.id, b])), colW = columnWidths(page);
+  const lineRuns = e => { const b = byId[e.block]; if (!b || !(e.lines || []).length || !(T.pipeline && T.pipeline.runsWithBreaks)) return null; const want = new Set(e.lines), pl = (b.lines || []).filter(l => want.has(l.reading_order) && l.text); return pl.length ? T.pipeline.runsWithBreaks(pl, colW(e.block)) : null; };
+  // wrapped lines flow as one paragraph; a break that was kept on purpose (stacked title lines, addresses) is a Word line break
+  const runs = (e, fallbackBold) => (lineRuns(e) || (e.runs && e.runs.length ? e.runs : [{text: e.text || "", bold: !!fallbackBold}])).flatMap(r => String(r.text).split("\n").map((t, k) => new TextRun({text: t, break: k ? 1 : undefined, bold: !!r.bold || !!fallbackBold, italics: e.style && e.style.slant === "italic", font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined, size: e.style && e.style.font_px ? Math.max(16, Math.round(e.style.font_px / W * 1190)) : undefined})));
   const one = e => {
     if (e.type === "row" || e.type === "footer_row") { e.columns.forEach(c => c.elements.forEach(one)); return; }
     if (e.type === "list") { e.items.forEach(it => out.push(new Paragraph({children: runs(it), bullet: {level: Math.min(8, it.level || 0)}, alignment: align(e.align)}))); return; }

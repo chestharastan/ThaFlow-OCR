@@ -3,6 +3,7 @@
    indents and alignment (justified when the photo is), single-line elements keep one line, and each paragraph is
    fitted (font size) so it wraps into the same number of lines as the photo. Typefaces / sizes / colours / bold runs /
    figures come from the backend. Text stays editable (opts.editable).
+   opts.flow switches to a flowing layout instead (renderFlow): paragraphs wrap to the container width at a reading size.
    Shared by the classic demo and the ThaOCR app: window.DocView.render(page, opts) -> HTMLElement */
 (function () {
   "use strict";
@@ -25,7 +26,8 @@
     loaded.set(fam, pr);
     return pr;
   }
-  function family(st) { const fam = st && st.family; if (!fam) return '"Noto Sans Khmer","Khmer OS",sans-serif'; if (LATIN[fam]) return LATIN[fam]; ensureFont(fam); return `"${fam}","Noto Sans Khmer",sans-serif`; }
+  // no typeface from the font model: the bundled Noto Sans Khmer, so a device without a Khmer font still shapes the text
+  function family(st) { const fam = st && st.family; if (!fam) { ensureFont("Noto Sans Khmer"); return '"Noto Sans Khmer","Khmer OS",sans-serif'; } if (LATIN[fam]) return LATIN[fam]; ensureFont(fam); return `"${fam}","Noto Sans Khmer",sans-serif`; }
   // font_px from the font model (size_model) is the em size of the printed line: use it as is. The ink-core fallback
   // underestimates Khmer set in a fallback web font (x1.15) and Noto's small bodies (x1.2).
   function sizePx(st, text, scale, body) { let px = st && st.font_px ? st.font_px : body; if (!(st && st.size_model)) { if (KHMER.test(text || "") && !(st && st.family && FONT_FILES[st.family])) px *= 1.15; if (st && /^Noto/.test(st.family || "")) px *= 1.2; } return Math.max(6, px * scale); }
@@ -36,6 +38,7 @@
   /** page: backend page result with .document; opts: {scale (px multiplier), editable, onEdit(blockId, lineOrders, newText), flow (true = old free reflow)} */
   function render(page, opts) {
     opts = opts || {};
+    if (opts.flow) return renderFlow(page, opts);
     const doc = page.document, W = page.width, scale = opts.scale || 1;
     const S = v => (v * scale).toFixed(2) + "px";
     const blocks = Object.fromEntries((page.blocks || []).map(b => [b.id, b]));
@@ -160,6 +163,91 @@
     }
   }
 
+  /** Flowing layout (opts.flow): paragraphs wrap to the container's width at a reading size with natural spacing - no
+      line breaks, widths or justification copied from the photo. Kept from the photo: reading order, headings and
+      relative sizes, centre/right alignment, indents, first-line indents, lists, tables, side-by-side columns, figures,
+      typefaces and bold, and (compressed) the vertical gaps between blocks. opts: {editable, onEdit, fontPx (body size)} */
+  function renderFlow(page, opts) {
+    const doc = page.document, W = page.width, BASE = opts.fontPx || 17;
+    const blocks = Object.fromEntries((page.blocks || []).map(b => [b.id, b]));
+    const flat = es => es.flatMap(e => e.columns ? flat(e.columns.flatMap(c => c.elements)) : e.items ? e.items : [e]);
+    const bodyPx = median(flat(doc.elements).filter(e => e.type === "paragraph" || e.type === "list_item").map(e => e.style && e.style.font_px).filter(Boolean)) || 0.016 * W;
+    const ems = v => Math.max(0, v / bodyPx);                                          // page px -> body ems
+    const px = (v, lo, hi) => (Math.min(hi, Math.max(lo, v)) * BASE).toFixed(1) + "px"; // body ems -> px, clamped
+    const lineBoxes = e => { const b = blocks[e.block]; if (!b || !b.lines || !e.lines) return []; const want = new Set(e.lines); return b.lines.filter(l => want.has(l.reading_order)).map(l => l.box).filter(Boolean); };
+    const extent = e => {
+      if (e.columns || e.items) { const xs = (e.columns ? e.columns.flatMap(c => c.elements) : e.items).map(extent).filter(b => b[2] > b[0]); if (xs.length) return [Math.min(...xs.map(b => b[0])), Math.min(...xs.map(b => b[1])), Math.max(...xs.map(b => b[2])), Math.max(...xs.map(b => b[3]))]; }
+      const lb = lineBoxes(e); if (lb.length) return [Math.min(...lb.map(b => b.x)), Math.min(...lb.map(b => b.y)), Math.max(...lb.map(b => b.x + b.width)), Math.max(...lb.map(b => b.y + b.height))];
+      const b = e.box || [0, 0, 0, 0]; return [b[0], b[1], b[0] + b[2], b[1] + b[3]]; };
+    const size = st => { const f = st && st.font_px ? Math.min(2.2, Math.max(0.8, st.font_px / bodyPx)) : 1; return (BASE * f).toFixed(1) + "px"; };
+    const fstyle = st => { const s = st || {}; return `font-family:${family(s)};font-size:${size(s)};color:${s.color || "#1a1a1a"};${s.slant === "italic" ? "font-style:italic;" : ""}${s.weight === "bold" && !s.heavy ? "font-weight:700;" : ""}`; };
+    const edit = (el, e) => { if (!opts.editable) return; el.contentEditable = "true"; el.spellcheck = false; el.addEventListener("blur", () => { const t = el.innerText.replace(/\s+$/, ""); if (t !== e.text && opts.onEdit) opts.onEdit(e.block, e.lines, t); }); };
+    // lines centred on each other (a motto or letterhead set right of the page centre): centred in the flow too
+    const stackCentred = lb => { if (lb.length < 2) return false; const cs = lb.map(b => b.x + b.width / 2), ws = lb.map(b => b.width), w = Math.max(...ws); return Math.max(...cs) - Math.min(...cs) < 0.05 * w && w - Math.min(...ws) > 0.08 * w; };
+    const alignCss = a => a === "center" ? "text-align:center;" : a === "right" ? "text-align:right;" : "";  // never justify: Khmer has few spaces to stretch
+    const centred = (ext, x0, x1) => { const w = x1 - x0, c = (ext[0] + ext[2]) / 2; return Math.abs(c - (x0 + x1) / 2) < 0.06 * w && ext[0] - x0 > 0.08 * w; };
+    // a paragraph's text from its CURRENT lines: wrapped lines joined, kept breaks ("\n", rendered by pre-line) where the photo
+    // has stacked lines (titles, letterheads, addresses); see ThaOCR.pipeline.softBreaks
+    const TP = window.ThaOCR && window.ThaOCR.pipeline;
+    const runsOf = (e, cw) => { const b = blocks[e.block]; if (!TP || !TP.runsWithBreaks || !b || !b.lines || !(e.lines || []).length) return e.runs; const want = new Set(e.lines), pl = b.lines.filter(l => want.has(l.reading_order) && l.text); return pl.length ? TP.runsWithBreaks(pl, cw) : e.runs; };
+    const root = document.createElement("div"); root.className = "dv-page dv-flow";
+    const m = doc.margins || {left: 0, right: 0}; flowInto(root, doc.elements, m.left, W - m.right, doc.margins ? doc.margins.top : 0);
+    return root;
+
+    function flowInto(box, elements, x0, x1, y0) {
+      let prev = null;
+      for (const e of elements) { const ext = extent(e), node = one(e, ext, x0, x1); if (!node) continue;
+        node.style.marginTop = prev == null ? "0" : px(ems(ext[1] - prev), 0.25, 2.2); prev = Math.max(prev == null ? -Infinity : prev, ext[3]); box.appendChild(node); }
+    }
+    function indent(ext, x0, x1) { return `margin-left:min(${px(ems(ext[0] - x0), 0, 8)},30%);`; }
+    function one(e, ext, x0, x1) {
+      if (e.type === "row" || e.type === "footer_row") {
+        const row = document.createElement("div"); row.className = "dv-frow"; const span = Math.max(1, x1 - x0);
+        for (const c of e.columns) { const xs = c.elements.map(extent), cx0 = c.x0 ?? Math.min(...xs.map(b => b[0])), cx1 = c.x1 ?? Math.max(...xs.map(b => b[2]));
+          const col = document.createElement("div"); col.className = "dv-fcol"; col.style.cssText = `flex:1 1 ${(100 * (cx1 - cx0) / span).toFixed(1)}%;${c.align ? alignCss(c.align) : ""}`;
+          flowInto(col, c.elements, cx0, cx1, Math.min(...xs.map(b => b[1]))); row.appendChild(col); }
+        return row;
+      }
+      if (e.type === "figure" || e.type === "decoration") {
+        const w = Math.max(8, ext[2] - ext[0]), frac = Math.min(1, w / Math.max(1, x1 - x0)), f = document.createElement("div"); f.className = e.type === "figure" ? "dv-figure" : "dv-rule";
+        const pos = centred(ext, x0, x1) ? "margin:0 auto;" : ext[0] - x0 > 0.5 * (x1 - x0) ? "margin-left:auto;" : `margin-left:${(100 * Math.max(0, ext[0] - x0) / Math.max(1, x1 - x0)).toFixed(1)}%;`;
+        f.innerHTML = e.crop ? `<img src="${esc(e.crop)}" alt="${esc(e.role || "")}" style="display:block;width:${(100 * frac).toFixed(1)}%;max-width:100%;height:auto;${pos}">` : e.type === "figure" ? `<div class="dv-ph" style="width:${(100 * frac).toFixed(1)}%;aspect-ratio:${w}/${Math.max(4, ext[3] - ext[1])};${pos}">${esc(e.role)}</div>` : `<hr style="width:${(100 * frac).toFixed(1)}%;${pos}">`;
+        return f;
+      }
+      if (e.type === "table" && e.table) {
+        const t = e.table, total = Math.max(1, t.cols[t.cols.length - 1].x1 - t.cols[0].x0), tbl = document.createElement("table"); tbl.className = "dv-table" + (t.borders ? " bordered" : "");
+        tbl.style.cssText = fstyle(e.style) + `width:${Math.min(100, 100 * total / Math.max(1, x1 - x0)).toFixed(1)}%;`;
+        const cg = document.createElement("colgroup"); for (const c of t.cols) { const col = document.createElement("col"); col.style.width = (100 * (c.x1 - c.x0) / total).toFixed(2) + "%"; cg.appendChild(col); } tbl.appendChild(cg);
+        for (const r of t.rows) { const tr = document.createElement("tr");
+          r.cells.forEach((c, i) => { const td = document.createElement("td"); if (c.colspan > 1) { td.colSpan = c.colspan; td.className = "dv-span"; } td.style.cssText = alignCss(c.colspan > 1 ? "left" : (t.cols[i].align || "left")); td.textContent = c.text || ""; if (c.text) edit(td, {block: e.block, lines: c.lines, text: c.text}); tr.appendChild(td); });
+          tbl.appendChild(tr); }
+        const wrap = document.createElement("div"); wrap.className = "dv-twrap"; wrap.appendChild(tbl); return wrap;
+      }
+      if (e.type === "list") {
+        const ul = document.createElement("div"); ul.className = "dv-list"; let prev = null;
+        for (const it of e.items) { const ie = extent(it), li = document.createElement("div"); li.className = "dv-li";
+          const bx = it.bullet_box ? it.bullet_box.x : ie[0];
+          li.style.cssText = fstyle(it.style) + `margin-left:min(${px(ems(bx - x0), 0, 8)},30%);margin-top:${prev == null ? "0" : px(ems(ie[1] - prev), 0.15, 1.6)};`;
+          li.innerHTML = `<span class="dv-bullet">${esc(it.bullet)}</span><span class="dv-text">${runsHtml(runsOf(it, x1 - x0), it.style && it.style.heavy, it.low)}</span>`;
+          edit(li.lastElementChild, it); ul.appendChild(li); prev = Math.max(prev == null ? -Infinity : prev, ie[3]); }
+        return ul;
+      }
+      // headings, paragraphs, header, footer, page_number, caption, footnote, table_row
+      const lb = lineBoxes(e), p = document.createElement(e.type === "heading" ? "h" + Math.min(3, e.heading || 1) : "p");
+      p.className = "dv-" + e.type;
+      let align = e.align === "center" || e.align === "right" ? e.align : "left";
+      if (align === "left" && ((lb.length <= 2 && centred(ext, x0, x1)) || stackCentred(lb))) align = "center";
+      let css = fstyle(e.style) + alignCss(align);
+      if (align === "left") { css += indent(ext, x0, x1); if (lb.length >= 2) { const ind = lb[0].x - ext[0]; if (ind > 0.01 * (ext[2] - ext[0])) css += `text-indent:${Math.min(4, ems(ind)).toFixed(2)}em;`; } }
+      p.style.cssText = css;
+      if ((e.text || "").includes("\t") && lb.length <= 1) { // dot-leader line: title ... page number
+        const [before, after] = e.text.split("\t"); p.className += " dv-tabline"; p.style.textAlign = "left";
+        p.innerHTML = `<span class="dv-tl">${esc(before)}</span><span class="dv-leader"></span><span class="dv-tr">${esc(after)}</span>`; return p; }
+      p.innerHTML = runsHtml(runsOf(e, x1 - x0), e.style && e.style.heavy, e.low); edit(p, e);
+      return p;
+    }
+  }
+
   // After the fonts load: scale each element's font so it takes the same number of lines (multi-line) or the same
   // width (single line) as in the photo. Bounded to 0.7-1.3x so a misread size can't explode; when the size comes
   // from the font model (tight) only 0.92-1.08x is allowed - metric differences between the real and the web font -
@@ -200,7 +288,12 @@
 .dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.5}.dv-page .dv-table td{padding:.05em .35em;white-space:pre-line;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}.dv-page .dv-table.bordered td{border:1px solid #333}.dv-page .dv-table td.dv-span{font-weight:600}
 .dv-page .dv-tabline{display:flex;align-items:baseline;white-space:nowrap}.dv-page .dv-tabline .dv-leader{flex:1;min-width:1em;border-bottom:1px dotted currentColor;margin:0 .3em;transform:translateY(-.3em)}.dv-page .dv-tabline .dv-tr{flex:none}
 .dv-page [contenteditable]:focus{outline:2px solid #99f6e4;outline-offset:2px;border-radius:2px}
-.dv-page b{font-weight:700}`;
+.dv-page b{font-weight:700}
+.dv-page.dv-flow{width:100%;max-width:100%;padding:clamp(20px,6%,64px) clamp(18px,7%,76px);line-height:1.85;overflow:visible;overflow-wrap:break-word;border-radius:3px}
+.dv-flow p,.dv-flow h1,.dv-flow h2,.dv-flow h3,.dv-flow .dv-text{white-space:pre-line}
+.dv-flow .dv-frow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:0 2em}.dv-flow .dv-fcol{min-width:min(14em,100%)}
+.dv-flow .dv-twrap{overflow-x:auto;max-width:100%}.dv-flow .dv-table{table-layout:fixed;line-height:1.6}.dv-flow .dv-table td{padding:.2em .45em}
+.dv-flow .dv-li{line-height:1.85}.dv-flow .dv-tabline{white-space:normal}`;
   function injectCss() { const old = document.getElementById("dv-css"); if (old) old.remove(); const st = document.createElement("style"); st.id = "dv-css"; st.textContent = CSS; document.head.appendChild(st); }
   injectCss();
   window.DocView = {render, css: CSS};
