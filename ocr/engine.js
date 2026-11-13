@@ -34,7 +34,8 @@
   // ortBase: where the onnxruntime-web bundle + wasm come from (jsDelivr sends CORS/CORP headers, so it works under COEP).
   // manifestBase: where models.json and the small *_meta.json live (this site). modelBase: where the ONNX/vocab files
   // are downloaded from (Hugging Face by default, so the static host stays small; must send CORS headers).
-  T.config = {ortBase: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/", manifestBase: "models/", modelBase: "https://huggingface.co/Thareah/ThaOCR-models/resolve/main/", backend: "auto", threads: 0, rules: true, longMin: 1600, longMax: 2200, cascade: true, font: true, structure: true};
+  T.config = {ortBase: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/", manifestBase: "models/", modelBase: "https://huggingface.co/Thareah/ThaOCR-models/resolve/main/", backend: "auto", threads: 0, rules: true, longMin: 1600, longMax: 2200, cascade: true, font: true, structure: true,
+    proxy: true};  // run the WebAssembly models in ONNX Runtime's own worker so the page stays responsive while OCR runs
   T.manifest = null; T.sessions = {}; T.active = {}; T.meta = {}; T.backendUsed = null;
   T.listeners = []; T.emit = (ev) => T.listeners.forEach(f => { try { f(ev); } catch (e) { console.warn(e); } });
 
@@ -86,8 +87,9 @@
 
   /** Load the ONNX Runtime bundle that fits the chosen backend (wasm-only is 15 MB of runtime, the WebGPU build 30 MB). */
   let ortLoading = null;
-  function loadOrt(eps) {
-    if (window.ort) return Promise.resolve(window.ort);
+  function loadOrt(eps, fresh) {
+    if (fresh) ortLoading = null;  // a new runtime instance (its own state), e.g. after its worker failed to start
+    else if (window.ort) return Promise.resolve(window.ort);
     if (ortLoading) return ortLoading;
     const file = T.config.ortBase + (eps[0] === "webgpu" ? "ort.webgpu.min.js" : "ort.wasm.min.js");
     // retried, and a failure is not remembered (a rejected promise kept here would break every later scan until a page reload)
@@ -105,7 +107,7 @@
     ort.env.wasm.wasmPaths = new URL(T.config.ortBase, location.href).href; // absolute URL (CDN by default; "vendor/" for a local copy)
     const hw = navigator.hardwareConcurrency || 2;
     ort.env.wasm.numThreads = T.config.threads > 0 ? T.config.threads : (self.crossOriginIsolated ? Math.max(1, Math.min(8, hw - 1)) : 1);
-    ort.env.wasm.simd = true; ort.env.wasm.proxy = false;
+    ort.env.wasm.simd = true; ort.env.wasm.proxy = T.config.proxy !== false;
     return ort;
   }
   async function providers() {
@@ -114,16 +116,42 @@
     if ((want === "auto" || want === "webgpu") && navigator.gpu) { try { const ad = await navigator.gpu.requestAdapter(); if (ad) return ["webgpu", "wasm"]; } catch { } }
     return ["wasm"];
   }
-  async function session(buf, eps) {
-    const ort = ortEnv();
-    try { const s = await ort.InferenceSession.create(buf, {executionProviders: eps, graphOptimizationLevel: "all"}); return {sess: s, ep: eps[0]}; }
-    catch (e) { if (eps[0] !== "wasm") { console.warn("falling back to wasm:", e.message); const s = await ort.InferenceSession.create(buf, {executionProviders: ["wasm"], graphOptimizationLevel: "all"}); return {sess: s, ep: "wasm"}; } throw e; }
+  /* Proxy mode: ONNX Runtime runs the models in its own worker, so long CPU (WebAssembly) runs - the recogniser, font and
+     structure models always run there - no longer freeze taps, scrolling and painting. The worker is started once with a
+     tiny built-in model; if it cannot start (a browser or policy that blocks it), the models run on the page as before. */
+  const PROBE = Uint8Array.from(atob("CAcSADo3ChAKAXgSAXkiCElkZW50aXR5EgFwWg8KAXgSCgoICAESBAoCCAFiDwoBeRIKCggIARIECgIIAUIECgAQDQ=="), c => c.charCodeAt(0)); // Identity, 67 bytes
+  const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+  let ortStarting = null;
+  function ortStart(eps) {
+    if (!ortStarting) ortStarting = (async () => {
+      await loadOrt(eps); if (T.config.proxy === false) return;
+      try { const s = await withTimeout(ortEnv().InferenceSession.create(PROBE.slice(), {executionProviders: ["wasm"]}), 120000, "the ONNX Runtime worker did not start");
+        try { await s.release(); } catch { } }
+      catch (e) { console.warn("ONNX Runtime worker unavailable, models run on the page instead:", (e && e.message) || e);
+        T.config.proxy = false; T.proxyError = String((e && e.message) || e); await loadOrt(eps, true); }  // the failed runtime cannot initialise again
+    })().catch(e => { ortStarting = null; throw e; });
+    return ortStarting;
   }
+  // In proxy mode the model bytes are handed over to the worker (the buffer is emptied here), so a create that may be
+  // retried (WebGPU -> wasm) gets a copy.
+  const copyOf = b => b instanceof ArrayBuffer ? b.slice(0) : b.slice();
+  async function session(buf, eps) {
+    await ortStart(eps); const ort = ortEnv(), opts = e => ({executionProviders: e, graphOptimizationLevel: "all"});
+    if (eps[0] !== "wasm") {
+      try { const s = await ort.InferenceSession.create(ort.env.wasm.proxy ? copyOf(buf) : buf, opts(eps)); return {sess: s, ep: eps[0]}; }
+      catch (e) { console.warn("falling back to wasm:", e.message); }
+    }
+    const s = await ort.InferenceSession.create(buf, opts(["wasm"])); return {sess: s, ep: "wasm"};
+  }
+  /** Give the page a moment between heavy steps to handle taps, scrolling and painting. A MessageChannel task is not
+      throttled in background tabs the way setTimeout is, so OCR keeps its speed while the tab is hidden. */
+  const yieldQ = [], yieldCh = new MessageChannel(); yieldCh.port1.onmessage = () => { const f = yieldQ.shift(); if (f) f(); };
+  T.yieldUI = () => new Promise(r => { yieldQ.push(r); yieldCh.port2.postMessage(0); });
 
   /** Load the given stage -> model id map (missing stages use the manifest defaults). onProgress({stage, id, got, total, fromCache}). */
   T.load = async function (choice, onProgress) {
     const m = await loadManifest(); choice = Object.assign({}, m.defaults, choice || {});
-    const eps = await providers(); await loadOrt(eps); T.backendUsed = eps[0];
+    const eps = await providers(); await ortStart(eps); T.backendUsed = eps[0];
     for (const stage of ["layout", "textdet", "rec", "font", "structure"]) {
       const id = choice[stage]; if (!id) continue;
       if (stage === "font" && !T.config.font) continue; if (stage === "structure" && !T.config.structure) continue;
@@ -333,7 +361,7 @@
     if (!crops.length) return [];
     const order = crops.map((_, i) => i).sort((a, b) => crops[a].w - crops[b].w), res = new Array(crops.length); let i = 0, done = 0;
     while (i < order.length) { let j = i + 1; const w0 = crops[order[i]].w; while (j < order.length && j - i < maxBatch && crops[order[j]].w <= 1.35 * w0 + 16) j++;
-      const r = await recBatch(order.slice(i, j).map(k => crops[k]), key); order.slice(i, j).forEach((k, n) => res[k] = r[n]); done += j - i; onBatch && onBatch(done, crops.length); i = j; }
+      const r = await recBatch(order.slice(i, j).map(k => crops[k]), key); order.slice(i, j).forEach((k, n) => res[k] = r[n]); done += j - i; onBatch && onBatch(done, crops.length); i = j; await T.yieldUI(); }
     return res;
   };
 
@@ -351,7 +379,7 @@
     const wins = [], owners = []; for (const c of crops32) { const ws = fontWindows(c); owners.push(ws.map((_, k) => wins.length + k)); wins.push(...ws); }
     const {sess} = T.sessions.font, ort = window.ort, meta = T.meta.font, fam = [], wt = [], sl = [], sz = [];
     for (let i = 0; i < wins.length; i += maxBatch) { const b = wins.slice(i, i + maxBatch), x = new Float32Array(b.length * FONT_H * 256); b.forEach((g, k) => { const o = k * FONT_H * 256; for (let j = 0; j < g.length; j++) x[o + j] = (g[j] / 255 - 0.5) / 0.5; });
-      const out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [b.length, 1, FONT_H, 256])});
+      const out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [b.length, 1, FONT_H, 256])}); await T.yieldUI();
       const F = out.family, Wt = out.weight, Sl = out.slant, Sz = out.size;
       for (let k = 0; k < b.length; k++) { fam.push(Array.from(F.data.subarray(k * F.dims[1], (k + 1) * F.dims[1]))); wt.push(Array.from(Wt.data.subarray(k * 2, k * 2 + 2))); sl.push(Array.from(Sl.data.subarray(k * 2, k * 2 + 2))); sz.push(Sz ? Sz.data[k] : null); } }
     const mean = arrs => arrs[0].map((_, j) => arrs.reduce((a, r) => a + r[j], 0) / arrs.length), argmax = a => a.indexOf(Math.max(...a));

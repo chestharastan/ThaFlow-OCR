@@ -431,7 +431,8 @@
     for (const b of blocks) { const cls = b.cls || "text", box = b.box, base = {block: b.id, role: cls, align: b.align || "left", style: styleOf(b), box: [+box.x.toFixed(1), +box.y.toFixed(1), +box.width.toFixed(1), +box.height.toFixed(1)]};
       if (CROP_CLASSES.has(cls) || !(b.lines || []).length) { if (cls === "decoration") els.push({...base, type: "decoration", crop: b.crop && b.crop.url}); else if (b.crop) els.push({...base, type: "figure", crop: b.crop.url, width_frac: +Math.min(1, box.width / contentW).toFixed(3), aspect: +(box.height / Math.max(1, box.width)).toFixed(4)}); continue; }
       if (cls === "table" && b.table) { els.push({...base, type: "table", table: b.table, text: b.text, lines: b.lines.filter(l => l.text).map(l => l.reading_order)}); continue; }
-      const lines = b.lines.filter(l => l.text), byOrder = new Map(lines.map(l => [l.reading_order, l])); const paras = (b.paragraphs && b.paragraphs.length) ? b.paragraphs : [{lines: lines.map(l => l.reading_order), indent_level: lines[0].indent_level || 0, bullet: lines[0].bullet}];
+      const lines = b.lines.filter(l => l.text); if (!lines.length) continue;  // every line read empty (a faint mark, a rule): nothing to write
+      const byOrder = new Map(lines.map(l => [l.reading_order, l])); const paras = (b.paragraphs && b.paragraphs.length) ? b.paragraphs : [{lines: lines.map(l => l.reading_order), indent_level: lines[0].indent_level || 0, bullet: lines[0].bullet}];
       const shortBold = paras.length === 1 && lines.length === 1 && (b.bold || base.style.heavy) && box.width < 0.6 * contentW && lines[0].text.length <= 60;
       for (const p of paras) { const pl = (p.lines || []).map(i => byOrder.get(i)).filter(Boolean); if (!pl.length) continue; const runs = p.runs || paragraphRuns(pl), levels = pl.map(l => l.indent_level || 0), firstIndent = pl.length > 1 && levels[0] > Math.min(...levels.slice(1)), level = firstIndent ? Math.min(...levels) : (p.indent_level != null ? p.indent_level : levels[0]);
         const item = {...base, runs, text: runs.map(r => r.text).join(""), level, lines: pl.map(l => l.reading_order), low: pl.some(l => (l.confidence ?? 1) < LOW)};
@@ -461,9 +462,9 @@
     if (!T.loaded()) throw new Error("models not loaded");
     const step = (stage, msg, extra) => onStep && onStep(Object.assign({stage, msg}, extra || {}));
     const tStart = performance.now(), timings = {};
-    step("decode", "reading the file"); const img = await T.loadImage(src); const W = img.width, H = img.height;
-    step("layout", "finding regions"); let t = performance.now(); const regions = await T.detectLayout(img); let {blocks, ignored} = cleanRegions(regions, W, H); timings.layout_ms = ms(t);
-    step("textdet", "finding text lines"); t = performance.now(); let lines = await T.detectLines(img.canvas); if (T.config.cascade) lines = await cascade(img, blocks, lines);
+    step("decode", "reading the file"); await T.yieldUI(); const img = await T.loadImage(src); const W = img.width, H = img.height;
+    step("layout", "finding regions"); await T.yieldUI(); let t = performance.now(); const regions = await T.detectLayout(img); let {blocks, ignored} = cleanRegions(regions, W, H); timings.layout_ms = ms(t);
+    step("textdet", "finding text lines"); await T.yieldUI(); t = performance.now(); let lines = await T.detectLines(img.canvas); if (T.config.cascade) lines = await cascade(img, blocks, lines);
     const orphans = assign(lines, blocks);
     // a "decoration" that swallowed text lines (a whole letterhead band) is a misdetection: give the lines back as
     // orphans and drop the region when it is large or contains a logo / stamp / QR
@@ -481,9 +482,9 @@
     timings.textdet_ms = ms(t); timings.lines_detected = lines.length; timings.mode = modelOnly() ? "model" : "rules";
     // recognise
     const todo = []; for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) for (const ln of b.lines) todo.push([b, ln]);
-    step("rec", "reading the text", {done: 0, total: todo.length}); t = performance.now();
+    step("rec", "reading the text", {done: 0, total: todo.length}); await T.yieldUI(); t = performance.now();
     const crops = [], plan = []; // plan[i] = {idx} (one crop) or {left, right} (leader line split into parts)
-    for (const [b, ln] of todo) { const c = T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 48); const sp = (!["table", "form_field"].includes(b.cls)) ? splitLeader(c) : null;
+    for (const [b, ln] of todo) { if (plan.length % 16 === 15) await T.yieldUI(); const c = T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 48); const sp = (!["table", "form_field"].includes(b.cls)) ? splitLeader(c) : null;
       if (!sp) { plan.push({idx: crops.length}); crops.push(c); continue; }
       const e = {leader: true, left: -1, right: -1}; if (sp.left) { e.left = crops.length; crops.push(sp.left); } if (sp.right) { e.right = crops.length; crops.push(sp.right); } plan.push(e); }
     const res = await T.recognize(crops, 16, (d, n) => step("rec", "reading the text", {done: d, total: n}));
@@ -502,7 +503,7 @@
     timings.rec_ms = ms(t); timings.lines_recognized = todo.length;
     // fonts (printed lines)
     t = performance.now();
-    if (T.sessions.font) { step("font", "fonts and sizes"); const sel = todo.map((x, i) => [x, i]).filter(([[b, ln]]) => b.cls !== "handwriting" && (ln.text || "").length >= 2);
+    if (T.sessions.font) { step("font", "fonts and sizes"); await T.yieldUI(); const sel = todo.map((x, i) => [x, i]).filter(([[b, ln]]) => b.cls !== "handwriting" && (ln.text || "").length >= 2);
       const c32 = sel.map(([[, ln]]) => T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 32)); const fr = await T.classifyFonts(c32); sel.forEach(([[, ln]], k) => { ln.font = fr[k]; if (ln.font) ln.bold = ln.font.weight === "bold" && ln.font.weight_confidence >= 0.6; });
       // mixed lines (a bold label or word inside a regular line) leave the model unsure: classify word by word
       const LABEL_RE = /^\S{1,24}\s?[៖:]/; // "សំណុំលិខិត៖ ..." - a bold label in front of regular text
@@ -511,7 +512,7 @@
       for (const [ln, k] of unsure) { try { await wordBold(ln, c32[k]); } catch (e) { console.warn("word bold", e); } } }
     timings.font_ms = ms(t);
     // bullets, structure, fonts per block
-    step("structure", "paragraphs and reading order");
+    step("structure", "paragraphs and reading order"); await T.yieldUI();
     return assemble(img, blocks, timings, tStart, {ignored});
   };
 
@@ -521,10 +522,10 @@
     let t = performance.now();
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { b.lines = mergeBulletLines(b.lines); for (const ln of b.lines) if (ln.text && !["table", "form_field"].includes(b.cls)) textBullet(ln); }
     if (!modelOnly()) blocks = mergeLabelColumns(blocks, W);
-    const usedModel = await structure(blocks, W, H); timings.structure_ms = ms(t); timings.structure = usedModel ? "model" : "rules";
+    await T.yieldUI(); const usedModel = await structure(blocks, W, H); timings.structure_ms = ms(t); await T.yieldUI(); timings.structure = usedModel ? "model" : "rules";
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { blockFont(b); if (b.font && b.font.weight !== "bold" && b.lines.length >= 2) for (const ln of b.lines) if (ln.bold && !(ln.spans && ln.spans.length) && !(ln.font && ln.font.weight_confidence >= 0.97 && HEAVY.has(ln.font.family))) ln.bold = false; const pf = b.lines.map(l => l.font_px).filter(Boolean); if (pf.length) { b.font_px = +U.median(pf).toFixed(1); b.font_src = "pdf"; } if (!b.font_px && b.lines.length) { const hs = b.lines.filter(l => l.text).map(l => l.bbox[3] - l.bbox[1]); if (hs.length) { b.font_px = +(U.median(hs) * 0.78).toFixed(1); b.font_src = "image"; } } }
     timings.bullets_found = blocks.reduce((a, b) => a + b.lines.filter(l => l.bullet).length, 0); timings.bold_words = 0;
-    const layout = pageLayout(blocks, W, H); const outBlocks = render(img, blocks); timings.order_ms = 0; timings.total_ms = ms(tStart);
+    const layout = pageLayout(blocks, W, H); const outBlocks = render(img, blocks); await T.yieldUI(); timings.order_ms = 0; timings.total_ms = ms(tStart);
     const blob = await new Promise(r => img.canvas.toBlob(r, "image/jpeg", 0.9));
     return {page_id: (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "") : Date.now().toString(16) + Math.random().toString(16).slice(2)), width: W, height: H, blocks: outBlocks, layout, document: buildDocument(outBlocks, layout, W, H),
       timings: Object.assign(timings, extra.timings || {}), models: extra.models || Object.assign({}, T.active), device: extra.device || ("browser:" + (T.backendUsed || "wasm")), source: extra.source || "ocr", ignored_regions: extra.ignored || [], image_blob: blob, canvas: img.canvas};

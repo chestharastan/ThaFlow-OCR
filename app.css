@@ -97,7 +97,8 @@ nav.tabs{display:flex;flex-direction:column;gap:2px}
 
 /* main column: a slim top bar (theme button at the top right, desktop) above the page */
 .main{min-width:0;display:flex;flex-direction:column}
-.topbar{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:14px 40px 0}
+.topbar{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:14px 40px 0;max-width:1240px;width:100%;margin:0 auto}  /* same width as the page below */
+.topbar.wide{max-width:none}
 .page{padding:10px 40px 64px;display:flex;flex-direction:column;gap:20px;max-width:1240px;width:100%;margin:0 auto}
 .page.wide{max-width:none}
 .page:focus{outline:none}
@@ -133,6 +134,7 @@ nav.tabs{display:flex;flex-direction:column;gap:2px}
 .btn.ghost:hover{background:var(--surface-2);color:var(--ink)}
 .btn.danger{color:var(--bad)}.btn.danger:hover{background:var(--bad-soft);border-color:var(--bad-line)}
 .btn:disabled{opacity:.45;pointer-events:none}
+.btn.busy:disabled{opacity:.75}.btn.busy svg.i{animation:spin .9s linear infinite}  /* re-run in progress */
 .badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-size:12px;font-weight:500;background:var(--surface-2);color:var(--mut);white-space:nowrap;letter-spacing:0;line-height:1}
 .badge.ok{background:var(--ok-soft);color:var(--ok)}.badge.warn{background:var(--warn-soft);color:var(--warn)}.badge.bad{background:var(--bad-soft);color:var(--bad)}.badge.ink{background:var(--cream);color:var(--ink)}
 .badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
@@ -434,7 +436,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
  .iconbtn{width:40px;height:40px}
  .page{padding:20px 16px calc(96px + env(safe-area-inset-bottom));gap:16px}
  .toast{bottom:calc(84px + env(safe-area-inset-bottom))}
- .search{width:100%}
+ .search{width:100%}.head .tools.doctools{width:100%}
  .drop{padding:36px 18px}
  .drop.compact{flex-wrap:wrap}.drop.compact .acts{margin-left:0;width:100%}
  .stage{padding:16px;min-height:300px}

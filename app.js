@@ -215,9 +215,10 @@ function sidebar() {
   document.querySelectorAll(".nav").forEach(a => { const on = a.dataset.r === r || (r === "process" && a.dataset.r === "scan") || (r === "review" && a.dataset.r === "documents");
     a.classList.toggle("cur", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
   $("#n_docs").textContent = groups(store.docs).length || "";
-  const running = JOB && JOB.status === "running";
-  $("#running").classList.toggle("hide", !running || r === "process");
-  if (running) { $("#running_pct").textContent = Math.round(JOB.done / JOB.total * 100) + "%"; }
+  const job = JOB && JOB.status === "running", pill = $("#running");
+  pill.classList.toggle("hide", !(job || RERUN) || (job && r === "process"));
+  if (job) { pill.href = "#/process"; $("#running_txt").textContent = "Working…"; $("#running_pct").textContent = Math.round(JOB.done / JOB.total * 100) + "%"; }
+  else if (RERUN) { pill.href = "#/review/" + RERUN.pid; $("#running_txt").textContent = "Re-reading…"; $("#running_pct").textContent = Math.min(99, Math.round((RERUN.i - 1 + RERUN.frac) / RERUN.n * 100)) + "%"; }
   $("#dev").textContent = "Private · " + (T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") + " ready" : DEVICE ? (DEVICE.webgpu ? "GPU" : "CPU") : "checking…");
 }
 const docTitle = d => d.filename.replace(/\.[^.]+$/, "");
@@ -233,7 +234,7 @@ function groupStatus(g) { if (g.some(d => d.status === "failed")) return ["Faile
 function groupConf(g) { const n = g.reduce((a, d) => a + d.lines, 0); return n ? g.reduce((a, d) => a + d.avg_conf * d.lines, 0) / n : 0; }
 const groupText = g => g.length === 1 ? pageText(g[0].result) : g.map((d, i) => `----- page ${i + 1} -----\n\n` + pageText(d.result)).join("\n\n");
 async function deleteGroup(g) { for (const d of g) await store.del(d.page_id); }
-async function rerunGroup(g) { for (const d of g) await rerun(d, g.length > 1 ? `page ${pageNo(d)} of ${g.length}` : "", true); toast("Done"); route(); }
+async function rerunGroup(g) { if (await rerunPages(g)) route(); }
 const TIER_LABEL = {high: "Best quality", mid: "Balanced", low: "Light"};
 const TIER_SUB = {high: "GPU or fast computer", mid: "Most computers", low: "Phones · smallest models"};
 const TIER_TECH = {high: "fp32 recogniser v2.4, detector at 2200 px", mid: "int8 recogniser, detector at 1800 px", low: "int8 recogniser and layout model, detector at 1300 px"};
@@ -329,6 +330,7 @@ function renderScan() {
 
 /* ---------------------------------------------------------------- job runner */
 function startJob() {
+  if (ocrBusy()) { busyToast(); return; }
   const files = pending.splice(0).filter(p => !(p.pdf && p.pdf.error)); if (!files.length) return;
   const entries = files.map(p => ({name: p.file.name, url: p.url, size: p.file.size, status: "queued", page_id: null, error: null, src: p, pdf: p.pdf ? {page: 0, pages: p.pdf.pages} : null}));
   JOB = {id: Date.now().toString(36), name: files.length > 1 ? `${files.length} files` : files[0].file.name, files: entries, total: entries.length, done: 0, status: "running", started: Date.now(), results: [], load: {msg: "Preparing…", frac: 0}, step: null};
@@ -461,7 +463,25 @@ function progressLoop() {
 
 /* ---------------------------------------------------------------- review & export */
 let REVIEW = {mode: "side", zoom: 1, boxes: true, labels: false, cur: null, pane: "document", side: localStorage.getItem("thaocr.reviewSide") !== "0"};
-async function rerun(d, label, silent) { toast("Running OCR" + (label ? " · " + label : "") + "…"); try { await ensureModels(); const blob = await T.db.imageBlob(d.page_id); if (!blob) throw new Error("page image missing"); const res = await T.process(blob); res.page_id = d.page_id; const nd = summarize(res, d.filename, d.job, d.size); nd.created = d.created; for (const k of ["group", "group_name", "page_no", "page_count"]) if (d[k] != null) nd[k] = d[k]; await store.put(nd, res.image_blob); if (!silent) { toast("Done"); route(); } } catch (e) { toast("Failed: " + e.message); } }
+/* Re-reading stored pages: one OCR at a time (a scan or a re-run), with progress in the sidebar pill. */
+let RERUN = null;  // {key, pid, n, i, frac} while pages are read again
+const ocrBusy = () => (JOB && JOB.status === "running") || !!RERUN;
+const busyToast = () => toast("OCR is already running · wait for it to finish");
+const STAGE_FRAC = {decode: 0.02, layout: 0.1, textdet: 0.25, rec: 0.35, font: 0.88, structure: 0.95};
+async function rerun(d, label, silent) { toast("Running OCR" + (label ? " · " + label : "") + "…"); try { await ensureModels(); const blob = await T.db.imageBlob(d.page_id); if (!blob) throw new Error("page image missing");
+    const res = await T.process(blob, st => { if (!RERUN) return; RERUN.frac = st.stage === "rec" && st.total ? 0.35 + 0.5 * st.done / st.total : (STAGE_FRAC[st.stage] ?? RERUN.frac); sidebar(); });
+    res.page_id = d.page_id; const nd = summarize(res, d.filename, d.job, d.size); nd.created = d.created; for (const k of ["group", "group_name", "page_no", "page_count"]) if (d[k] != null) nd[k] = d[k]; await store.put(nd, res.image_blob); if (!silent) { toast("Done"); route(); } return true; } catch (e) { toast("Failed: " + e.message); return false; } }
+/** Read pages of one document again, one after the other -> false if another OCR is running */
+async function rerunPages(pages) {
+  if (ocrBusy()) { busyToast(); return false; }
+  const all = groupDocs(groupKey(pages[0])); RERUN = {key: groupKey(pages[0]), pid: pages[0].page_id, n: pages.length, i: 0, frac: 0}; sidebar(); markRerunButtons();
+  let ok = true;
+  try { for (const d of pages) { RERUN.i++; RERUN.frac = 0; sidebar(); ok = (await rerun(d, all.length > 1 ? `page ${pageNo(d)} of ${all.length}` : "", true)) && ok; } }
+  finally { RERUN = null; sidebar(); markRerunButtons(); }
+  if (ok) toast("Done"); return true;
+}
+/** While OCR re-reads pages, the re-run buttons are disabled and their icon turns */
+function markRerunButtons() { for (const b of view.querySelectorAll("#r_ocr, #r_rerun, [data-ocr]")) { b.disabled = !!RERUN; b.classList.toggle("busy", !!RERUN); } }
 /* ---------------------------------------------------------------- full-size viewer */
 function openLightbox(d, img, onClose) {
   if ($("#lightbox")) return;
@@ -558,8 +578,8 @@ function renderReview(id) {
   const orig = $("#r_orig"); if (orig && multi && window.IntersectionObserver) { const io = new IntersectionObserver(es => { const top = es.filter(e => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]; if (top) view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === top.target.dataset.pid)); }, {root: orig, threshold: [0.25, 0.5, 0.75]}); orig.querySelectorAll(".pagewrap").forEach(el => io.observe(el)); }
   $("#r_copy").onclick = () => navigator.clipboard.writeText(groupText(pages)).then(() => toast("Copied"), () => toast("Copy blocked by the browser"));
   if ($("#r_rerun")) $("#r_rerun").onclick = () => rerunGroup(pages);
-  $("#r_ocr").onclick = () => { if (!multi || confirm(`Run OCR on all ${pages.length} pages? This replaces the current text.`)) rerunGroup(pages); };
-  view.querySelectorAll("[data-ocr]").forEach(b => b.onclick = async e => { e.stopPropagation(); const s = byId[b.dataset.ocr]; b.disabled = true; b.textContent = "Reading…"; await rerun(s, `page ${pageNo(s)}`, true); toast("Done"); renderReview(id); setTimeout(() => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${s.page_id}"]`)) el.scrollIntoView({block: "start"}); }, 50); });
+  $("#r_ocr").onclick = () => { if (ocrBusy()) { busyToast(); return; } if (!multi || confirm(`Run OCR on all ${pages.length} pages? This replaces the current text.`)) rerunGroup(pages); };
+  view.querySelectorAll("[data-ocr]").forEach(b => b.onclick = async e => { e.stopPropagation(); const s = byId[b.dataset.ocr]; if (!(await rerunPages([s])) || location.hash !== "#/review/" + id) return; renderReview(id); setTimeout(() => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${s.page_id}"]`)) el.scrollIntoView({block: "start"}); }, 50); });
   if ($("#r_del")) $("#r_del").onclick = async () => { if (confirm(multi ? `Delete this document and its ${pages.length} pages from this browser?` : "Delete this document from this browser?")) { await deleteGroup(pages); location.hash = "#/documents"; toast("Deleted"); } };
   $("#r_export").onclick = e => { e.stopPropagation(); if (document.querySelector("#r_export + .menu")) { closeMenus(); return; } closeMenus(); const m = document.createElement("div"); m.className = "menu"; m.setAttribute("role", "menu");
     m.innerHTML = `<button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><button data-a="json" role="menuitem">${icon("braces")}JSON</button><button data-a="png" role="menuitem">${icon("image")}Page image${multi ? "s" : ""}</button>`;
@@ -607,6 +627,7 @@ function renderReview(id) {
     card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); const ln = view.querySelector(`.pgbody[data-pid="${s.page_id}"] .docpage .ln[data-key="${key}"]`); if (ln && !e.target.closest("button,input")) { ln.scrollIntoView({block: "center", behavior: "smooth"}); ln.focus(); } else if (multi && !e.target.closest("button,input")) scrollToPage(s.page_id); };
     card.querySelector('[data-a="accept"]').onclick = () => { applyEdit(s, b, l, card.querySelector("input").value); renderReview(id); };
     card.querySelector('[data-a="ignore"]').onclick = () => { s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; store.put(s); renderReview(id); }; });
+  if (RERUN) markRerunButtons();
   if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) store.put(s); renderReview(id); toast("All lines accepted"); };
 }
 function applyParagraphEdit(d, blockId, orders, text) {
@@ -664,14 +685,16 @@ function renderDocuments() {
   const filter = q => store.docs.filter(d => !q || d.filename.toLowerCase().includes(q.toLowerCase()) || pageText(d.result).includes(q));
   const n = groups(store.docs).length;
   view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1><p>${n ? `${plural(n, "document")} on this device` : "Nothing saved yet"}</p></div>
-    <div class="tools">${n ? `<label class="search">${icon("search", "s")}<input id="q" type="search" placeholder="Search name or text" aria-label="Search documents"></label><button class="btn danger" id="d_clear">${icon("trash")}Clear all</button>` : ""}<a class="btn p" href="#/scan">${icon("plus")}New scan</a></div></div>
+    <div class="tools doctools">${n ? `<label class="search">${icon("search", "s")}<input id="q" type="search" placeholder="Search name or text" aria-label="Search documents"></label><button class="btn danger" id="d_clear">${icon("trash")}Clear all</button>` : ""}<a class="btn p" href="#/scan">${icon("plus")}New scan</a></div></div>
     <div class="card" id="doclist">${docsTable(store.docs)}</div>
     ${n ? `<p class="fine">${icon("shield", "s")}Stored in this browser only, with no backup. Export what you need.</p>` : ""}`;
   wireDocsTable();
   if ($("#q")) $("#q").oninput = e => { const q = e.target.value.trim(); $("#doclist").innerHTML = docsTable(filter(q), !!q); wireDocsTable(); };
   if ($("#d_clear")) $("#d_clear").onclick = async () => {
-    if (!confirm(`Delete all ${plural(n, "document")} from this browser?\n\nExport anything you want to keep first. This cannot be undone.`)) return;
-    await store.clear(); sidebar(); renderDocuments(); toast("All documents deleted"); };
+    if (ocrBusy()) { busyToast(); return; }
+    const m = groups(store.docs).length; if (!m) { renderDocuments(); return; }  // counted now: a scan may have finished since the list was drawn
+    if (!confirm(`Delete ${m === 1 ? "1 document" : `all ${m} documents`} from this browser?\n\nExport anything you want to keep first. This cannot be undone.`)) return;
+    await store.clear(); sidebar(); renderDocuments(); view.focus({preventScroll: true}); toast("All documents deleted"); };
 }
 async function renderSettings() {
   view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1></div></div><div class="chips"><span class="chip"><span class="spin"></span>Loading…</span></div>`;
@@ -898,13 +921,14 @@ function selResults(f) {
 const ROUTES = {select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
 const TITLES = {scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
 function route(e) { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); document.title = (TITLES[r] ? TITLES[r] + " · " : "") + "ThaOCR";
-  view.classList.toggle("wide", r === "review" || r === "select");
+  const wide = r === "review" || r === "select"; view.classList.toggle("wide", wide); $(".topbar").classList.toggle("wide", wide);
   view.classList.add("enter"); clearTimeout(route.t); route.t = setTimeout(() => view.classList.remove("enter"), 350);  // entry animation on page change only, not on re-renders
   (ROUTES[r] || renderScan)(arg); window.scrollTo(0, 0);
   if (e && e.type === "hashchange" && !(document.activeElement && document.activeElement.closest && document.activeElement.closest(".page"))) view.focus({preventScroll: true});  // screen readers land on the new page
 }
 window.addEventListener("hashchange", route);
 (async () => {
+  $(".skip").onclick = e => { e.preventDefault(); view.focus(); };  // "#view" would be read as a route
   applyTheme(); document.querySelectorAll(".themetog").forEach(b => b.onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   setSideCollapsed(localStorage.getItem("thaocr.sideCollapsed") === "1");
   try { const m = sessionStorage.getItem("thaocr.resetMsg"); if (m) { sessionStorage.removeItem("thaocr.resetMsg"); setTimeout(() => toast(m), 600); } } catch { }
