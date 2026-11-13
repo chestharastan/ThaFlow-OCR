@@ -741,6 +741,7 @@ async function renderSettings() {
   const dev = [plural(DEVICE.threads, "thread"), DEVICE.memoryGB ? DEVICE.memoryGB + " GB" : "", DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU", DEVICE.threadsOK ? "" : "single-thread", DEVICE.mobile ? "mobile" : ""].filter(Boolean).join(" · ");
   const opt = (v, cur, t) => `<option value="${v}" ${cur === v ? "selected" : ""}>${t}</option>`;
   view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1><p>For this browser only.</p></div></div>
+  ${ocrBusy() ? `<div class="note">${icon("info")}<div>OCR is running. Changes to models and stored data wait until it finishes.</div></div>` : ""}
   <div class="grid g-main"><div class="col">
    <div class="card pad"><h2>Appearance</h2>
     <div class="row-set"><div class="grow">Theme</div><div class="seg" id="s_theme" role="group" aria-label="Theme">${[["system", "System", "monitor"], ["light", "Light", "sun"], ["dark", "Dark", "moon"]].map(([k, t, ic]) => `<button type="button" data-v="${k}" class="${tp === k ? "on" : ""}" aria-pressed="${tp === k}">${icon(ic, "s")}${t}</button>`).join("")}</div></div></div>
@@ -780,6 +781,11 @@ async function renderSettings() {
       sessionStorage.setItem("thaocr.resetMsg", before.usage ? `Reset done · ${fmtSize(before.usage)} freed` : "Reset done"); }
     catch (e) { console.error(e); toast("Reset failed: " + e.message); b.disabled = false; return; }
     location.hash = "#/scan"; location.reload(); };
+  // While a scan or re-run is running, changes that unload the models or remove data wait: they would break that run
+  // ("models not loaded"). The theme and exporting corrections stay available.
+  const guard = (el, ev) => { if (!el || !el[ev]) return; const h = el[ev]; el[ev] = e => { if (ocrBusy()) { toast("OCR is running · change this when it finishes"); renderSettings(); return; } return h.call(el, e); }; };
+  ["#s_rules", "#s_backend"].forEach(sel => guard($(sel), "onchange")); view.querySelectorAll("select[data-stage]").forEach(el => guard(el, "onchange"));
+  view.querySelectorAll("#s_tiers .tier").forEach(el => guard(el, "onclick")); ["#s_reset", "#s_bench", "#s_load", "#s_clear", "#s_cache", "#s_wipe"].forEach(sel => guard($(sel), "onclick"));
 }
 /* ---------------------------------------------------------------- corrections -> training data */
 function correctedLines() { const out = []; for (const d of store.docs) for (const b of d.result.blocks) for (const l of (b.lines || [])) { const k = lineKey(b, l); if ((d.reviewed || {})[k] === "edited" && l.text) out.push({d, b, l}); } return out; }
