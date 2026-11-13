@@ -81,7 +81,7 @@ const store = {
   load() { try { Object.assign(this.settings, JSON.parse(localStorage.getItem(this.skey) || "{}")); } catch {} },
   save() { localStorage.setItem(this.skey, JSON.stringify(this.settings)); },
   async init() { this.load(); this.docs = await T.db.all(); for (const d of this.docs) d.image_url = await T.db.imageUrl(d.page_id); },
-  async put(doc, blob) { const i = this.docs.findIndex(d => d.page_id === doc.page_id); const {image_url, ...rest} = doc; await T.db.put(rest, blob); if (blob) doc.image_url = await T.db.imageUrl(doc.page_id); if (i >= 0) this.docs[i] = doc; else this.docs.unshift(doc); },
+  async put(doc, blob) { const i = this.docs.findIndex(d => d.page_id === doc.page_id); if (!blob && i >= 0 && this.docs[i] !== doc) return false; /* a stale copy: the page was read again meanwhile */ const {image_url, ...rest} = doc; await T.db.put(rest, blob); if (blob) doc.image_url = await T.db.imageUrl(doc.page_id); if (i >= 0) this.docs[i] = doc; else this.docs.unshift(doc); },
   get(id) { return this.docs.find(d => d.page_id === id); },
   async del(id) { this.docs = this.docs.filter(d => d.page_id !== id); await T.db.del(id); },
   async clear() { this.docs = []; await T.db.clear(); },
@@ -265,7 +265,10 @@ function groupStatus(g) { if (g.some(d => d.status === "failed")) return ["Faile
 function groupConf(g) { const n = g.reduce((a, d) => a + d.lines, 0); return n ? g.reduce((a, d) => a + d.avg_conf * d.lines, 0) / n : 0; }
 const groupText = g => g.length === 1 ? pageText(g[0].result) : g.map((d, i) => `----- page ${i + 1} -----\n\n` + pageText(d.result)).join("\n\n");
 async function deleteGroup(g) { for (const d of g) await store.del(d.page_id); }
-async function rerunGroup(g) { if (await rerunPages(g)) route(); }
+async function rerunGroup(g) { if (!(await rerunPages(g))) return; afterRerun(g); }
+/** after a re-run: redraw the re-read document's review page; refresh the Documents list keeping its search; leave any
+    other page (and what the user is typing there) alone */
+function afterRerun(g) { const h = location.hash; if (g.some(d => h === "#/review/" + d.page_id)) route(); else if (h === "#/documents") { if ($("#q") && $("#q").value) $("#q").dispatchEvent(new Event("input")); else route(); } }
 const TIER_LABEL = {high: "Best quality", mid: "Balanced", low: "Light"};
 const TIER_SUB = {high: "GPU or fast computer", mid: "Most computers", low: "Phones · smallest models"};
 const TIER_TECH = {high: "fp32 recogniser v2.4, detector at 2200 px", mid: "int8 recogniser, detector at 1800 px", low: "int8 recogniser and layout model, detector at 1300 px"};
@@ -376,7 +379,7 @@ function startJob() {
       catch (e) { console.warn(e); f.status = "failed"; f.error = "Could not open this PDF: " + (e.message || e); } }
     JOB.total = JOB.files.length; JOB.name = JOB.files.length > 1 ? `${JOB.files.length} pages` : JOB.files[0].name;
     let modelsReady = T.loaded();
-    const needModels = async () => { if (modelsReady) return; await ensureModels((msg, frac) => { JOB.load = {msg, frac}; renderIfProcess(); }); modelsReady = true; JOB.load = null; };
+    const needModels = async () => { if (modelsReady) { JOB.load = null; return; } await ensureModels((msg, frac) => { JOB.load = {msg, frac}; renderIfProcess(); }); modelsReady = true; JOB.load = null; };
     // PDF text pages need no OCR, but the small font + structure models (6 MB) give them headings, lists and fonts
     const needLight = async () => { if (T.sessions.structure || modelsReady) return; try { JOB.load = {msg: "Loading the layout helper models…", frac: 0};
         await T.load({layout: null, textdet: null, rec: null, font: chosenModels().font, structure: chosenModels().structure}, p => { JOB.load = {msg: `Loading ${p.id}…`, frac: p.total ? p.got / p.total : 0}; renderIfProcess(); }); }
@@ -501,13 +504,14 @@ const busyToast = () => toast("OCR is already running · wait for it to finish")
 const STAGE_FRAC = {decode: 0.02, layout: 0.1, textdet: 0.25, rec: 0.35, font: 0.88, structure: 0.95};
 async function rerun(d, label, silent) { toast("Running OCR" + (label ? " · " + label : "") + "…"); try { await ensureModels(); const blob = await T.db.imageBlob(d.page_id); if (!blob) throw new Error("page image missing");
     const res = await T.process(blob, st => { if (!RERUN) return; RERUN.frac = st.stage === "rec" && st.total ? 0.35 + 0.5 * st.done / st.total : (STAGE_FRAC[st.stage] ?? RERUN.frac); sidebar(); });
+    if (!store.get(d.page_id)) return false;  // deleted while it was being read: it stays deleted
     res.page_id = d.page_id; const nd = summarize(res, d.filename, d.job, d.size); nd.created = d.created; for (const k of ["group", "group_name", "page_no", "page_count"]) if (d[k] != null) nd[k] = d[k]; await store.put(nd, res.image_blob); if (!silent) { toast("Done"); route(); } return true; } catch (e) { toast("Failed: " + e.message); return false; } }
 /** Read pages of one document again, one after the other -> false if another OCR is running */
 async function rerunPages(pages) {
   if (ocrBusy()) { busyToast(); return false; }
   const all = groupDocs(groupKey(pages[0])); RERUN = {key: groupKey(pages[0]), pid: pages[0].page_id, n: pages.length, i: 0, frac: 0}; sidebar(); markRerunButtons();
   let ok = true;
-  try { for (const d of pages) { RERUN.i++; RERUN.frac = 0; sidebar(); ok = (await rerun(d, all.length > 1 ? `page ${pageNo(d)} of ${all.length}` : "", true)) && ok; } }
+  try { for (const d of pages) { RERUN.i++; RERUN.frac = 0; sidebar(); if (!store.get(d.page_id)) continue; ok = (await rerun(d, all.length > 1 ? `page ${pageNo(d)} of ${all.length}` : "", true)) && ok; } }
   finally { RERUN = null; sidebar(); markRerunButtons(); }
   if (ok) toast("Done"); return true;
 }
@@ -611,7 +615,7 @@ function renderReview(id) {
   $("#r_copy").onclick = () => navigator.clipboard.writeText(groupText(pages)).then(() => toast("Copied"), () => toast("Copy blocked by the browser"));
   if ($("#r_rerun")) $("#r_rerun").onclick = () => rerunGroup(pages);
   $("#r_ocr").onclick = () => { if (ocrBusy()) { busyToast(); return; } if (!multi || confirm(`Run OCR on all ${pages.length} pages? This replaces the current text.`)) rerunGroup(pages); };
-  view.querySelectorAll("[data-ocr]").forEach(b => b.onclick = async e => { e.stopPropagation(); const s = byId[b.dataset.ocr]; if (!(await rerunPages([s])) || location.hash !== "#/review/" + id) return; renderReview(id); setTimeout(() => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${s.page_id}"]`)) el.scrollIntoView({block: "start"}); }, 50); });
+  view.querySelectorAll("[data-ocr]").forEach(b => b.onclick = async e => { e.stopPropagation(); const s = byId[b.dataset.ocr]; if (!(await rerunPages([s]))) return; afterRerun(groupDocs(groupKey(s)).concat([s])); if (!location.hash.startsWith("#/review/")) return; setTimeout(() => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${s.page_id}"]`)) el.scrollIntoView({block: "start"}); }, 50); });
   if ($("#r_del")) $("#r_del").onclick = async () => { if (confirm(multi ? `Delete this document and its ${pages.length} pages from this browser?` : "Delete this document from this browser?")) { await deleteGroup(pages); location.hash = "#/documents"; toast("Deleted"); } };
   $("#r_export").onclick = e => { e.stopPropagation(); if (document.querySelector("#r_export + .menu")) { closeMenus(); return; } closeMenus(); const m = document.createElement("div"); m.className = "menu"; m.setAttribute("role", "menu");
     m.innerHTML = `<button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><button data-a="json" role="menuitem">${icon("braces")}JSON</button><button data-a="png" role="menuitem">${icon("image")}Page image${multi ? "s" : ""}</button>`;
@@ -659,12 +663,14 @@ function renderReview(id) {
   view.querySelectorAll(".rev").forEach(card => { const key = card.dataset.key, s = byId[card.dataset.pid], page = s.result, [bid, lo] = key.split(":"), b = page.blocks.find(x => x.id === bid), l = b.lines.find(x => String(x.reading_order) === lo);
     card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); const ln = view.querySelector(`.pgbody[data-pid="${s.page_id}"] .docpage .ln[data-key="${key}"]`); if (ln && !e.target.closest("button,input")) { ln.scrollIntoView({block: "center", behavior: "smooth"}); ln.focus(); } else if (multi && !e.target.closest("button,input")) scrollToPage(s.page_id); };
     card.querySelector('[data-a="accept"]').onclick = () => { applyEdit(s, b, l, card.querySelector("input").value); renderReview(id); };
-    card.querySelector('[data-a="ignore"]').onclick = () => { s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; syncDocument(s); store.put(s); renderReview(id); }; });
+    card.querySelector('[data-a="ignore"]').onclick = () => { if (stale(s)) return; s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; syncDocument(s); store.put(s); renderReview(id); }; });
   if (RERUN) markRerunButtons();
-  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) { syncDocument(s); store.put(s); } renderReview(id); toast("All lines accepted"); };
+  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { if (lows.some(x => stale(x.d))) return; for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) { syncDocument(s); store.put(s); } renderReview(id); toast("All lines accepted"); };
 }
+/** the page object a handler holds was replaced by a re-run: show the new text instead of saving the old one */
+function stale(d) { const cur = store.get(d.page_id); if (cur === d) return false; if (cur) { toast("This page was just read again · showing the new text"); if (location.hash.startsWith("#/review/")) route(); } return true; }  /* gone: deleted, nothing to save */
 function applyParagraphEdit(d, blockId, orders, text) {
-  const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
+  if (stale(d)) return; const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
   const lines = orders.map(o => b.lines.find(l => l.reading_order === o)).filter(Boolean); if (!lines.length) return;
   const parts = text.split("\n"), perLine = lines.length > 1 && parts.length === lines.length;  // kept breaks still there: one piece per line
   lines.forEach((l, i) => { if (l.confidence_before == null) l.confidence_before = l.confidence; l.text = perLine ? parts[i] : i ? "" : text; l.spans = []; l.confidence = Math.max(l.confidence, 0.99); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = "edited"; });
@@ -686,6 +692,7 @@ function syncDocument(d) {
   doc.elements.forEach(walk);
 }
 function applyEdit(d, b, l, text) {
+  if (stale(d)) return;
   const changed = text !== l.text; if (changed && l.confidence_before == null) l.confidence_before = l.confidence; l.text = text; if (changed) { l.spans = []; l.confidence = Math.max(l.confidence, 0.99); }
   b.text = blockTextMd(b); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = changed ? "edited" : "accepted";
   syncDocument(d); recount(d); store.put(d); const s = $("#r_saved"); if (s) s.textContent = "Saved just now";

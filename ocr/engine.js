@@ -87,8 +87,9 @@
 
   /** Load the ONNX Runtime bundle that fits the chosen backend (wasm-only is 15 MB of runtime, the WebGPU build 30 MB). */
   let ortLoading = null;
+  let needFresh = false;  // the loaded runtime failed to start its worker: until a fresh copy has loaded, every load fetches one
   function loadOrt(eps, fresh) {
-    if (fresh) ortLoading = null;  // a new runtime instance (its own state), e.g. after its worker failed to start
+    if (fresh || needFresh) { if (!(ortLoading && ortLoading.fresh)) ortLoading = null; }  // a new runtime instance (its own state)
     else if (window.ort) return Promise.resolve(window.ort);
     if (ortLoading) return ortLoading;
     const file = T.config.ortBase + (eps[0] === "webgpu" ? "ort.webgpu.min.js" : "ort.wasm.min.js");
@@ -96,10 +97,11 @@
     ortLoading = (async () => {
       for (let i = 0; ; i++) {
         const s = document.createElement("script");
-        try { await new Promise((res, rej) => { s.src = file; s.onload = res; s.onerror = () => rej(new Error("cannot load " + file)); document.head.appendChild(s); }); return window.ort; }
+        try { await new Promise((res, rej) => { s.src = file; s.onload = res; s.onerror = () => rej(new Error("cannot load " + file)); document.head.appendChild(s); }); needFresh = false; return window.ort; }
         catch (e) { s.remove(); if (i >= 2) { ortLoading = null; throw new Error(e.message + " - check your network and try again"); } await sleep(700 * 2 ** i); }
       }
     })();
+    ortLoading.fresh = fresh || needFresh;
     return ortLoading;
   }
   function ortEnv() {
@@ -120,15 +122,22 @@
      structure models always run there - no longer freeze taps, scrolling and painting. The worker is started once with a
      tiny built-in model; if it cannot start (a browser or policy that blocks it), the models run on the page as before. */
   const PROBE = Uint8Array.from(atob("CAcSADo3ChAKAXgSAXkiCElkZW50aXR5EgFwWg8KAXgSCgoICAESBAoCCAFiDwoBeRIKCggIARIECgIIAUIECgAQDQ=="), c => c.charCodeAt(0)); // Identity, 67 bytes
+  /* ONE model call at a time. In proxy mode ONNX Runtime hands its worker's replies to callers in order, per message type,
+     without checking the session: two runs in flight (a scan and Select, a WebGPU and a CPU model) could swap results and save
+     blank text. Two GPU runs at once can also crash the tab. Every create and run goes through this queue; nothing queued
+     may queue again (it would wait on itself). */
+  let ortQ = Promise.resolve();
+  const serial = f => { const p = ortQ.then(f, f); ortQ = p.catch(() => { }); return p; };
+  const runModel = (sess, feeds) => serial(() => sess.run(feeds));
   const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
   let ortStarting = null;
   function ortStart(eps) {
     if (!ortStarting) ortStarting = (async () => {
       await loadOrt(eps); if (T.config.proxy === false) return;
-      try { const s = await withTimeout(ortEnv().InferenceSession.create(PROBE.slice(), {executionProviders: ["wasm"]}), 120000, "the ONNX Runtime worker did not start");
+      try { const s = await serial(() => withTimeout(ortEnv().InferenceSession.create(PROBE.slice(), {executionProviders: ["wasm"]}), 600000, "the ONNX Runtime worker did not start"));  // 10 min: a slow first download of the runtime is not a failure
         try { await s.release(); } catch { } }
       catch (e) { console.warn("ONNX Runtime worker unavailable, models run on the page instead:", (e && e.message) || e);
-        T.config.proxy = false; T.proxyError = String((e && e.message) || e); await loadOrt(eps, true); }  // the failed runtime cannot initialise again
+        T.config.proxy = false; T.proxyError = String((e && e.message) || e); needFresh = true; await loadOrt(eps, true); }  // the failed runtime cannot initialise again
     })().catch(e => { ortStarting = null; throw e; });
     return ortStarting;
   }
@@ -138,10 +147,10 @@
   async function session(buf, eps) {
     await ortStart(eps); const ort = ortEnv(), opts = e => ({executionProviders: e, graphOptimizationLevel: "all"});
     if (eps[0] !== "wasm") {
-      try { const s = await ort.InferenceSession.create(ort.env.wasm.proxy ? copyOf(buf) : buf, opts(eps)); return {sess: s, ep: eps[0]}; }
+      try { const s = await serial(() => ort.InferenceSession.create(ort.env.wasm.proxy ? copyOf(buf) : buf, opts(eps))); return {sess: s, ep: eps[0]}; }
       catch (e) { console.warn("falling back to wasm:", e.message); }
     }
-    const s = await ort.InferenceSession.create(buf, opts(["wasm"])); return {sess: s, ep: "wasm"};
+    const s = await serial(() => ort.InferenceSession.create(buf, opts(["wasm"]))); return {sess: s, ep: "wasm"};
   }
   /** Give the page a moment between heavy steps to handle taps, scrolling and painting. A MessageChannel task is not
       throttled in background tabs the way setTimeout is, so OCR keeps its speed while the tab is hidden. */
@@ -229,7 +238,7 @@
     const {sess, spec} = T.sessions.layout, S = (spec.input_size && spec.input_size[0]) || 1024;
     const lb = letterbox(img.canvas, S), d = imgData(lb.canvas), n = S * S, x = new Float32Array(3 * n);
     for (let i = 0; i < n; i++) { x[i] = d[i * 4] / 255; x[n + i] = d[i * 4 + 1] / 255; x[2 * n + i] = d[i * 4 + 2] / 255; }  // RGB
-    const ort = window.ort, out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [1, 3, S, S])});
+    const ort = window.ort, out = await runModel(sess, {[sess.inputNames[0]]: new ort.Tensor("float32", x, [1, 3, S, S])});
     const o = out[sess.outputNames[0]]; let [, C, A] = o.dims; let data = o.data; let getv = (c, a) => data[c * A + a];
     if (C > A) { [C, A] = [A, C]; getv = (c, a) => data[a * C + c]; }
     const nc = C - 4, names = T.meta.layoutNames, boxes = [], scores = [], cls = [];
@@ -251,7 +260,7 @@
     const [nw, nh] = dbSize(canvas.width, canvas.height, longMin, longMax), d = imgData(resized(canvas, nw, nh)), n = nw * nh, x = new Float32Array(3 * n);
     for (let i = 0; i < n; i++) { // BGR order like the PaddleOCR / cv2 pipeline
       x[i] = (d[i * 4 + 2] / 255 - MEAN[0]) / STD[0]; x[n + i] = (d[i * 4 + 1] / 255 - MEAN[1]) / STD[1]; x[2 * n + i] = (d[i * 4] / 255 - MEAN[2]) / STD[2]; }
-    const {sess} = T.sessions.textdet, ort = window.ort, out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [1, 3, nh, nw])});
+    const {sess} = T.sessions.textdet, ort = window.ort, out = await runModel(sess, {[sess.inputNames[0]]: new ort.Tensor("float32", x, [1, 3, nh, nw])});
     const o = out[sess.outputNames[0]]; return {prob: o.data, w: o.dims[3], h: o.dims[2]};
   }
   // ---- geometry helpers (replacing cv2.findContours / minAreaRect / boxPoints)
@@ -344,7 +353,7 @@
   };
 
   /* ------------------------------------------------------------------ recogniser: CRNN-CTC */
-  async function recLogits(x, N, Wd, key = "rec") { const {sess} = T.sessions[key], ort = window.ort; const out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [N, 1, REC_H, Wd])}); const o = out[sess.outputNames[0]]; return o; }
+  async function recLogits(x, N, Wd, key = "rec") { const {sess} = T.sessions[key], ort = window.ort; const out = await runModel(sess, {[sess.inputNames[0]]: new ort.Tensor("float32", x, [N, 1, REC_H, Wd])}); const o = out[sess.outputNames[0]]; return o; }
   async function recStride(key = "rec") { const S = T.sessions[key]; if (S.stride) return S.stride; const o = await recLogits(new Float32Array(REC_H * 256), 1, 256, key); S.stride = Math.max(1, Math.round(256 / o.dims[0])); if (key === "rec") T.meta.recStride = S.stride; return S.stride; }
   async function recBatch(crops, key = "rec") {
     const s = await recStride(key), Wd = Math.ceil(Math.max(...crops.map(c => c.w)) / s) * s, N = crops.length, x = new Float32Array(N * REC_H * Wd);
@@ -379,7 +388,7 @@
     const wins = [], owners = []; for (const c of crops32) { const ws = fontWindows(c); owners.push(ws.map((_, k) => wins.length + k)); wins.push(...ws); }
     const {sess} = T.sessions.font, ort = window.ort, meta = T.meta.font, fam = [], wt = [], sl = [], sz = [];
     for (let i = 0; i < wins.length; i += maxBatch) { const b = wins.slice(i, i + maxBatch), x = new Float32Array(b.length * FONT_H * 256); b.forEach((g, k) => { const o = k * FONT_H * 256; for (let j = 0; j < g.length; j++) x[o + j] = (g[j] / 255 - 0.5) / 0.5; });
-      const out = await sess.run({[sess.inputNames[0]]: new ort.Tensor("float32", x, [b.length, 1, FONT_H, 256])}); await T.yieldUI();
+      const out = await runModel(sess, {[sess.inputNames[0]]: new ort.Tensor("float32", x, [b.length, 1, FONT_H, 256])}); await T.yieldUI();
       const F = out.family, Wt = out.weight, Sl = out.slant, Sz = out.size;
       for (let k = 0; k < b.length; k++) { fam.push(Array.from(F.data.subarray(k * F.dims[1], (k + 1) * F.dims[1]))); wt.push(Array.from(Wt.data.subarray(k * 2, k * 2 + 2))); sl.push(Array.from(Sl.data.subarray(k * 2, k * 2 + 2))); sz.push(Sz ? Sz.data[k] : null); } }
     const mean = arrs => arrs[0].map((_, j) => arrs.reduce((a, r) => a + r[j], 0) / arrs.length), argmax = a => a.indexOf(Math.max(...a));
@@ -421,7 +430,7 @@
     const geo = lines.map((_, i) => i).sort((a, b) => ((lines[a].bbox[1] + lines[a].bbox[3]) / 2 - (lines[b].bbox[1] + lines[b].bbox[3]) / 2) || (lines[a].bbox[0] - lines[b].bbox[0])).slice(0, 256);
     const boxes = geo.map(k => lines[k].bbox), texts = geo.map(k => lines[k].text || ""), N = geo.length;
     const feats = lineFeatures(boxes, texts, geo.map(k => lines[k].bold ? 1 : 0), geo.map(k => lines[k].bullet ? 1 : 0), W, H), chars = new BigInt64Array(N * 6); texts.forEach((t, i) => charIds(t).forEach((v, j) => chars[i * 6 + j] = BigInt(v)));
-    const {sess} = T.sessions.structure, ort = window.ort, out = await sess.run({feats: new ort.Tensor("float32", feats, [1, N, 23]), chars: new ort.Tensor("int64", chars, [1, N, 6])});
+    const {sess} = T.sessions.structure, ort = window.ort, out = await runModel(sess, {feats: new ort.Tensor("float32", feats, [1, N, 23]), chars: new ort.Tensor("int64", chars, [1, N, 6])});
     const role = out.role, first = out.first, level = out.level, bullet = out.bullet, succ = out.succ, R = role.dims[2], Lv = level.dims[2], roles = T.meta.structure.roles;
     const order = decodeOrder(succ.data, N, boxes), rank = {}; order.forEach((k, r) => rank[geo[k]] = r);
     const res = basic.slice(); let nxt = N;
