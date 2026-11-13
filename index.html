@@ -1,7 +1,11 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ThaOCR</title>
 <meta name="description" content="Khmer and English document OCR that runs entirely in your browser. No upload, no account, no server.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f7f7f5">
+<script>/* theme before first paint (no flash): saved choice, else the system setting. app.js keeps it in sync. */
+(function(){var t;try{t=localStorage.getItem("thaocr.theme")}catch(e){}var d=t==="dark"||(t!=="light"&&window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.setAttribute("data-theme",d?"dark":"light");var m=document.querySelector('meta[name="theme-color"]');if(m)m.content=d?"#0f0f10":"#f7f7f5";})();</script>
 <link rel="icon" type="image/svg+xml" href="logo.svg">
 <link rel="stylesheet" href="app.css">
 </head><body>
@@ -13,38 +17,50 @@
  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></symbol>
  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+ <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v3a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-3M7 10l5 5 5-5M12 15V3"/></symbol>
+ <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+ <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/></symbol>
 </defs></svg>
+<a class="skip" href="#view">Skip to content</a>
 <div class="shell" id="shell">
- <aside class="side">
+ <aside class="side" aria-label="Main">
   <div class="side-top">
-  <a class="brand" href="#/scan" title="ThaOCR">
-   <svg class="mark" viewBox="0 0 792.53 791.42" aria-hidden="true"><path fill="#f2eee3" d="m5.74,347.98c2.95-32.15,5.25-64.36,6.35-96.63C18.74,55.04,169.58,48.29,378.34,7.01c221.05-43.71,381.76,124.54,408.37,292.23,24.98,157.35-28.72,457.08-197.32,488.3-167.89,31.09-510.61-133.44-561.98-187.33C-8.02,563.05-1.58,427.75,5.74,347.98Z"/><path fill="#111" d="m318.8,452.55c0,41.06,31.32,76.2,72.29,78.87,23.42,1.52,44.78-7.4,59.92-22.54,14.02-14.02,22.71-33.37,22.71-54.76v-77.46h0c-15.43,0-27.94-12.51-27.94-27.94h0c0-15.43,12.51-27.94,27.94-27.94h55.87v131.22c0,71.24-55.06,131.56-126.21,135.27-76.86,4-140.47-57.16-140.47-133.15v-245.08h210.8v-55.87s55.87,0,55.87,0v111.75h-210.8v187.64Z"/></svg>
-   <div><b>ThaOCR</b><span>Khmer document OCR · in your browser</span></div>
-  </a>
-  <button class="sidetog" id="sidetog" type="button" title="Close sidebar (Ctrl+Shift+S)" aria-label="Close sidebar" aria-expanded="true"><svg class="i"><use href="#i-panel"/></svg></button>
+   <a class="brand" href="#/scan" aria-label="ThaOCR home">
+    <svg class="mark" viewBox="0 0 792.53 791.42" aria-hidden="true"><path fill="#f2eee3" d="m5.74,347.98c2.95-32.15,5.25-64.36,6.35-96.63C18.74,55.04,169.58,48.29,378.34,7.01c221.05-43.71,381.76,124.54,408.37,292.23,24.98,157.35-28.72,457.08-197.32,488.3-167.89,31.09-510.61-133.44-561.98-187.33C-8.02,563.05-1.58,427.75,5.74,347.98Z"/><path fill="#111" d="m318.8,452.55c0,41.06,31.32,76.2,72.29,78.87,23.42,1.52,44.78-7.4,59.92-22.54,14.02-14.02,22.71-33.37,22.71-54.76v-77.46h0c-15.43,0-27.94-12.51-27.94-27.94h0c0-15.43,12.51-27.94,27.94-27.94h55.87v131.22c0,71.24-55.06,131.56-126.21,135.27-76.86,4-140.47-57.16-140.47-133.15v-245.08h210.8v-55.87s55.87,0,55.87,0v111.75h-210.8v187.64Z"/></svg>
+    <div><b>ThaOCR</b><span>Khmer OCR</span></div>
+   </a>
+   <button class="sidetog" id="sidetog" type="button" title="Close sidebar (Ctrl+Shift+S)" aria-label="Close sidebar" aria-expanded="true"><svg class="i"><use href="#i-panel"/></svg></button>
   </div>
-  <nav>
-   <a class="nav" data-r="scan" href="#/scan" title="Scan"><svg class="i"><use href="#i-scan"/></svg><span class="t">Scan</span></a>
-   <a class="nav" data-r="select" href="#/select" title="Select"><svg class="i"><use href="#i-select"/></svg><span class="t">Select</span></a>
-   <a class="nav" data-r="documents" href="#/documents" title="Documents"><svg class="i"><use href="#i-folder"/></svg><span class="t">Documents</span><span class="count" id="n_docs"></span></a>
-   <a class="nav" data-r="settings" href="#/settings" title="Settings"><svg class="i"><use href="#i-sliders"/></svg><span class="t">Settings</span></a>
+  <nav class="tabs" aria-label="Pages">
+   <a class="nav" data-r="scan" href="#/scan" aria-label="Scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span class="t">Scan</span></a>
+   <a class="nav" data-r="select" href="#/select" aria-label="Select"><svg class="i" aria-hidden="true"><use href="#i-select"/></svg><span class="t">Select</span></a>
+   <a class="nav" data-r="documents" href="#/documents" aria-label="Documents"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="t">Documents</span><span class="count" id="n_docs"></span></a>
+   <a class="nav" data-r="settings" href="#/settings" aria-label="Settings"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg><span class="t">Settings</span></a>
   </nav>
-  <a class="running hide" id="running" href="#/process"><span class="spin"></span><span class="grow" id="running_txt">Processing…</span><b id="running_pct"></b></a>
+  <a class="running hide" id="running" href="#/process" aria-label="OCR running · show progress"><span class="spin"></span><span class="grow" id="running_txt">Working…</span><b id="running_pct"></b></a>
   <div class="spacer"></div>
-  <a class="nav" data-r="help" href="#/help" title="Help"><svg class="i"><use href="#i-help"/></svg><span class="t">Help</span></a>
-  <div class="foot"><svg class="i s" style="vertical-align:-3px"><use href="#i-shield"/></svg> Nothing leaves this device · <span id="dev">…</span></div>
+  <a class="nav help" data-r="help" href="#/help" aria-label="Help"><svg class="i" aria-hidden="true"><use href="#i-help"/></svg><span class="t">Help</span></a>
+  <div class="foot">
+   <span class="devchip" title="Nothing leaves this device"><svg class="i s" aria-hidden="true"><use href="#i-shield"/></svg><span id="dev">…</span></span>
+   <button class="iconbtn" id="themetog" type="button" title="Dark mode" aria-label="Switch to dark mode"><svg class="i ic-moon" aria-hidden="true"><use href="#i-moon"/></svg><svg class="i ic-sun" aria-hidden="true"><use href="#i-sun"/></svg></button>
+  </div>
  </aside>
- <main class="page" id="view"></main>
+ <main class="page" id="view" tabindex="-1"></main>
 </div>
 <input id="fileinput" type="file" accept="image/*,application/pdf,.pdf" multiple hidden>
-<div class="toast" id="toast"></div>
-<div class="modal hide" id="notice">
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="modal hide" id="notice" role="dialog" aria-modal="true" aria-labelledby="notice_t">
  <div class="modal-card">
-  <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px"><svg class="mark" viewBox="0 0 792.53 791.42" width="40" height="40"><path fill="#f2eee3" d="m5.74,347.98c2.95-32.15,5.25-64.36,6.35-96.63C18.74,55.04,169.58,48.29,378.34,7.01c221.05-43.71,381.76,124.54,408.37,292.23,24.98,157.35-28.72,457.08-197.32,488.3-167.89,31.09-510.61-133.44-561.98-187.33C-8.02,563.05-1.58,427.75,5.74,347.98Z"/><path fill="#111" d="m318.8,452.55c0,41.06,31.32,76.2,72.29,78.87,23.42,1.52,44.78-7.4,59.92-22.54,14.02-14.02,22.71-33.37,22.71-54.76v-77.46h0c-15.43,0-27.94-12.51-27.94-27.94h0c0-15.43,12.51-27.94,27.94-27.94h55.87v131.22c0,71.24-55.06,131.56-126.21,135.27-76.86,4-140.47-57.16-140.47-133.15v-245.08h210.8v-55.87s55.87,0,55.87,0v111.75h-210.8v187.64Z"/></svg><h2 style="font-size:20px">Before you start</h2></div>
-  <p><b>Everything runs on your device.</b> ThaOCR has no server, no account and no database. Your photos and scans are never uploaded. The OCR runtime and PDF reader (ONNX Runtime and pdf.js, from the jsDelivr CDN) and the models (about 40 MB, from Hugging Face where they are published openly) are downloaded once and kept in your browser. No document data is part of that download.</p>
-  <p><b>We do not store your files for you.</b> Results stay only in this browser's local storage, on this device. Clearing the browser's site data, using a private window, or switching devices means they are gone. Export what you want to keep as Word, text or JSON.</p>
-  <p><b>Speed depends on your device.</b> The page checks what your computer or phone can do, picks the model set that fits, and shows a time estimate before you start.</p>
-  <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px"><button class="btn p" id="notice_ok">I understand</button></div>
+  <svg class="mark" viewBox="0 0 792.53 791.42" width="44" height="44" aria-hidden="true" style="margin-bottom:14px"><path fill="#f2eee3" d="m5.74,347.98c2.95-32.15,5.25-64.36,6.35-96.63C18.74,55.04,169.58,48.29,378.34,7.01c221.05-43.71,381.76,124.54,408.37,292.23,24.98,157.35-28.72,457.08-197.32,488.3-167.89,31.09-510.61-133.44-561.98-187.33C-8.02,563.05-1.58,427.75,5.74,347.98Z"/><path fill="#111" d="m318.8,452.55c0,41.06,31.32,76.2,72.29,78.87,23.42,1.52,44.78-7.4,59.92-22.54,14.02-14.02,22.71-33.37,22.71-54.76v-77.46h0c-15.43,0-27.94-12.51-27.94-27.94h0c0-15.43,12.51-27.94,27.94-27.94h55.87v131.22c0,71.24-55.06,131.56-126.21,135.27-76.86,4-140.47-57.16-140.47-133.15v-245.08h210.8v-55.87s55.87,0,55.87,0v111.75h-210.8v187.64Z"/></svg>
+  <h2 id="notice_t">Welcome to ThaOCR</h2>
+  <p class="lead">Khmer &amp; English OCR, right in your browser.</p>
+  <ul class="points">
+   <li><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg></span><div><b>Private</b><span>Your files are never uploaded. No account, no server.</span></div></li>
+   <li><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg></span><div><b>Saved on this device only</b><span>Clearing browser data deletes them. Export what you want to keep.</span></div></li>
+   <li><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></span><div><b>One-time download</b><span>About 40 MB of models. Speed depends on your device.</span></div></li>
+  </ul>
+  <button class="btn p lg block" id="notice_ok" type="button">Get started</button>
+  <p class="fine">Models from Hugging Face · runtime from jsDelivr · no document data</p>
  </div>
 </div>
 <script src="ocr/engine.js"></script>

@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const fmtMs = v => v == null ? "–" : v >= 1000 ? (v / 1000).toFixed(1) + " s" : Math.round(v) + " ms";
-const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1e3)) + " KB";
+const fmtSize = b => b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1e3)) + " KB";
 const when = t => { const d = new Date(t), now = new Date(); const hm = d.toTimeString().slice(0, 5);
   if (d.toDateString() === now.toDateString()) return "Today, " + hm; const y = new Date(now - 864e5); if (d.toDateString() === y.toDateString()) return "Yesterday, " + hm;
   return d.toLocaleDateString(undefined, {month: "short", day: "numeric"}) + ", " + hm; };
@@ -54,6 +54,14 @@ const ICONS = {
   braces: '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   percent: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M10 10h4v4h-4zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="m9 12 2 2 4-4"/>',
+  pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+  "arrow-left": '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  split: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 const LOW = 0.8;          // a line below this confidence needs review
@@ -88,7 +96,22 @@ function summarize(res, filename, jobId, fileSize) {
     low: lines.filter(l => l.confidence < LOW).length, lang: lines.some(l => /[A-Za-z]{3,}/.test(l.text)) && lines.some(l => KHMER.test(l.text)) ? "Khmer + EN" : lines.some(l => KHMER.test(l.text)) ? "Khmer" : "English",
     models: res.models, timings: res.timings, result, status: "completed", reviewed: {}};
 }
-const docStatus = d => d.status === "failed" ? ["Failed", "bad"] : d.status === "processing" ? ["Processing", "ink"] : (d.low - Object.keys(d.reviewed || {}).length) > 0 ? ["Needs review", "warn"] : ["Completed", "ok"];
+const docStatus = d => d.status === "failed" ? ["Failed", "bad"] : d.status === "processing" ? ["Processing", "ink"] : (d.low - Object.keys(d.reviewed || {}).length) > 0 ? ["Needs review", "warn"] : ["Done", "ok"];
+
+/* ---------------------------------------------------------------- theme: system / light / dark
+   index.html sets data-theme before the first paint; this keeps it in sync with the saved choice and the OS. */
+const THEME_KEY = "thaocr.theme", darkMq = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : {matches: false};
+const themePref = () => { try { const t = localStorage.getItem(THEME_KEY); return t === "light" || t === "dark" ? t : "system"; } catch { return "system"; } };
+function applyTheme(animate) {
+  const pref = themePref(), dark = pref === "dark" || (pref === "system" && darkMq.matches), root = document.documentElement;
+  if (animate && !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) { root.classList.add("theme-anim"); clearTimeout(applyTheme.t); applyTheme.t = setTimeout(() => root.classList.remove("theme-anim"), 320); }
+  root.dataset.theme = dark ? "dark" : "light";
+  const meta = $('meta[name="theme-color"]'); if (meta) meta.content = dark ? "#0f0f10" : "#f7f7f5";
+  const b = $("#themetog"); if (b) { const to = dark ? "Light mode" : "Dark mode"; b.title = to; b.setAttribute("aria-label", "Switch to " + to.toLowerCase()); }
+  document.querySelectorAll("#s_theme button").forEach(x => { const on = x.dataset.v === pref; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on)); });
+}
+function setTheme(t) { try { if (t === "system") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch { } applyTheme(true); }
+if (darkMq.addEventListener) darkMq.addEventListener("change", () => { if (themePref() === "system") applyTheme(true); });
 
 /* ---------------------------------------------------------------- device + models */
 let DEVICE = null, RECO = null, LOADING = null;
@@ -188,12 +211,13 @@ function setSideCollapsed(c) {  // ChatGPT-style: full sidebar <-> icon rail, re
 }
 function sidebar() {
   const r = location.hash.split("/")[1] || "scan";
-  document.querySelectorAll(".nav").forEach(a => a.classList.toggle("cur", a.dataset.r === r || (r === "process" && a.dataset.r === "scan") || (r === "review" && a.dataset.r === "documents")));
+  document.querySelectorAll(".nav").forEach(a => { const on = a.dataset.r === r || (r === "process" && a.dataset.r === "scan") || (r === "review" && a.dataset.r === "documents");
+    a.classList.toggle("cur", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
   $("#n_docs").textContent = groups(store.docs).length || "";
   const running = JOB && JOB.status === "running";
   $("#running").classList.toggle("hide", !running || r === "process");
   if (running) { $("#running_pct").textContent = Math.round(JOB.done / JOB.total * 100) + "%"; }
-  $("#dev").textContent = T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") + " · models ready" : DEVICE ? `${DEVICE.threads} threads${DEVICE.webgpu ? " · WebGPU" : ""}` : "checking device…";
+  $("#dev").textContent = "Private · " + (T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") + " ready" : DEVICE ? (DEVICE.webgpu ? "GPU" : "CPU") : "checking…");
 }
 const docTitle = d => d.filename.replace(/\.[^.]+$/, "");
 /* A multi-page PDF is one document made of several page records (one per page). Pages share a group key. */
@@ -204,36 +228,46 @@ function pageNo(d) { if (d.page_no) return d.page_no; const m = PAGE_RE.exec(d.f
 function groupDocs(key) { return store.docs.filter(x => groupKey(x) === key).sort((a, b) => pageNo(a) - pageNo(b) || a.created - b.created); }
 function groups(docs) { const seen = new Map(); for (const d of docs) { const k = groupKey(d); if (!seen.has(k)) seen.set(k, []); seen.get(k).push(d); } return [...seen.values()].map(g => g.sort((a, b) => pageNo(a) - pageNo(b) || a.created - b.created)); }
 const groupTitle = g => groupName(g[0]).replace(/\.[^.]+$/, "");
-function groupStatus(g) { if (g.some(d => d.status === "failed")) return ["Failed", "bad"]; if (g.some(d => d.status === "processing")) return ["Processing", "ink"]; return g.some(d => (d.low - Object.keys(d.reviewed || {}).length) > 0) ? ["Needs review", "warn"] : ["Completed", "ok"]; }
+function groupStatus(g) { if (g.some(d => d.status === "failed")) return ["Failed", "bad"]; if (g.some(d => d.status === "processing")) return ["Processing", "ink"]; return g.some(d => (d.low - Object.keys(d.reviewed || {}).length) > 0) ? ["Needs review", "warn"] : ["Done", "ok"]; }
 function groupConf(g) { const n = g.reduce((a, d) => a + d.lines, 0); return n ? g.reduce((a, d) => a + d.avg_conf * d.lines, 0) / n : 0; }
 const groupText = g => g.length === 1 ? pageText(g[0].result) : g.map((d, i) => `----- page ${i + 1} -----\n\n` + pageText(d.result)).join("\n\n");
 async function deleteGroup(g) { for (const d of g) await store.del(d.page_id); }
-async function rerunGroup(g) { for (const d of g) await rerun(d, g.length > 1 ? `page ${pageNo(d)} of ${g.length}` : "", true); toast("done"); route(); }
-const outputSel = (id, cur) => `<select id="${id}">${[["docx", "Word (.docx)"], ["txt", "Plain text"], ["json", "JSON"]].map(([k, t]) => `<option value="${k}" ${cur === k ? "selected" : ""}>${t}</option>`).join("")}</select>`;
+async function rerunGroup(g) { for (const d of g) await rerun(d, g.length > 1 ? `page ${pageNo(d)} of ${g.length}` : "", true); toast("Done"); route(); }
 const TIER_LABEL = {high: "Best quality", mid: "Balanced", low: "Light"};
+const TIER_SUB = {high: "GPU or fast computer", mid: "Most computers", low: "Phones · smallest models"};
+const TIER_TECH = {high: "fp32 recogniser v2.4, detector at 2200 px", mid: "int8 recogniser, detector at 1800 px", low: "int8 recogniser and layout model, detector at 1300 px"};
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /* ---------------------------------------------------------------- documents table (shared) */
-function docsTable(docs) {
+function docsTable(docs, searching) {
   const gs = groups(docs);
-  if (!gs.length) return `<div class="empty">No documents yet. Scan a page to start.</div>`;
-  return `<table class="tbl"><thead><tr><th>Document</th><th>Status</th><th>Confidence</th><th>Scanned</th><th></th></tr></thead><tbody>
-  ${gs.map(g => { const d = g[0], [st, cls] = groupStatus(g), pc = Math.round(groupConf(g) * 1000) / 10, lines = g.reduce((a, x) => a + x.lines, 0), size = g.reduce((a, x) => a + (x.size || 0), 0), pdfText = g.filter(x => x.result && x.result.source === "pdf-text").length; return `<tr class="click" data-id="${d.page_id}" data-g="${esc(groupKey(d))}">
-   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt=""></div><div><b>${esc(groupName(d))}</b><span>${g.length > 1 ? `${g.length} pages · ` : ""}${lines} lines · ${g.length > 1 ? "" : d.width + "×" + d.height}${size ? (g.length > 1 ? "" : " · ") + fmtSize(size) : ""}${pdfText ? ` · ${g.length > 1 && pdfText < g.length ? `${pdfText} page${pdfText === 1 ? "" : "s"} ` : ""}PDF text` : ""}</span></div></div></td>
+  if (!gs.length) return searching ? `<div class="empty"><div class="ico">${icon("search", "l")}</div><b>No matches</b><span>Try another word.</span></div>`
+    : `<div class="empty"><div class="ico">${icon("folder", "l")}</div><b>No documents yet</b><span>Your scans will appear here.</span><a class="btn p" href="#/scan">${icon("scan")}Scan a page</a></div>`;
+  return `<table class="tbl"><thead><tr><th>Name</th><th>Status</th><th class="c-conf">Confidence</th><th class="c-date">Date</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
+  ${gs.map(g => { const d = g[0], [st, cls] = groupStatus(g), pc = Math.round(groupConf(g) * 1000) / 10, lines = g.reduce((a, x) => a + x.lines, 0), pdfText = g.filter(x => x.result && x.result.source === "pdf-text").length; return `<tr class="click" data-id="${d.page_id}" data-g="${esc(groupKey(d))}" tabindex="0">
+   <td><div class="doc"><div class="ic"><img src="${d.image_url}" alt="" loading="lazy"></div><div class="grow"><b>${esc(groupName(d))}</b><span>${[g.length > 1 ? plural(g.length, "page") : "", plural(lines, "line"), pdfText ? "PDF text" : ""].filter(Boolean).join(" · ")}</span></div></div></td>
    <td><span class="badge ${cls}"><span class="dot"></span>${st}</span></td>
-   <td><span class="acc"><span class="bar"><i class="${pc >= 95 ? "ok" : "warn"}" style="width:${pc}%"></i></span><span class="mono">${pc.toFixed(1)}%</span></span></td>
-   <td class="mut">${when(d.created)}</td>
-   <td style="width:48px"><div class="rel"><button class="btn ghost sm more" data-id="${d.page_id}" title="More">${icon("more")}</button></div></td></tr>`; }).join("")}</tbody></table>`;
+   <td class="c-conf"><span class="acc"><span class="bar"><i class="${pc >= 95 ? "ok" : "warn"}" style="width:${pc}%"></i></span><span class="num">${pc.toFixed(1)}%</span></span></td>
+   <td class="c-date mut">${when(d.created)}</td>
+   <td style="width:52px"><div class="rel"><button class="btn ghost sm icon more" data-id="${d.page_id}" title="More" aria-label="More actions" aria-haspopup="menu">${icon("more")}</button></div></td></tr>`; }).join("")}</tbody></table>`;
 }
 function wireDocsTable() {
-  view.querySelectorAll("tr.click").forEach(tr => tr.onclick = e => { if (e.target.closest(".more") || e.target.closest(".menu")) return; location.hash = "#/review/" + tr.dataset.id; });
-  view.querySelectorAll(".more").forEach(btn => btn.onclick = e => { e.stopPropagation(); closeMenus(); const m = document.createElement("div"); m.className = "menu";
-    m.innerHTML = `<button data-a="open">${icon("external")}Open</button><button data-a="docx">${icon("file")}Download Word</button><button data-a="txt">${icon("list")}Download text</button><hr><button data-a="rerun">${icon("refresh")}Run OCR again</button><button data-a="del" class="danger">${icon("trash")}Delete</button>`;
-    btn.parentElement.appendChild(m); m.onclick = async ev => { const a = ev.target.closest("button")?.dataset.a, d = store.get(btn.dataset.id); closeMenus(); if (!d) return; const g = groupDocs(groupKey(d));
+  view.querySelectorAll("tr.click").forEach(tr => { tr.onclick = e => { if (e.target.closest(".more") || e.target.closest(".menu")) return; location.hash = "#/review/" + tr.dataset.id; };
+    tr.onkeydown = e => { if ((e.key === "Enter" || e.key === " ") && e.target === tr) { e.preventDefault(); location.hash = "#/review/" + tr.dataset.id; } }; });
+  view.querySelectorAll(".more").forEach(btn => btn.onclick = e => { e.stopPropagation(); closeMenus(); const m = document.createElement("div"); m.className = "menu"; m.setAttribute("role", "menu");
+    m.innerHTML = `<button data-a="open" role="menuitem">${icon("external")}Open</button><button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><hr><button data-a="rerun" role="menuitem">${icon("refresh")}Run OCR again</button><button data-a="del" class="danger" role="menuitem">${icon("trash")}Delete</button>`;
+    btn.parentElement.appendChild(m); openMenu(m); m.onclick = async ev => { const a = ev.target.closest("button")?.dataset.a, d = store.get(btn.dataset.id); closeMenus(); if (!d) return; const g = groupDocs(groupKey(d));
       if (a === "open") location.hash = "#/review/" + d.page_id; if (a === "rerun") await rerunGroup(g); if (a === "docx") exportDocx(g); if (a === "txt") download(groupTitle(g) + ".txt", groupText(g), "text/plain;charset=utf-8");
-      if (a === "del") { if (g.length > 1 && !confirm(`Delete this document and its ${g.length} pages?`)) return; await deleteGroup(g); route(); toast("deleted"); } }; });
+      if (a === "del") { if (!confirm(g.length > 1 ? `Delete this document and its ${g.length} pages?` : "Delete this document?")) return; await deleteGroup(g); route(); toast("Deleted"); } }; });
 }
 function closeMenus() { document.querySelectorAll(".menu").forEach(m => m.remove()); }
+/** keyboard for a popup menu: focus the first item, arrows move, Esc closes and returns focus to the opener */
+function openMenu(m) { const opener = document.activeElement, items = [...m.querySelectorAll("button")]; if (items[0] && opener && opener.matches && opener.matches(":focus-visible")) items[0].focus();
+  m.onkeydown = e => { const i = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeMenus(); if (opener && opener.focus) opener.focus(); } }; }
 document.addEventListener("click", e => { if (!e.target.closest(".menu") && !e.target.closest(".more") && !e.target.closest("#r_export")) closeMenus(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && document.querySelector(".menu")) closeMenus(); });
 
 /* ---------------------------------------------------------------- scan (home) */
 function pickFiles(cb, camera) { const inp = $("#fileinput"); if (camera) inp.setAttribute("capture", "environment"); else inp.removeAttribute("capture"); inp.value = ""; inp.onchange = () => cb([...inp.files]); inp.click(); }
@@ -249,41 +283,44 @@ async function addFiles(files) {
 }
 async function addAndShow(files) { await addFiles(files); const was = location.hash; location.hash = "#/scan"; if (was === "#/scan") route(); }
 function devicePanel() {
-  if (!DEVICE || !RECO) return `<div class="card pad small mut">Checking what this device can do…</div>`;
+  if (!DEVICE || !RECO) return `<div class="chips"><span class="chip"><span class="spin"></span>Checking device…</span></div>`;
   const b = T.benchmarkStored(), est = b ? T.estimate(b, 40) : null, tier = store.settings.tier || RECO.tier;
-  const perf = est ? `about ${est} s per page` : T.loaded() ? "measuring…" : "measured after the models load";
-  return `<div class="devpanel">
-    <div><div class="k">Your device</div><div class="v">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB" : ""}${DEVICE.mobile ? " · phone" : ""}</div><div class="s">${DEVICE.webgpu ? "WebGPU available" : "CPU only (WebAssembly)"}${DEVICE.threadsOK ? "" : " · single thread"}</div></div>
-    <div><div class="k">Model set</div><div class="v">${TIER_LABEL[tier]}${tier !== RECO.tier ? " (manual)" : " (recommended)"}</div><div class="s" id="dl_line">${T.loaded() ? "models ready on this device" : "checking download size…"}</div></div>
-    <div><div class="k">Speed</div><div class="v">${perf}</div><div class="s">for a typical 40-line page · updates after each scan</div></div></div>`;
+  return `<div class="chips">
+    <span class="chip" title="${esc(RECO.reasons.join(" · "))}">${icon("cpu", "s")}${DEVICE.webgpu ? "GPU" : "CPU"} · ${DEVICE.threads} threads${DEVICE.memoryGB ? ` · ${DEVICE.memoryGB} GB` : ""}</span>
+    <a class="chip" href="#/settings" title="Model set${tier === RECO.tier ? " (recommended)" : ""} · change in Settings">${icon("layers", "s")}${TIER_LABEL[tier]}</a>
+    ${est ? `<span class="chip" title="Typical 40-line page on this device">${icon("clock", "s")}~${est} s / page</span>` : ""}
+    <span class="chip ${T.loaded() ? "ok" : ""}">${icon(T.loaded() ? "check-circle" : "download", "s")}<span id="dl_line">${T.loaded() ? "Models ready" : "Models"}</span></span></div>`;
 }
-async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await T.downloadPlan(chosenModels()); const dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} to download once${DEVICE.downlinkMbps ? ` (about ${Math.max(1, Math.round(dl * 8 / (DEVICE.downlinkMbps * 1e6)))} s on your connection)` : ""}` : "already on this device"; } catch { el.textContent = ""; } }
+async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await T.downloadPlan(chosenModels()), dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} one-time download` : "Models on device";
+    if (dl > 0 && DEVICE.downlinkMbps) el.parentElement.title = `About ${Math.max(1, Math.round(dl * 8 / (DEVICE.downlinkMbps * 1e6)))} s on your connection`; } catch { el.parentElement.remove(); } }
+/** a drop zone opens the file picker when clicked anywhere except its own buttons */
+const clickToBrowse = (zone, btn) => { if (zone && btn) zone.onclick = e => { if (!e.target.closest("button,a,input")) btn.click(); }; };
 function renderScan() {
   const n = pending.length, lowres = pending.filter(p => p.w && p.w < 1000), recent = store.docs.slice(0, 5), b = T.benchmarkStored();
   const nPages = pending.reduce((a, p) => a + (p.pdf ? Math.max(1, p.pdf.pages) : 1), 0), hasPdf = pending.some(p => p.pdf);
   const est = b ? Math.max(2, Math.round(nPages * T.estimate(b, 40))) : null;
+  const meta = p => [p.pdf ? (p.pdf.pages ? `PDF · ${plural(p.pdf.pages, "page")}` : "PDF") : (p.w ? `${p.w} × ${p.h}` : ""), fmtSize(p.file.size)].filter(Boolean).join(" · ");
   view.innerHTML = `
-  <div class="head"><div class="grow"><h1>Scan a document</h1><p>Drop a photo, a scan or a PDF. ThaOCR reads Khmer and English on this device and gives you editable text and a Word file. PDF pages that already contain text are taken as they are, without OCR.</p></div></div>
+  <div class="head"><div class="grow"><h1>Scan</h1><p>Photo, scan or PDF → editable Khmer &amp; English text.</p></div></div>
   ${devicePanel()}
-  <div class="drop ${n ? "compact" : ""}" id="drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>${n ? "Add more files" : "Drop images or PDFs here"}</b><div class="small">JPG, PNG, WebP, TIFF, PDF · or paste with Ctrl+V · processed on this device only</div></div>
+  <div class="drop ${n ? "compact" : ""}" id="drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>${n ? "Add more" : "Drop files here"}</b><div class="small">Images or PDF · or paste with Ctrl+V</div></div>
     <div class="acts"><button class="btn ${n ? "" : "p"}" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>
   ${n ? `<div class="card">
-    <div class="rowhead"><h2>${n} file${n === 1 ? "" : "s"} ready</h2><div class="grow"></div><button class="btn ghost sm" id="s_clear">Clear</button></div>
-    <div class="flist">${pending.map((p, i) => `<div class="frow">${p.url ? `<img src="${p.url}" alt="">` : `<div class="fico">${icon("file")}</div>`}<div class="grow"><b title="${esc(p.file.name)}">${esc(p.file.name)}</b><span class="small mut">${fmtSize(p.file.size)}${p.pdf ? (p.pdf.pages ? ` · PDF · ${p.pdf.pages} page${p.pdf.pages === 1 ? "" : "s"}` : " · PDF") : (p.w ? " · " + p.w + "×" + p.h : "")}</span></div>
-      ${p.pdf && p.pdf.error ? `<span class="badge bad"><span class="dot"></span>${esc(p.pdf.error)}</span>` : ""}${p.w && p.w < 1000 ? '<span class="badge warn"><span class="dot"></span>Low resolution</span>' : ""}<button class="x" data-i="${i}" title="Remove">${icon("x", "s")}</button></div>`).join("")}</div>
-    ${lowres.length ? `<div class="note" style="margin:0 18px 14px">${icon("alert")}<div>${esc(lowres[0].file.name)} is only ${lowres[0].w} px wide${lowres.length > 1 ? ` (and ${lowres.length - 1} more)` : ""}. Small Khmer vowel signs may be missed. A closer photo or a 300 DPI scan reads better.</div></div>` : ""}
-    <div class="startbar"><div class="opts"><label>Output ${outputSel("s_out", store.settings.output)}</label></div><div class="grow"></div>
-      <span class="small mut">${hasPdf ? `${nPages} page${nPages === 1 ? "" : "s"} · ` : ""}${est ? `${hasPdf ? "up to " : "about "}${est} s on this device${hasPdf ? ", less for PDF pages with text" : ""}` : "time is measured on the first run"}</span><button class="btn p lg" id="s_start">Start OCR ${icon("arrow-right")}</button></div></div>` : ""}
-  <div class="privacy">${icon("info")}<div><b>Your files stay here.</b> There is no server and no account: documents are kept only in this browser's storage on this device, and are lost if you clear site data or switch devices. Export what you want to keep.</div></div>
-  ${recent.length ? `<div class="sec"><div class="rowhead" style="padding-left:0;padding-right:0"><h2>Recent</h2><div class="grow"></div><a href="#/documents">All documents ${icon("chevron-right", "s")}</a></div><div class="card">${docsTable(recent)}</div></div>` : ""}`;
+    <div class="rowhead"><h2>${plural(n, "file")}</h2><div class="grow"></div><button class="btn ghost sm" id="s_clear">Clear</button></div>
+    <div class="flist">${pending.map((p, i) => `<div class="frow">${p.url ? `<img src="${p.url}" alt="">` : `<div class="fico">${icon("file")}</div>`}<div class="grow"><b title="${esc(p.file.name)}">${esc(p.file.name)}</b><span class="small mut">${meta(p)}</span></div>
+      ${p.pdf && p.pdf.error ? `<span class="badge bad"><span class="dot"></span>${esc(p.pdf.error)}</span>` : ""}${p.w && p.w < 1000 ? '<span class="badge warn" title="Small Khmer marks may be missed"><span class="dot"></span>Low res</span>' : ""}<button class="x" data-i="${i}" title="Remove" aria-label="Remove ${esc(p.file.name)}">${icon("x", "s")}</button></div>`).join("")}</div>
+    ${lowres.length ? `<div class="note" style="margin:0 18px 14px">${icon("alert")}<div>Low resolution${lowres.length > 1 ? ` (${plural(lowres.length, "file")})` : ""}: small Khmer marks may be missed. Use 1500 px+ or a 300 DPI scan.</div></div>` : ""}
+    <div class="startbar"><span class="small mut">${hasPdf ? plural(nPages, "page") : ""}${hasPdf && est ? " · " : ""}${est ? `${icon("clock", "s")}${hasPdf ? "up to" : "about"} ${est} s` : ""}</span><div class="grow"></div><button class="btn p lg" id="s_start">Start OCR ${icon("arrow-right")}</button></div></div>` : ""}
+  ${recent.length ? `<div class="sec"><div class="sechead"><h2>Recent</h2><div class="grow"></div><a class="btn ghost sm" href="#/documents">View all ${icon("chevron-right", "s")}</a></div><div class="card">${docsTable(recent)}</div></div>` : ""}
+  <p class="fine">${icon("shield", "s")}Files never leave this device. They are saved in this browser only, so export what you need.</p>`;
   fillDownloadLine();
   wireDrop($("#drop"), async f => { await addFiles(f); renderScan(); });
   $("#s_browse").onclick = () => pickFiles(async f => { await addFiles(f); renderScan(); });
   $("#s_cam").onclick = () => pickFiles(async f => { await addFiles(f); renderScan(); }, true);
+  clickToBrowse($("#drop"), $("#s_browse"));
   if (n) {
     $("#s_clear").onclick = () => { pending = []; renderScan(); };
     view.querySelectorAll(".frow .x").forEach(b => b.onclick = () => { pending.splice(+b.dataset.i, 1); renderScan(); });
-    $("#s_out").onchange = e => { store.settings.output = e.target.value; store.save(); };
     $("#s_start").onclick = startJob;
   }
   wireDocsTable();
@@ -333,27 +370,28 @@ function startJob() {
 }
 function renderIfProcess() { if (location.hash === "#/process") renderProcess(); }
 function renderProcess() {
-  if (!JOB) { view.innerHTML = `<div class="head"><div class="grow"><h1>Processing</h1></div></div><div class="card empty">Nothing is running. <a href="#/scan">Scan a document</a>.</div>`; return; }
+  if (!JOB) { view.innerHTML = `<div class="head"><div class="grow"><h1>Processing</h1></div></div><div class="card empty"><div class="ico">${icon("scan", "l")}</div><b>Nothing running</b><a class="btn p" href="#/scan">${icon("scan")}Scan a page</a></div>`; return; }
   const cur = JOB.files[Math.min(JOB.current ?? 0, JOB.files.length - 1)], last = JOB.results[JOB.results.length - 1], running = JOB.status === "running";
   const stepIdx = {pdf: 0, decode: 0, layout: 1, textdet: 2, rec: 3, font: 4, structure: 4, done: 5}; const si = JOB.step ? stepIdx[JOB.step.stage] : -1;
   const recFrac = JOB.step && JOB.step.stage === "rec" && JOB.step.total ? JOB.step.done / JOB.step.total : 0;
   const fileFrac = cur.status === "running" ? Math.min(0.95, (si < 0 ? 0 : si === 3 ? 0.35 + 0.5 * recFrac : si >= 4 ? 0.9 : si * 0.12)) : 0;
   const pct = JOB.load ? Math.round(JOB.load.frac * 100) : Math.round((JOB.done + (running ? fileFrac : 0)) / JOB.total * 100);
   const t = last ? last.timings : null, blocks = last ? last.blocks : [], n = cls => blocks.filter(b => b.cls === cls).length;
+  const count = (k, w) => n(k) ? plural(n(k), w) : "";
   const stepsHtml = [
-    ["Read the file", last ? `${last.width}×${last.height} px` : "", si > 0 || !!last, null],
-    ["Find regions", t ? `${blocks.length} regions · ${n("table")} table${n("table") === 1 ? "" : "s"} · ${n("stamp")} stamp${n("stamp") === 1 ? "" : "s"}` : "paragraphs, tables, stamps, logos", si > 1 || !!t, t && t.layout_ms],
-    ["Find text lines", t ? `${t.lines_detected} lines` : "", si > 2 || !!t, t && t.textdet_ms],
-    ["Read the text", t ? `Khmer + English · ${t.lines_recognized} lines` : (JOB.step && JOB.step.stage === "rec" && JOB.step.total ? `${JOB.step.done} of ${JOB.step.total} lines` : "Khmer + English"), si > 3 || !!t, t && t.rec_ms],
-    ["Fonts, paragraphs, order", t ? `${t.structure === "model" ? "learned structure" : "rules"} · fonts per line` : "", si > 4 || !!t, t && ((t.font_ms || 0) + (t.structure_ms || 0))],
-    ["Build the document", t ? "ready to review and export" : "", !!t, null]];
+    ["Open file", last ? `${last.width} × ${last.height} px` : "", si > 0 || !!last, null],
+    ["Find regions", t ? [plural(blocks.length, "region"), count("table", "table"), count("stamp", "stamp")].filter(Boolean).join(" · ") : "", si > 1 || !!t, t && t.layout_ms],
+    ["Find lines", t ? plural(t.lines_detected, "line") : "", si > 2 || !!t, t && t.textdet_ms],
+    ["Read text", t ? plural(t.lines_recognized, "line") : (JOB.step && JOB.step.stage === "rec" && JOB.step.total ? `${JOB.step.done} / ${JOB.step.total} lines` : ""), si > 3 || !!t, t && t.rec_ms],
+    ["Fonts & order", t ? (t.structure === "model" ? "Learned structure" : "Layout rules") : "", si > 4 || !!t, t && ((t.font_ms || 0) + (t.structure_ms || 0))],
+    ["Build document", t ? "Ready" : "", !!t, null]];
   const failed = JOB.files.filter(f => f.status === "failed");
-  const b = T.benchmarkStored(), remaining = running ? (JOB.load ? "" : `about ${Math.max(1, Math.round((JOB.total - JOB.done - fileFrac) * (b ? T.estimate(b, 40) : 8)))} s left`) : `took ${fmtMs(Date.now() - JOB.started)}`;
-  const headHtml = `<div class="grow"><h1>${JOB.load ? "Getting ready…" : running ? "Reading your document…" : "Done"}</h1><p>${esc(JOB.name)}${JOB.total > 1 ? ` · file ${Math.min(JOB.done + 1, JOB.total)} of ${JOB.total}` : ""} · on this device</p></div>
-    ${running ? `<a class="btn" href="#/scan">Keep working, I'll wait</a>` : `<a class="btn p lg" href="#/review/${esc((JOB.files.find(x => x.page_id) || {}).page_id || "")}">Review results ${icon("arrow-right")}</a>`}`;
-  const badgeCls = `badge ${running ? "ink" : "ok"}`, badgeTxt = JOB.load ? "Loading models" : running ? "Working" : "Finished";
+  const b = T.benchmarkStored(), remaining = running ? (JOB.load ? "" : `~${Math.max(1, Math.round((JOB.total - JOB.done - fileFrac) * (b ? T.estimate(b, 40) : 8)))} s left`) : `Took ${fmtMs(Date.now() - JOB.started)}`;
+  const headHtml = `<div class="grow"><h1>${JOB.load ? "Getting ready…" : running ? "Reading…" : "Done"}</h1><p>${esc(JOB.name)}${JOB.total > 1 ? ` · ${Math.min(JOB.done + 1, JOB.total)} / ${JOB.total}` : ""}</p></div>
+    ${running ? `<a class="btn" href="#/scan" title="OCR keeps running while you browse">Run in background</a>` : `<a class="btn p lg" href="#/review/${esc((JOB.files.find(x => x.page_id) || {}).page_id || "")}">Review ${icon("arrow-right")}</a>`}`;
+  const badgeCls = `badge ${running ? "ink" : "ok"}`, badgeTxt = JOB.load ? "Loading" : running ? "Working" : "Done";
   const msg = JOB.load ? JOB.load.msg : remaining;
-  const note = JOB.load ? `First visit: the OCR models are downloaded once and kept in this browser. Later scans start immediately.` : "";
+  const note = JOB.load ? `One-time download. Next scans start instantly.` : "";
   const steps = stepsHtml.map(([tt, s, done, ms], i) => ({cls: `step ${done ? "done" : running && !JOB.load && i === Math.max(0, si) ? "run" : ""}`, done, tt, s, ms}));
   const stepHtml = (st, i) => `<div class="${st.cls}" data-i="${i}"><span class="n">${st.done ? icon("check", "s") : i + 1}</span><div class="grow"><b>${st.tt}</b><span class="sub">${esc(st.s || "")}</span></div><span class="ms mono">${st.ms != null ? fmtMs(st.ms) : ""}</span></div>`;
   const filesHtml = JOB.total > 1 ? `<div class="card pad">${JOB.files.map(f => `<div class="kv"><span style="color:var(--ink)">${esc(f.name)}</span><span class="badge ${f.status === "done" ? "ok" : f.status === "failed" ? "bad" : f.status === "running" ? "ink" : ""}">${f.status === "done" ? "Done" : f.status === "failed" ? "Failed" : f.status === "running" ? "Working" : "Waiting"}</span></div>`).join("")}</div>` : "";
@@ -368,7 +406,7 @@ function renderProcess() {
     view.innerHTML = `
   <div class="head" id="p_head">${headHtml}</div>
   <div class="grid g-main">
-   <div class="card"><div class="panehead"><span style="color:var(--ink)" id="p_name">${esc(cur.name)}</span><div class="grow"></div><span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
+   <div class="card"><div class="panehead"><span class="ph-t" id="p_name">${esc(cur.name)}</span><div class="grow"></div><span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
     <div class="stage"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" style="display:block;max-width:100%;max-height:70vh"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
    <div style="display:flex;flex-direction:column;gap:16px">
     <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" style="width:${pct}%;transition:none"></i></div>
@@ -422,18 +460,18 @@ function progressLoop() {
 
 /* ---------------------------------------------------------------- review & export */
 let REVIEW = {mode: "side", zoom: 1, boxes: true, labels: false, cur: null, pane: "document", side: localStorage.getItem("thaocr.reviewSide") !== "0"};
-async function rerun(d, label, silent) { toast("running OCR" + (label ? " · " + label : "") + "…"); try { await ensureModels(); const blob = await T.db.imageBlob(d.page_id); if (!blob) throw new Error("page image missing"); const res = await T.process(blob); res.page_id = d.page_id; const nd = summarize(res, d.filename, d.job, d.size); nd.created = d.created; for (const k of ["group", "group_name", "page_no", "page_count"]) if (d[k] != null) nd[k] = d[k]; await store.put(nd, res.image_blob); if (!silent) { toast("done"); route(); } } catch (e) { toast("failed: " + e.message); } }
+async function rerun(d, label, silent) { toast("Running OCR" + (label ? " · " + label : "") + "…"); try { await ensureModels(); const blob = await T.db.imageBlob(d.page_id); if (!blob) throw new Error("page image missing"); const res = await T.process(blob); res.page_id = d.page_id; const nd = summarize(res, d.filename, d.job, d.size); nd.created = d.created; for (const k of ["group", "group_name", "page_no", "page_count"]) if (d[k] != null) nd[k] = d[k]; await store.put(nd, res.image_blob); if (!silent) { toast("Done"); route(); } } catch (e) { toast("Failed: " + e.message); } }
 /* ---------------------------------------------------------------- full-size viewer */
 function openLightbox(d, img, onClose) {
   if ($("#lightbox")) return;
-  const page = d.result, el = document.createElement("div"); el.className = "lb"; el.id = "lightbox";
-  el.innerHTML = `<div class="lb-bar"><b>${esc(docTitle(d))}</b><span class="mut">${page.width} × ${page.height} px</span><div class="grow"></div>
-      <button class="tool" data-a="out" title="Zoom out (−)">${icon("zoom-out", "s")}</button><button class="tool pct mono" data-a="toggle" title="Switch fit / 100%"></button><button class="tool" data-a="in" title="Zoom in (+)">${icon("zoom-in", "s")}</button>
-      <button class="tool" data-a="fit" title="Fit to screen (0)">${icon("fit", "s")}</button>
-      <span class="opts"><label class="small"><input type="checkbox" data-a="boxes" ${REVIEW.boxes ? "checked" : ""}> boxes</label><label class="small"><input type="checkbox" data-a="labels" ${REVIEW.labels ? "checked" : ""}> labels</label></span>
-      <button class="tool" data-a="tab" title="Open image in a new tab">${icon("external", "s")}</button><button class="tool" data-a="dl" title="Download image">${icon("download", "s")}</button><button class="tool" data-a="close" title="Close (Esc)">${icon("x", "s")}</button></div>
-    <div class="lb-body"><canvas></canvas></div><div class="lb-hint">Scroll to pan · Ctrl + wheel or double-click to zoom · Esc to close</div>`;
-  document.body.appendChild(el); document.body.style.overflow = "hidden";
+  const page = d.result, el = document.createElement("div"); el.className = "lb"; el.id = "lightbox"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Full-size page");
+  el.innerHTML = `<div class="lb-bar" role="toolbar" aria-label="Full-size view"><b>${esc(docTitle(d))}</b><span class="mut">${page.width} × ${page.height} px</span><div class="grow"></div>
+      <button class="tool" data-a="out" title="Zoom out (−)" aria-label="Zoom out (−)">${icon("zoom-out", "s")}</button><button class="tool pct mono" data-a="toggle" title="Switch fit / 100%" aria-label="Switch fit / 100%"></button><button class="tool" data-a="in" title="Zoom in (+)" aria-label="Zoom in (+)">${icon("zoom-in", "s")}</button>
+      <button class="tool" data-a="fit" title="Fit to screen (0)" aria-label="Fit to screen (0)">${icon("fit", "s")}</button>
+      <span class="opts"><label class="small"><input type="checkbox" data-a="boxes" ${REVIEW.boxes ? "checked" : ""}> Boxes</label><label class="small"><input type="checkbox" data-a="labels" ${REVIEW.labels ? "checked" : ""}> Labels</label></span>
+      <button class="tool" data-a="tab" title="Open image in a new tab" aria-label="Open image in a new tab">${icon("external", "s")}</button><button class="tool" data-a="dl" title="Download image" aria-label="Download image">${icon("download", "s")}</button><button class="tool" data-a="close" title="Close (Esc)" aria-label="Close (Esc)">${icon("x", "s")}</button></div>
+    <div class="lb-body"><canvas></canvas></div><div class="lb-hint">Ctrl + scroll or double-click to zoom · Esc to close</div>`;
+  const opener = document.activeElement; document.body.appendChild(el); document.body.style.overflow = "hidden"; $('[data-a="close"]', el).focus();
   const body = $(".lb-body", el), cv = $("canvas", el), pct = $(".pct", el); let zoom = 0, fitZ = 1; // 0 = fit
   const fitScale = () => Math.min((body.clientWidth - 48) / page.width, (body.clientHeight - 48) / page.height, 1);
   const cur = () => zoom || fitZ;
@@ -448,7 +486,7 @@ function openLightbox(d, img, onClose) {
     body.scrollLeft = at ? px * w - (at.x - r.left) : (w - body.clientWidth) / 2; body.scrollTop = at ? py * h - (at.y - r.top) : (h - body.clientHeight) / 2; };
   const steps = [.25, .5, .75, 1, 1.5, 2, 3, 4];
   const step = (dir, at) => { const z = cur(), next = dir > 0 ? steps.find(x => x > z + .01) : [...steps].reverse().find(x => x < z - .01); if (next) setZoom(next, at); };
-  const close = () => { document.removeEventListener("keydown", onKey); window.removeEventListener("resize", onResize); el.remove(); document.body.style.overflow = ""; if (onClose) onClose(); };
+  const close = () => { document.removeEventListener("keydown", onKey); window.removeEventListener("resize", onResize); el.remove(); document.body.style.overflow = ""; if (opener && opener.isConnected && opener.focus) opener.focus(); if (onClose) onClose(); };
   const onKey = e => { if (e.key === "Escape") close(); else if (e.key === "+" || e.key === "=") step(1); else if (e.key === "-") step(-1); else if (e.key === "0") setZoom(0); else if (e.key === "1") setZoom(1); else return; e.preventDefault(); };
   const onResize = () => layout();
   document.addEventListener("keydown", onKey); window.addEventListener("resize", onResize);
@@ -480,49 +518,51 @@ function renderReview(id) {
   const fonts = [...new Set(pages.flatMap(s => s.result.blocks.map(b => b.font && b.font.family)).filter(Boolean))].slice(0, 3), pdfTextPages = pages.filter(s => s.result.source === "pdf-text").length, conf = groupConf(pages);
   const pageLabel = (s, i, ocr) => multi ? `<div class="pglabel">Page ${i + 1}${s.result.source === "pdf-text" ? " · PDF text" : ""}${ocr ? ` · <button class="linkbtn" data-ocr="${s.page_id}" title="Read this page again with OCR">${s.result.source === "pdf-text" ? "OCR this page" : "OCR again"}</button>` : ""}</div>` : "";
   const textOut = s => [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : b.lines.filter(l => l.text).map(l => "\t".repeat(l.indent_level || 0) + (l.bullet ? esc(l.bullet) + " " : "") + ((l.spans && l.spans.length) ? l.spans.map(sp => sp.bold ? `<b>${esc(sp.text)}</b>` : esc(sp.text)).join(" ") : (l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)))).join("\n")}</div>`).join("");
-  const source = pdfTextPages === pages.length ? "PDF text layer · no OCR needed" : pdfTextPages ? `${pdfTextPages} of ${pages.length} pages from the PDF text, the rest by OCR` : (d.result.pdf_text && d.result.pdf_text.reason ? `OCR · PDF text not used (${esc(d.result.pdf_text.reason)})` : "");
+  const source = pdfTextPages === pages.length ? "PDF text · no OCR" : pdfTextPages ? `PDF text on ${pdfTextPages} / ${pages.length} pages` : (d.result.pdf_text && d.result.pdf_text.reason ? `OCR (PDF text: ${esc(d.result.pdf_text.reason)})` : "");
   const doubtful = pages.filter(s => s.result.source === "pdf-text" && s.result.pdf_text && s.result.pdf_text.broken > 0.01);
+  const ocrLabel = pdfTextPages ? "Run OCR instead" : "Run OCR again", ocrTip = pdfTextPages ? "Ignore the PDF text and read the page images with OCR" : "Read the document again";
+  const modes = [["side", "Split", "split"], ["text", "Text", "type"], ["original", "Original", "image"]];
   view.innerHTML = `
-  <div class="head" style="align-items:center"><div class="grow"><h1 style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">${esc(groupTitle(pages))} <span class="badge ${cls}"><span class="dot"></span>${st}</span></h1>
-    <p>${multi ? pages.length + " pages · " : ""}${(conf * 100).toFixed(1)}% confidence · ${lows.length ? `<span style="color:var(--warn)">${lows.length} line${lows.length === 1 ? "" : "s"} to check</span>` : "nothing to check"} · <a href="#/documents">all documents</a></p></div>
-    <div class="tools"><div class="seg" id="r_mode">${[["side", "Side by side"], ["text", "Text"], ["original", "Original"]].map(([k, t]) => `<button class="${REVIEW.mode === k ? "on" : ""}" data-m="${k}">${t}</button>`).join("")}</div>
-    ${REVIEW.side ? "" : `<button class="btn" id="r_side_open" title="Show the check panel">${icon("panel-right")}Check lines${lows.length ? ` <span class="badge warn">${lows.length}</span>` : ""}</button>`}
-    <button class="btn" id="r_ocr" title="${pdfTextPages ? "Ignore the PDF text and read the page images with OCR" : "Process the whole document again"}">${icon("refresh")}${pdfTextPages ? "Run OCR instead" : "Run OCR again"}</button>
-    <button class="btn" id="r_copy">${icon("copy")}Copy text</button>
-    <div class="rel"><button class="btn p" id="r_export">${icon("download")}Export ${icon("chevron-down", "s")}</button></div></div></div>
+  <div class="head"><div class="grow"><a class="back" href="#/documents">${icon("arrow-left", "s")}Documents</a><h1 class="title-row">${esc(groupTitle(pages))} <span class="badge ${cls}"><span class="dot"></span>${st}</span></h1>
+    <p>${[multi ? plural(pages.length, "page") : "", `${(conf * 100).toFixed(1)}% confidence`, lows.length ? `<span class="warn-t">${lows.length} to check</span>` : ""].filter(Boolean).join(" · ")}</p></div>
+    <div class="tools"><div class="seg" id="r_mode" role="group" aria-label="View">${modes.map(([k, t, ic]) => `<button class="${REVIEW.mode === k ? "on" : ""}" data-m="${k}" aria-pressed="${REVIEW.mode === k}">${icon(ic, "s")}${t}</button>`).join("")}</div>
+    ${REVIEW.side ? "" : `<button class="btn tip" id="r_side_open" data-tip="Lines to check" aria-label="Show lines to check">${icon("panel-right")}${lows.length ? `<span class="badge warn">${lows.length}</span>` : ""}</button>`}
+    <button class="btn icon tip" id="r_ocr" data-tip="${ocrLabel}" aria-label="${ocrLabel}">${icon("refresh")}</button>
+    <button class="btn" id="r_copy">${icon("copy")}Copy</button>
+    <div class="rel"><button class="btn p" id="r_export" aria-haspopup="menu">${icon("download")}Export ${icon("chevron-down", "s")}</button></div></div></div>
   <div class="card review ${REVIEW.mode === "side" ? "" : REVIEW.mode} ${multi ? "" : "one"} ${REVIEW.side ? "" : "noside"}">
-   ${multi ? `<div class="thumbs">${pages.map((s, i) => `<div class="th ${s.page_id === id ? "cur" : ""}" data-id="${s.page_id}" title="Page ${i + 1}"><img src="${s.image_url}" alt="">${i + 1}</div>`).join("")}</div>` : ""}
-   ${REVIEW.mode !== "text" ? `<div><div class="panehead"><span>Original</span><div class="grow"></div><button class="tool" id="r_zoomout" title="Zoom out">${icon("zoom-out", "s")}</button><span class="mono">${Math.round(REVIEW.zoom * 100)}%</span><button class="tool" id="r_zoomin" title="Zoom in">${icon("zoom-in", "s")}</button><button class="tool" id="r_full" title="Open full size (F)">${icon("expand", "s")}</button><span class="opts"><label class="small"><input type="checkbox" id="r_boxes" ${REVIEW.boxes ? "checked" : ""}> boxes</label><label class="small"><input type="checkbox" id="r_labels" ${REVIEW.labels ? "checked" : ""}> labels</label></span></div>
-     <div class="panebody" id="r_orig">${pages.map((s, i) => `<div class="pagewrap" data-pid="${s.page_id}">${pageLabel(s, i, true)}<div class="view" data-pid="${s.page_id}" title="Click to open full size"><canvas data-pid="${s.page_id}"></canvas></div></div>`).join("")}</div></div>` : ""}
-   ${REVIEW.mode === "side" ? `<div><div class="panehead"><div class="seg" id="r_pane">${hasDoc ? `<button class="${REVIEW.pane === "document" ? "on" : ""}" data-p="document">Document</button>` : ""}<button class="${REVIEW.pane === "overlay" || !hasDoc ? "on" : ""}" data-p="overlay">Overlay</button></div><div class="grow"></div><span class="mut">Click text to edit · <span id="r_saved">Saved</span></span></div><div class="panebody" id="r_docwrap">${pages.map((s, i) => `<div class="pagewrap" data-pid="${s.page_id}">${pageLabel(s, i)}<div class="pgbody" data-pid="${s.page_id}"></div></div>`).join("")}</div></div>` : ""}
-   ${REVIEW.mode === "text" ? `<div><div class="panehead"><span>Text in reading order</span></div><div class="panebody white"><div class="textout" id="r_text">${pages.map((s, i) => (multi ? `<div class="lbl" style="margin:${i ? 28 : 0}px 0 10px;font:12px Inter,system-ui;color:var(--mut-2);letter-spacing:.06em;text-transform:uppercase">Page ${i + 1}</div>` : "") + textOut(s)).join("")}</div></div></div>` : ""}
-   ${REVIEW.side ? `<div><div class="panehead"><b style="color:var(--ink)">Check these lines</b><div class="grow"></div><span class="badge ${lows.length ? "warn" : "ok"}">${lows.length}</span><button class="tool" id="r_side_close" title="Close panel">${icon("x", "s")}</button></div>
+   ${multi ? `<div class="thumbs">${pages.map((s, i) => `<div class="th ${s.page_id === id ? "cur" : ""}" data-id="${s.page_id}" title="Page ${i + 1}" role="button" tabindex="0"><img src="${s.image_url}" alt="">${i + 1}</div>`).join("")}</div>` : ""}
+   ${REVIEW.mode !== "text" ? `<div><div class="panehead"><span class="ph-t">${icon("image", "s")}Original</span><div class="grow"></div><button class="tool" id="r_zoomout" title="Zoom out" aria-label="Zoom out">${icon("zoom-out", "s")}</button><span class="num small">${Math.round(REVIEW.zoom * 100)}%</span><button class="tool" id="r_zoomin" title="Zoom in" aria-label="Zoom in">${icon("zoom-in", "s")}</button><button class="tool" id="r_full" title="Full size (F)" aria-label="Full size">${icon("expand", "s")}</button><span class="opts"><label class="tg"><input type="checkbox" id="r_boxes" ${REVIEW.boxes ? "checked" : ""}>Boxes</label><label class="tg"><input type="checkbox" id="r_labels" ${REVIEW.labels ? "checked" : ""}>Labels</label></span></div>
+     <div class="panebody" id="r_orig">${pages.map((s, i) => `<div class="pagewrap" data-pid="${s.page_id}">${pageLabel(s, i, true)}<div class="view" data-pid="${s.page_id}" title="Open full size"><canvas data-pid="${s.page_id}"></canvas></div></div>`).join("")}</div></div>` : ""}
+   ${REVIEW.mode === "side" ? `<div><div class="panehead"><div class="seg" id="r_pane" role="group" aria-label="Result view">${hasDoc ? `<button class="${REVIEW.pane === "document" ? "on" : ""}" data-p="document">Document</button>` : ""}<button class="${REVIEW.pane === "overlay" || !hasDoc ? "on" : ""}" data-p="overlay">Overlay</button></div><div class="grow"></div><span class="mut small">${icon("pencil", "s")} Click to edit · <span id="r_saved">Saved</span></span></div><div class="panebody" id="r_docwrap">${pages.map((s, i) => `<div class="pagewrap" data-pid="${s.page_id}">${pageLabel(s, i)}<div class="pgbody" data-pid="${s.page_id}"></div></div>`).join("")}</div></div>` : ""}
+   ${REVIEW.mode === "text" ? `<div><div class="panehead"><span class="ph-t">${icon("type", "s")}Text</span><div class="grow"></div><span class="mut small">Reading order</span></div><div class="panebody white"><div class="textout" id="r_text">${pages.map((s, i) => (multi ? `<div class="lbl" style="margin:${i ? 28 : 0}px 0 10px">Page ${i + 1}</div>` : "") + textOut(s)).join("")}</div></div></div>` : ""}
+   ${REVIEW.side ? `<div><div class="panehead"><span class="ph-t">To check</span><span class="badge ${lows.length ? "warn" : "ok"}">${lows.length}</span><div class="grow"></div><button class="tool" id="r_side_close" title="Close panel" aria-label="Close panel">${icon("x", "s")}</button></div>
     <div class="panebody white" style="max-height:none">
-     <div id="r_lows">${lows.length ? lows.slice(0, 12).map((x, i) => `<div class="rev ${i === 0 ? "cur" : ""}" data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"><div class="w"><span>${esc(x.l.text.length > 28 ? x.l.text.slice(0, 28) + "…" : x.l.text)}</span><span class="pc">${multi ? `p.${pageNo(x.d)} · ` : ""}${Math.round(x.l.confidence * 100)}%</span></div><div class="snip"><canvas data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"></canvas></div><input value="${esc(x.l.text)}"><div class="acts"><button class="btn p sm" data-a="accept">${icon("check", "s")}Accept</button><button class="btn sm" data-a="ignore">Ignore</button></div></div>`).join("") : `<div class="small mut" style="padding:8px 0 16px">Every line was read with good confidence.</div>`}</div>
-     ${lows.length ? `<button class="btn" style="width:100%;margin-bottom:18px" id="r_acceptall">${icon("check-circle")}Accept all</button>` : ""}
-     <h3 style="margin:4px 0 6px">About this ${multi ? "document" : "page"}</h3>
+     <div id="r_lows">${lows.length ? lows.slice(0, 12).map((x, i) => `<div class="rev ${i === 0 ? "cur" : ""}" data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"><div class="rev-h"><span class="badge warn">${Math.round(x.l.confidence * 100)}%</span>${multi ? `<span>Page ${pageNo(x.d)}</span>` : ""}</div><div class="snip"><canvas data-key="${lineKey(x.b, x.l)}" data-pid="${x.d.page_id}"></canvas></div><input value="${esc(x.l.text)}" aria-label="Text of this line"><div class="acts"><button class="btn p sm" data-a="accept">${icon("check", "s")}Accept</button><button class="btn sm ghost" data-a="ignore">Ignore</button></div></div>`).join("") : `<div class="allgood">${icon("check-circle")}All lines look good</div>`}</div>
+     ${lows.length ? `<button class="btn block" id="r_acceptall">${icon("check-circle")}Accept all</button>` : ""}
+     <h3 class="sub-h">Details</h3>
      ${multi ? `<div class="kv"><span>Pages</span><b>${pages.length}</b></div>` : ""}
-     <div class="kv"><span>Content</span><b>${regions} regions${extras ? " · " + extras : ""}</b></div>
-     <div class="kv"><span>Text</span><b>${nLines} lines · ${nChars} characters</b></div>
+     <div class="kv"><span>Regions</span><b>${regions}${extras ? " · " + extras : ""}</b></div>
+     <div class="kv"><span>Text</span><b>${plural(nLines, "line")} · ${nChars} chars</b></div>
      <div class="kv"><span>Fonts</span><b>${esc(fonts.join(", ") || "–")}</b></div>
      ${source ? `<div class="kv"><span>Source</span><b>${source}</b></div>` : ""}
-     ${doubtful.length ? `<div class="note" style="margin:8px 0">${icon("alert")}<div>The PDF's own text looks partly damaged on ${multi ? `page${doubtful.length > 1 ? "s" : ""} ${doubtful.map(s => pageNo(s)).join(", ")}` : "this page"}. If the text is wrong, use <b>Run OCR instead</b>.</div></div>` : ""}
-     <div class="kv"><span>Time</span><b>${fmtMs(totalMs)} on this device</b></div>
-     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap"><button class="btn sm" id="r_rerun" title="${pdfTextPages ? "Ignore the PDF text and read the page images with OCR" : "Process again"}">${icon("refresh")}${pdfTextPages ? "Run OCR instead" : "Run OCR again"}</button><button class="btn sm danger" id="r_del">${icon("trash")}Delete</button></div></div></div>` : ""}</div>`;
+     ${doubtful.length ? `<div class="note" style="margin:8px 0">${icon("alert")}<div>PDF text may be damaged${multi ? ` on page${doubtful.length > 1 ? "s" : ""} ${doubtful.map(s => pageNo(s)).join(", ")}` : ""}. Try <b>Run OCR instead</b>.</div></div>` : ""}
+     <div class="kv"><span>Time</span><b>${fmtMs(totalMs)}</b></div>
+     <div class="btnrow"><button class="btn sm" id="r_rerun" title="${ocrTip}">${icon("refresh", "s")}${ocrLabel}</button><button class="btn sm danger" id="r_del">${icon("trash", "s")}Delete</button></div></div></div>` : ""}</div>`;
   view.querySelectorAll("#r_mode button").forEach(b => b.onclick = () => { REVIEW.mode = b.dataset.m; renderReview(id); });
   for (const [sel, on] of [["#r_side_close", false], ["#r_side_open", true]]) { const b = view.querySelector(sel); if (b) b.onclick = () => { REVIEW.side = on; localStorage.setItem("thaocr.reviewSide", on ? "1" : "0"); renderReview(id); }; }
   // page strip: scroll both panes to that page
   const scrollToPage = pid => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${pid}"]`)) el.scrollIntoView({block: "start", behavior: "smooth"}); view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === pid)); REVIEW.cur = pid; };
-  view.querySelectorAll(".thumbs .th").forEach(t => t.onclick = () => scrollToPage(t.dataset.id));
+  view.querySelectorAll(".thumbs .th").forEach(t => { t.onclick = () => scrollToPage(t.dataset.id); t.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); scrollToPage(t.dataset.id); } }; });
   const orig = $("#r_orig"); if (orig && multi && window.IntersectionObserver) { const io = new IntersectionObserver(es => { const top = es.filter(e => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]; if (top) view.querySelectorAll(".thumbs .th").forEach(t => t.classList.toggle("cur", t.dataset.id === top.target.dataset.pid)); }, {root: orig, threshold: [0.25, 0.5, 0.75]}); orig.querySelectorAll(".pagewrap").forEach(el => io.observe(el)); }
-  $("#r_copy").onclick = () => navigator.clipboard.writeText(groupText(pages)).then(() => toast("text copied"));
+  $("#r_copy").onclick = () => navigator.clipboard.writeText(groupText(pages)).then(() => toast("Copied"), () => toast("Copy blocked by the browser"));
   if ($("#r_rerun")) $("#r_rerun").onclick = () => rerunGroup(pages);
-  $("#r_ocr").onclick = () => { if (!multi || confirm(`Run OCR on all ${pages.length} pages? This takes a while and replaces the current text.`)) rerunGroup(pages); };
-  view.querySelectorAll("[data-ocr]").forEach(b => b.onclick = async e => { e.stopPropagation(); const s = byId[b.dataset.ocr]; b.disabled = true; b.textContent = "reading…"; await rerun(s, `page ${pageNo(s)}`, true); toast("done"); renderReview(id); setTimeout(() => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${s.page_id}"]`)) el.scrollIntoView({block: "start"}); }, 50); });
-  if ($("#r_del")) $("#r_del").onclick = async () => { if (confirm(multi ? `Delete this document and its ${pages.length} pages from this browser?` : "Delete this document from this browser?")) { await deleteGroup(pages); location.hash = "#/documents"; toast("deleted"); } };
-  $("#r_export").onclick = e => { e.stopPropagation(); closeMenus(); const m = document.createElement("div"); m.className = "menu";
-    m.innerHTML = `<button data-a="docx">${icon("file")}Word document (.docx)${multi ? ` · ${pages.length} pages` : ""}</button><button data-a="txt">${icon("list")}Plain text (.txt)</button><button data-a="json">${icon("braces")}JSON (full result)</button><button data-a="png">${icon("image")}Page image${multi ? "s" : ""}</button>`;
-    $("#r_export").parentElement.appendChild(m); m.onclick = ev => { const a = ev.target.closest("button")?.dataset.a; closeMenus(); const base = groupTitle(pages);
+  $("#r_ocr").onclick = () => { if (!multi || confirm(`Run OCR on all ${pages.length} pages? This replaces the current text.`)) rerunGroup(pages); };
+  view.querySelectorAll("[data-ocr]").forEach(b => b.onclick = async e => { e.stopPropagation(); const s = byId[b.dataset.ocr]; b.disabled = true; b.textContent = "Reading…"; await rerun(s, `page ${pageNo(s)}`, true); toast("Done"); renderReview(id); setTimeout(() => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${s.page_id}"]`)) el.scrollIntoView({block: "start"}); }, 50); });
+  if ($("#r_del")) $("#r_del").onclick = async () => { if (confirm(multi ? `Delete this document and its ${pages.length} pages from this browser?` : "Delete this document from this browser?")) { await deleteGroup(pages); location.hash = "#/documents"; toast("Deleted"); } };
+  $("#r_export").onclick = e => { e.stopPropagation(); if (document.querySelector("#r_export + .menu")) { closeMenus(); return; } closeMenus(); const m = document.createElement("div"); m.className = "menu"; m.setAttribute("role", "menu");
+    m.innerHTML = `<button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><button data-a="json" role="menuitem">${icon("braces")}JSON</button><button data-a="png" role="menuitem">${icon("image")}Page image${multi ? "s" : ""}</button>`;
+    $("#r_export").parentElement.appendChild(m); openMenu(m); m.onclick = ev => { const a = ev.target.closest("button")?.dataset.a; closeMenus(); const base = groupTitle(pages);
       if (a === "docx") exportDocx(pages); if (a === "txt") download(base + ".txt", groupText(pages), "text/plain;charset=utf-8");
       if (a === "json") download(base + ".json", JSON.stringify(multi ? pages.map(s => s.result) : d.result, null, 1), "application/json");
       if (a === "png") pages.forEach((s, i) => setTimeout(() => { const x = document.createElement("a"); x.href = s.image_url; x.download = multi ? `${base} page ${i + 1}.jpg` : s.filename; x.click(); }, i * 400)); }; };
@@ -532,7 +572,7 @@ function renderReview(id) {
   // canvases in memory); the full-size view is the lightbox.
   const near = new Set(); let io = null;
   const sizeView = s => { const v = view.querySelector(`.view[data-pid="${s.page_id}"]`); if (!v) return 0; const page = s.result, w = Math.min(page.width, (v.parentElement.parentElement.clientWidth - 32)) * REVIEW.zoom; v.style.width = w + "px"; v.style.height = (w * page.height / page.width) + "px"; return w; };
-  const paintPage = s => { const im = imgs[s.page_id], cv = view.querySelector(`canvas[data-pid="${s.page_id}"]`); if (!cv || !im || !im.complete || !im.naturalWidth) return; const page = s.result, w = sizeView(s);
+  const paintPage = s => { const im = imgs[s.page_id], cv = view.querySelector(`.view canvas[data-pid="${s.page_id}"]`); if (!cv || !im || !im.complete || !im.naturalWidth) return; const page = s.result, w = sizeView(s);
     if (multi && !near.has(s.page_id)) { if (cv.width > 1) { cv.width = 1; cv.height = 1; } return; }
     const k = Math.min(1, (w * (window.devicePixelRatio || 1)) / page.width); drawOriginal(cv, im, page, {boxes: REVIEW.boxes, labels: REVIEW.labels, lines: REVIEW.boxes, scale: k}); cv.style.width = "100%"; cv.style.height = "100%"; };
   pages.forEach(sizeView);
@@ -542,7 +582,7 @@ function renderReview(id) {
       const pad = l.box.height * 0.3, sx = Math.max(0, l.box.x - pad), sy = Math.max(0, l.box.y - pad), sw = Math.min(page.width - sx, l.box.width + 2 * pad), sh = Math.min(page.height - sy, l.box.height + 2 * pad);
       c.width = Math.round(sw * 2); c.height = Math.round(sh * 2); c.getContext("2d").drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height); } };
   const paintAll = () => { pages.forEach(paintPage); paintSnips(); };
-  for (const s of pages) { const im = imgs[s.page_id]; const v = view.querySelector(`.view[data-pid="${s.page_id}"]`); if (!s.image_url && v) v.innerHTML = `<div class="small mut" style="padding:40px 20px;text-align:center">The page image is no longer in this browser's storage, so it cannot be shown. The text is still available.</div>`;
+  for (const s of pages) { const im = imgs[s.page_id]; const v = view.querySelector(`.view[data-pid="${s.page_id}"]`); if (!s.image_url && v) v.innerHTML = `<div class="small" style="padding:40px 20px;text-align:center;color:#6b6b6b">Page image not stored · text still available</div>`;
     im.onload = () => { paintPage(s); paintSnips(); }; if (im.complete && im.naturalWidth) im.onload(); }
   if ($("#r_zoomin")) { $("#r_zoomin").onclick = () => { REVIEW.zoom = Math.min(3, REVIEW.zoom + 0.25); renderReview(id); }; $("#r_zoomout").onclick = () => { REVIEW.zoom = Math.max(0.5, REVIEW.zoom - 0.25); renderReview(id); };
     $("#r_boxes").onchange = e => { REVIEW.boxes = e.target.checked; paintAll(); }; $("#r_labels").onchange = e => { REVIEW.labels = e.target.checked; paintAll(); };
@@ -566,7 +606,7 @@ function renderReview(id) {
     card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); const ln = view.querySelector(`.pgbody[data-pid="${s.page_id}"] .docpage .ln[data-key="${key}"]`); if (ln && !e.target.closest("button,input")) { ln.scrollIntoView({block: "center", behavior: "smooth"}); ln.focus(); } else if (multi && !e.target.closest("button,input")) scrollToPage(s.page_id); };
     card.querySelector('[data-a="accept"]').onclick = () => { applyEdit(s, b, l, card.querySelector("input").value); renderReview(id); };
     card.querySelector('[data-a="ignore"]').onclick = () => { s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; store.put(s); renderReview(id); }; });
-  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) store.put(s); renderReview(id); toast("all lines accepted"); };
+  if ($("#r_acceptall")) $("#r_acceptall").onclick = () => { for (const x of lows) { x.d.reviewed = x.d.reviewed || {}; x.d.reviewed[lineKey(x.b, x.l)] = "accepted"; } for (const s of new Set(lows.map(x => x.d))) store.put(s); renderReview(id); toast("All lines accepted"); };
 }
 function applyParagraphEdit(d, blockId, orders, text) {
   const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
@@ -611,75 +651,78 @@ function docxParagraphs(D, page) {
   void pageWidthTwips; return out;
 }
 async function exportDocx(docs) {
-  toast("building Word document…");
+  toast("Building Word file…");
   try { const D = await loadDocx(); const sections = docs.map((d, i) => ({properties: {page: {margin: {top: 1134, bottom: 1134, left: 1134, right: 1134}}}, children: docxParagraphs(D, d.result)}));
     const file = new D.Document({creator: "ThaOCR", title: docTitle(docs[0]), styles: {default: {document: {run: {font: "Khmer OS Siemreap", size: 22}}}}, sections});
-    const blob = await D.Packer.toBlob(file); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = docTitle(docs[0]) + ".docx"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); toast("downloaded .docx"); }
-  catch (e) { console.error(e); toast("export failed: " + String(e.message || e).slice(0, 80)); }
+    const blob = await D.Packer.toBlob(file); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = docTitle(docs[0]) + ".docx"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); toast("Downloaded"); }
+  catch (e) { console.error(e); toast("Export failed: " + String(e.message || e).slice(0, 80)); }
 }
 
 /* ---------------------------------------------------------------- documents / settings / help */
 function renderDocuments() {
   const filter = q => store.docs.filter(d => !q || d.filename.toLowerCase().includes(q.toLowerCase()) || pageText(d.result).includes(q));
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1><p>${groups(store.docs).length} document${groups(store.docs).length === 1 ? "" : "s"} kept in this browser, on this device only.</p></div>
-    <label class="search">${icon("search", "s")}<input id="q" placeholder="Search by name or text"></label><a class="btn p" href="#/scan">${icon("plus")}Scan</a></div><div class="card" id="doclist">${docsTable(store.docs)}</div>
-    <div class="privacy">${icon("info")}<div>These documents exist only in this browser. They are not backed up anywhere. Export the ones you need to keep.</div></div>`;
+  const n = groups(store.docs).length;
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Documents</h1><p>${n ? `${plural(n, "document")} on this device` : "Nothing saved yet"}</p></div>
+    ${n ? `<label class="search">${icon("search", "s")}<input id="q" type="search" placeholder="Search name or text" aria-label="Search documents"></label>` : ""}<a class="btn p" href="#/scan">${icon("plus")}New scan</a></div>
+    <div class="card" id="doclist">${docsTable(store.docs)}</div>
+    ${n ? `<p class="fine">${icon("shield", "s")}Stored in this browser only, with no backup. Export what you need.</p>` : ""}`;
   wireDocsTable();
-  $("#q").oninput = e => { $("#doclist").innerHTML = docsTable(filter(e.target.value.trim())); wireDocsTable(); };
+  if ($("#q")) $("#q").oninput = e => { const q = e.target.value.trim(); $("#doclist").innerHTML = docsTable(filter(q), !!q); wireDocsTable(); };
 }
 async function renderSettings() {
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1></div></div>`;
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1></div></div><div class="chips"><span class="chip"><span class="spin"></span>Loading…</span></div>`;
   await T.loadManifestSafe(); if (!RECO) await deviceCheck();
-  const choice = chosenModels(), b = T.benchmarkStored(), tier = store.settings.tier || RECO.tier;
-  const stage = (k, title, sub) => { const opts = T.modelsFor(k); return `<div class="field"><label>${title}</label><div class="sel"><select data-stage="${k}">${opts.map(m => `<option value="${esc(m.id)}" ${m.id === choice[k] ? "selected" : ""}>${esc(m.label || m.id)}${T.manifest.sizes && T.manifest.sizes[m.file] ? " · " + T.fmtBytes(T.manifest.sizes[m.file]) : ""}</option>`).join("")}</select></div><div class="small mut">${sub}</div></div>`; };
+  const choice = chosenModels(), b = T.benchmarkStored(), tier = store.settings.tier || RECO.tier, tp = themePref();
+  const stage = (k, title, sub) => { const opts = T.modelsFor(k); return `<div class="field"><label for="m_${k}">${title}</label><div class="sel"><select id="m_${k}" data-stage="${k}">${opts.map(m => `<option value="${esc(m.id)}" ${m.id === choice[k] ? "selected" : ""}>${esc(m.label || m.id)}${T.manifest.sizes && T.manifest.sizes[m.file] ? " · " + T.fmtBytes(T.manifest.sizes[m.file]) : ""}</option>`).join("")}</select></div><div class="small mut">${sub}</div></div>`; };
   const sr = await storageReport(); const bytes = Math.max(0, sr.usage - sr.models);
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1><p>Models, device and local data. Everything here applies to this browser only.</p></div></div>
-  <div class="grid g-main"><div style="display:flex;flex-direction:column;gap:16px">
-   <div class="card pad"><h2 style="margin-bottom:4px">Your device</h2><div class="small mut" style="margin-bottom:14px">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB memory" : ""} · ${DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU"} · ${DEVICE.threadsOK ? "multi-thread" : "single-thread"} WebAssembly${DEVICE.mobile ? " · mobile" : ""}</div>
-    <div class="small mut" style="margin-bottom:10px">${RECO.reasons.map(esc).join(" · ")}</div>
-    <div class="field"><label>Model set</label><div class="tiers" id="s_tiers">${["high", "mid", "low"].map(t => `<div class="tier ${tier === t ? "on" : ""}" data-t="${t}"><b>${TIER_LABEL[t]}${RECO.tier === t ? " · recommended" : ""}</b>${t === "high" ? "fp32 recogniser v2.4, detector at 2200 px" : t === "mid" ? "int8 recogniser, detector at 1800 px" : "int8 recogniser and layout model, detector at 1300 px, for phones"}</div>`).join("")}</div></div>
-    <div class="field"><label>Compute</label><div class="sel"><select id="s_backend"><option value="auto" ${store.settings.backend === "auto" ? "selected" : ""}>Automatic (GPU when available)</option><option value="webgpu" ${store.settings.backend === "webgpu" ? "selected" : ""}>WebGPU</option><option value="wasm" ${store.settings.backend === "wasm" ? "selected" : ""}>CPU (WebAssembly)</option></select></div></div>
-    ${b ? `<div class="kv"><span>Measured speed</span><b>regions ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per text line · ${b.backend}</b></div><div class="kv"><span>Estimate</span><b>about ${T.estimate(b, 40)} s for a 40-line page</b></div>` : `<div class="small mut">Speed is measured when the models are first loaded.</div>`}
-    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm" id="s_bench">${icon("refresh")}Measure again</button><button class="btn sm" id="s_load">${icon("download")}Load models now</button></div></div>
-   <div class="card pad"><h2 style="margin-bottom:12px">Models <span class="small mut" style="font-weight:400">(overrides the model set)</span></h2>
-    ${stage("layout", "Layout", "Finds paragraphs, titles, tables, stamps, logos and handwriting.")}${stage("textdet", "Text lines", "Finds each line of text.")}${stage("rec", "Text recogniser", "Reads Khmer and English. int8 = smaller and faster, fp32 = slightly more accurate.")}${stage("font", "Font classifier", "Typeface, weight, slant and size per line.")}${stage("structure", "Structure", "Paragraphs, roles and reading order.")}
-    <button class="btn sm ghost" id="s_reset">Back to the recommended set</button></div>
-   <div class="card pad"><h2 style="margin-bottom:12px">Preferences</h2>
-    <div class="field"><label>Your name</label><div class="sel"><input id="s_name" value="${esc(store.settings.name)}"></div></div>
-    <div class="field"><label>Default export</label><div class="sel">${outputSel("s_out", store.settings.output)}</div></div>
-    <div class="field"><label>Page analysis</label><div class="sel"><select id="s_rules"><option value="rules" ${store.settings.rules !== false ? "selected" : ""}>Models + layout rules (recommended: paragraphs, label columns, tables from alignment, reading order)</option><option value="model" ${store.settings.rules === false ? "selected" : ""}>Models only (layout + structure model decide grouping and order)</option></select></div><div class="small mut">Applies to the next scan. "Run OCR again" on a document re-reads it with the current choice.</div></div></div></div>
-   <div style="display:flex;flex-direction:column;gap:16px"><div class="card pad"><h3>Space used in this browser</h3><p class="small mut" style="margin:8px 0 12px">Everything ThaOCR keeps lives in this browser, on this device. There is no server copy.</p>
-     <div class="kv"><span>Documents and page images</span><b>${store.docs.length} document${store.docs.length === 1 ? "" : "s"} · ${fmtSize(bytes)}</b></div>
-     <div class="kv"><span>Downloaded models</span><b>${sr.modelFiles ? `${sr.modelFiles} file${sr.modelFiles === 1 ? "" : "s"} · ${fmtSize(sr.models)}` : "none"}</b></div>
-     <div class="kv"><span>Total for this site</span><b>${sr.usage ? `${fmtSize(sr.usage)}${sr.quota ? ` of ${fmtSize(sr.quota)} available` : ""}` : "unknown"}</b></div>
-     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="s_clear">Delete all documents</button><button class="btn" id="s_cache">Remove cached models</button></div></div>
-   <div class="card pad"><h3>Improve the models</h3><p class="small mut" style="margin:8px 0 12px">Every line you correct in a review is a training example. Export them as line images with the right text and send the file to the ThaOCR maintainer, or use it with the training scripts, to retrain the recogniser on your kind of documents. Nothing is sent automatically.</p><button class="btn" id="s_corr">${icon("download")}Export corrected lines (${correctedLines().length})</button></div>
-   <div class="card pad" style="border-color:#f3c7c7"><h3>Reset everything</h3><p class="small mut" style="margin:8px 0 12px">Removes all documents, page images, edits, downloaded models, the device measurement and your settings, so this site takes no space in your browser. The page then starts over as on a first visit. Models download again when you next scan.</p><button class="btn danger" id="s_wipe">${icon("trash")}Reset everything</button></div></div></div>`;
-  $("#s_out").onchange = e => { store.settings.output = e.target.value; store.save(); };
-  $("#s_rules").onchange = e => { store.settings.rules = e.target.value === "rules"; store.save(); applyScale(); toast(store.settings.rules ? "rules on for the next scan" : "models only for the next scan"); };
-  $("#s_name").onchange = e => { store.settings.name = e.target.value.trim() || "Local user"; store.save(); };
+  const dev = [plural(DEVICE.threads, "thread"), DEVICE.memoryGB ? DEVICE.memoryGB + " GB" : "", DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU", DEVICE.threadsOK ? "" : "single-thread", DEVICE.mobile ? "mobile" : ""].filter(Boolean).join(" · ");
+  const opt = (v, cur, t) => `<option value="${v}" ${cur === v ? "selected" : ""}>${t}</option>`;
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1><p>For this browser only.</p></div></div>
+  <div class="grid g-main"><div class="col">
+   <div class="card pad"><h2>Appearance</h2>
+    <div class="row-set"><div class="grow">Theme</div><div class="seg" id="s_theme" role="group" aria-label="Theme">${[["system", "System", "monitor"], ["light", "Light", "sun"], ["dark", "Dark", "moon"]].map(([k, t, ic]) => `<button type="button" data-v="${k}" class="${tp === k ? "on" : ""}" aria-pressed="${tp === k}">${icon(ic, "s")}${t}</button>`).join("")}</div></div></div>
+   <div class="card pad"><h2>Performance</h2>
+    <p class="small mut" style="margin:-6px 0 14px" title="${esc(RECO.reasons.join(" · "))}">${icon("cpu", "s")} ${dev}</p>
+    <div class="field"><label>Model set</label><div class="tiers" id="s_tiers">${["high", "mid", "low"].map(t => `<button type="button" class="tier ${tier === t ? "on" : ""}" data-t="${t}" aria-pressed="${tier === t}" title="${TIER_TECH[t]}"><b>${TIER_LABEL[t]}</b><span>${TIER_SUB[t]}</span>${RECO.tier === t ? `<i class="rec">Recommended</i>` : ""}</button>`).join("")}</div></div>
+    <div class="field"><label for="s_backend">Compute</label><div class="sel"><select id="s_backend">${opt("auto", store.settings.backend, "Automatic")}${opt("webgpu", store.settings.backend, "GPU (WebGPU)")}${opt("wasm", store.settings.backend, "CPU (WebAssembly)")}</select></div></div>
+    ${b ? `<div class="kv"><span>Speed</span><b title="Regions ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per text line · ${b.backend}">~${T.estimate(b, 40)} s per page</b></div>` : `<p class="small mut" style="margin:0">Speed is measured after the first load.</p>`}
+    <div class="btnrow"><button class="btn sm" id="s_bench">${icon("refresh", "s")}Measure again</button><button class="btn sm" id="s_load">${icon("download", "s")}Load models now</button></div></div>
+   <div class="card pad"><h2>Layout</h2>
+    <div class="field" style="margin:0"><label for="s_rules">Page analysis</label><div class="sel"><select id="s_rules">${opt("rules", store.settings.rules !== false ? "rules" : "model", "Models + layout rules (recommended)")}${opt("model", store.settings.rules !== false ? "rules" : "model", "Models only")}</select></div><div class="small mut">Rules join paragraphs, tables and label columns. Applies to the next scan.</div></div></div>
+   <details class="card adv"><summary><span class="grow"><b>Models</b><span class="small mut">Advanced · overrides the model set</span></span>${icon("chevron-down")}</summary><div class="adv-body">
+    ${stage("layout", "Layout", "Paragraphs, tables, stamps, logos")}${stage("textdet", "Text lines", "Finds each line")}${stage("rec", "Recogniser", "Reads Khmer &amp; English · int8 is faster, fp32 more accurate")}${stage("font", "Fonts", "Typeface, weight and size")}${stage("structure", "Structure", "Paragraphs and reading order")}
+    <button class="btn sm ghost" id="s_reset">${icon("undo", "s")}Use recommended</button></div></details></div>
+   <div class="col"><div class="card pad"><h2>Storage</h2>
+     <div class="kv"><span>Documents</span><b>${plural(store.docs.length, "page")} · ${fmtSize(bytes)}</b></div>
+     <div class="kv"><span>Models</span><b>${sr.modelFiles ? `${plural(sr.modelFiles, "file")} · ${fmtSize(sr.models)}` : "None"}</b></div>
+     <div class="kv"><span>Total</span><b>${sr.usage ? `${fmtSize(sr.usage)}${sr.quota ? ` of ${fmtSize(sr.quota)}` : ""}` : "Unknown"}</b></div>
+     <div class="btnrow"><button class="btn sm" id="s_clear">${icon("trash", "s")}Delete documents</button><button class="btn sm" id="s_cache">${icon("x", "s")}Remove models</button></div></div>
+   <div class="card pad"><h2>Improve the models</h2><p class="small mut" style="margin:-6px 0 14px">Your corrected lines are training data. Export and share them to retrain the recogniser. Nothing is sent automatically.</p><button class="btn" id="s_corr">${icon("download")}Export corrections (${correctedLines().length})</button></div>
+   <div class="card pad danger"><h2>Reset</h2><p class="small mut" style="margin:-6px 0 14px">Removes all documents, models and settings from this browser.</p><button class="btn danger" id="s_wipe">${icon("trash")}Reset everything</button></div></div></div>`;
+  view.querySelectorAll("#s_theme button").forEach(x => x.onclick = () => setTheme(x.dataset.v));
+  $("#s_rules").onchange = e => { store.settings.rules = e.target.value === "rules"; store.save(); applyScale(); toast("Saved · applies to the next scan"); };
   $("#s_backend").onchange = e => { store.settings.backend = e.target.value; store.save(); resetModels(); renderSettings(); };
   view.querySelectorAll("#s_tiers .tier").forEach(t => t.onclick = () => { store.settings.tier = t.dataset.t === RECO.tier ? null : t.dataset.t; store.settings.models = {}; const fake = T.recommend(Object.assign({}, DEVICE, {webgpu: t.dataset.t === "high", mobile: t.dataset.t === "low", threads: t.dataset.t === "high" ? 8 : t.dataset.t === "low" ? 4 : 6, memoryGB: t.dataset.t === "low" ? 4 : 8})); RECO = Object.assign({}, RECO, {choice: fake.choice, scale: fake.scale}); store.settings.longMin = null; store.settings.longMax = null; store.save(); resetModels(); renderSettings(); });
-  view.querySelectorAll("select[data-stage]").forEach(sel => sel.onchange = () => { store.settings.models = Object.assign({}, store.settings.models, {[sel.dataset.stage]: sel.value}); store.save(); resetModels(); toast("model changed; it loads on the next scan"); });
+  view.querySelectorAll("select[data-stage]").forEach(sel => sel.onchange = () => { store.settings.models = Object.assign({}, store.settings.models, {[sel.dataset.stage]: sel.value}); store.save(); resetModels(); toast("Saved · loads on the next scan"); });
   $("#s_reset").onclick = () => { store.settings.models = {}; store.settings.tier = null; store.save(); resetModels(); deviceCheck().then(renderSettings); };
-  $("#s_bench").onclick = async () => { toast("measuring…"); try { await ensureModels(); await T.benchmark(); renderSettings(); toast("done"); } catch (e) { toast("failed: " + e.message); } };
-  $("#s_load").onclick = async () => { try { await ensureModels((m) => toast(m)); renderSettings(); } catch (e) { toast("failed: " + e.message); } };
-  $("#s_clear").onclick = async () => { if (confirm("Remove all documents from this browser? This cannot be undone.")) { await store.clear(); sidebar(); renderSettings(); } };
-  $("#s_cache").onclick = async () => { await T.clearModelCache(); localStorage.removeItem("thaocr.device.v1"); resetModels(); toast("cached models removed"); renderSettings(); };
+  $("#s_bench").onclick = async () => { toast("Measuring…"); try { await ensureModels(); await T.benchmark(); renderSettings(); toast("Done"); } catch (e) { toast("Failed: " + e.message); } };
+  $("#s_load").onclick = async () => { try { await ensureModels((m) => toast(m)); renderSettings(); } catch (e) { toast("Failed: " + e.message); } };
+  $("#s_clear").onclick = async () => { if (confirm("Delete all documents from this browser? This cannot be undone.")) { await store.clear(); sidebar(); renderSettings(); toast("Documents deleted"); } };
+  $("#s_cache").onclick = async () => { await T.clearModelCache(); localStorage.removeItem("thaocr.device.v1"); resetModels(); toast("Models removed"); renderSettings(); };
   $("#s_corr").onclick = exportCorrections;
   $("#s_wipe").onclick = async () => {
-    if (!confirm("Reset ThaOCR in this browser?\n\nAll documents, page images, edits, downloaded models and settings on this device will be removed. Export anything you want to keep first.\n\nThis cannot be undone.")) return;
+    if (!confirm("Reset ThaOCR in this browser?\n\nAll documents, edits, downloaded models and settings on this device will be removed. Export anything you want to keep first.\n\nThis cannot be undone.")) return;
     const b = $("#s_wipe"); b.disabled = true; b.textContent = "Resetting…";
     try { const before = await resetEverything();
-      sessionStorage.setItem("thaocr.resetMsg", before.usage ? `Reset done · ${fmtSize(before.usage)} removed from this browser` : "Reset done"); }
-    catch (e) { console.error(e); toast("reset failed: " + e.message); b.disabled = false; return; }
+      sessionStorage.setItem("thaocr.resetMsg", before.usage ? `Reset done · ${fmtSize(before.usage)} freed` : "Reset done"); }
+    catch (e) { console.error(e); toast("Reset failed: " + e.message); b.disabled = false; return; }
     location.hash = "#/scan"; location.reload(); };
 }
 /* ---------------------------------------------------------------- corrections -> training data */
 function correctedLines() { const out = []; for (const d of store.docs) for (const b of d.result.blocks) for (const l of (b.lines || [])) { const k = lineKey(b, l); if ((d.reviewed || {})[k] === "edited" && l.text) out.push({d, b, l}); } return out; }
 async function exportCorrections() {
-  const items = correctedLines(); if (!items.length) { toast("no edited lines yet"); return; }
-  toast(`packing ${items.length} corrected line${items.length === 1 ? "" : "s"}…`);
+  const items = correctedLines(); if (!items.length) { toast("No corrections yet"); return; }
+  toast(`Packing ${plural(items.length, "line")}…`);
   const imgs = new Map(), rows = [];
   for (const {d, b, l} of items) {
     let im = imgs.get(d.page_id); if (!im) { im = new Image(); im.src = d.image_url; try { await im.decode(); } catch { continue; } imgs.set(d.page_id, im); }
@@ -688,7 +731,7 @@ async function exportCorrections() {
     rows.push({text: l.text, image_png_base64: c.toDataURL("image/png").split(",")[1], width: c.width, height: c.height, source: d.result.source || "ocr", block: b.cls, confidence_before: l.confidence_before ?? null, document: groupName(d), page: pageNo(d), page_id: d.page_id, line: l.reading_order});
   }
   const meta = {format: "thaocr-corrections/1", exported: new Date().toISOString(), lines: rows.length, note: "Each item is a line crop (PNG) with the text as corrected by the user. Grey-scale, height-normalise to 48 px and train the CRNN with training/rec."};
-  download(`thaocr-corrections-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({meta, items: rows}), "application/json"); toast(`exported ${rows.length} lines`);
+  download(`thaocr-corrections-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({meta, items: rows}), "application/json"); toast(`Exported ${plural(rows.length, "line")}`);
 }
 
 /* ---------------------------------------------------------------- storage footprint + full reset */
@@ -710,15 +753,20 @@ async function resetEverything() {
 }
 function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
-  view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1><p>How ThaOCR works and how to get the best results.</p></div></div>
-  <div class="card pad help"><h3>Where your files go</h3><p>Nowhere. The page downloads the ONNX runtime from the jsDelivr CDN and the OCR models (about 40 MB) from Hugging Face once, and runs them inside your browser with WebAssembly or WebGPU. Photos, text and edits never leave your device. There is no account and no server-side copy: documents live in this browser's storage and disappear if you clear site data, use a private window or change device. Export what you want to keep.</p>
-  <h3>PDF files</h3><p>Drop a PDF and each page becomes a document. If a page already contains text (a PDF made from Word, a website, or a scanner with its own OCR layer), that text is used directly and nothing is recognised, so it is exact and takes well under a second. Pages that are only pictures are read with OCR like a photo. The two kinds can be mixed in one file. If the text layer of a page is wrong, open the page and use <b>Run OCR instead</b>.</p>
-  <h3>Speed</h3><p>The first visit downloads the models and measures your device, then shows an estimate per page. A laptop takes a few seconds per page; a phone can take half a minute. Smaller photos process faster. Settings lets you pick a lighter model set or force CPU or GPU.</p>
-  <h3>Scanning</h3><p>Photograph or scan pages flat and evenly lit, at 300 DPI or at least about 1500 px wide for an A4 page. Khmer subscripts and vowel signs are small; below 1000 px they start to be missed.</p>
-  <h3>What is read</h3><p>Paragraphs, titles, headers, footers, tables, lists, logos, stamps, signatures and handwriting regions; Khmer and English text; list markers, paragraphs and reading order; the font family, weight, slant and size of each line.</p>
-  <h3>Checking the result</h3><p>Lines read below ${Math.round(LOW * 100)}% confidence are listed on the right of the review page and highlighted in the page. Click any text to edit it in place. Accept keeps the text, Ignore hides the warning.</p>
-  <h3>Export</h3><p>Word (.docx) keeps headings, paragraphs, alignment, indents, bullets, fonts and sizes, and places logos and stamps as pictures. Plain text keeps tabs for indents. JSON is the full result.</p>
-  <h3>Shortcuts</h3><p><kbd>Ctrl</kbd>+<kbd>V</kbd> pastes an image into the Scan page.</p></div>`;
+  const tile = (ic, t, p) => `<div class="card tile"><div class="ti">${icon(ic)}</div><b>${t}</b><p>${p}</p></div>`;
+  const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, fit (full-size view)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"]];
+  view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1><p>Quick tips for the best results.</p></div></div>
+  <div class="tiles">
+   ${tile("shield", "Private", "Runs in your browser. Files are never uploaded. No account, no server.")}
+   ${tile("folder", "Saved on this device", "Kept in this browser only. Clearing site data deletes them, so export to keep.")}
+   ${tile("camera", "Better photos", "Flat page, even light, at least 1500 px wide or a 300 DPI scan.")}
+   ${tile("file", "PDF files", "Pages with text are read exactly, without OCR. Scans use OCR. Wrong text? Use <b>Run OCR instead</b>.")}
+   ${tile("pencil", "Check &amp; edit", `Lines under ${Math.round(LOW * 100)}% confidence are highlighted. Click any text to fix it.`)}
+   ${tile("download", "Export", "Word keeps headings, tables, fonts and images. Text and JSON too.")}
+   ${tile("select", "Select", "Drag a box over part of a page to read and copy only that part.")}
+   ${tile("clock", "Speed", "First visit downloads ~40 MB once. Seconds per page on a laptop, longer on a phone.")}
+  </div>
+  <div class="card pad"><h2>Shortcuts</h2><div class="keys">${keys.map(([k, t]) => `<span>${k}</span><span>${t}</span>`).join("")}</div></div>`;
 }
 
 
@@ -731,7 +779,7 @@ async function selAdd(list) {
   for (const f of list) {
     if (T.pdf.isPdf(f)) { try { const doc = await T.pdf.open(f), n = doc.numPages, base = f.name.replace(/\.pdf$/i, "");
         for (let k = 1; k <= n; k++) add.push({name: n > 1 ? `${base} · page ${k}` : f.name, pdf: {doc, k, last: k === n}}); }
-      catch (e) { toast("could not open " + f.name); } }
+      catch (e) { toast("Can't open " + f.name); } }
     else if (f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|bmp|gif|tiff?)$/i.test(f.name)) add.push({name: f.name, file: f});
   }
   if (!add.length) return;
@@ -747,8 +795,8 @@ async function selImage(f) {  // -> {canvas,width,height}, decoded once
   return f.imgP;
 }
 async function selLines(f) {  // text lines of the whole page, detected once
-  if (!f.linesP) f.linesP = (async () => { const hint = $("#s_hint"); if (!T.loaded() && hint) hint.innerHTML = `<span class="spin" style="display:inline-block;vertical-align:-2px"></span> loading the OCR models (first time only)…`;
-    try { await ensureModels(); } finally { const h = $("#s_hint"); if (h) h.textContent = "Drag to select · click a box to see it"; } applyScale(); const im = await selImage(f); const ls = await T.detectLines(im.canvas); return ls.map(l => Object.assign(l, {bbox: l.bbox || T.util.bboxOf(l.quad)})); })();
+  if (!f.linesP) f.linesP = (async () => { const hint = $("#s_hint"); if (!T.loaded() && hint) hint.innerHTML = `<span class="spin" style="vertical-align:-2px"></span> Loading models (first time only)…`;
+    try { await ensureModels(); } finally { const h = $("#s_hint"); if (h) h.innerHTML = `${icon("select", "s")} Drag to select`; } applyScale(); const im = await selImage(f); const ls = await T.detectLines(im.canvas); return ls.map(l => Object.assign(l, {bbox: l.bbox || T.util.bboxOf(l.quad)})); })();
   try { return await f.linesP; } catch (e) { f.linesP = null; throw e; }
 }
 /** quad (tl,tr,br,bl) cut to the x range [x0,x1] along its top and bottom edges */
@@ -774,24 +822,24 @@ async function selRead(f, box) {
   const conf = res.length ? res.reduce((a, r) => a + r.confidence, 0) / res.length : 0;
   return Object.assign(box, {text, conf, lines: order.length, ms: performance.now() - t0, state: "done"});
 }
-function selCopy(text) { if (!text) { toast("nothing to copy"); return; } navigator.clipboard.writeText(text).then(() => toast("copied"), () => toast("copy blocked by the browser")); }
+function selCopy(text) { if (!text) { toast("Nothing to copy"); return; } navigator.clipboard.writeText(text).then(() => toast("Copied"), () => toast("Copy blocked by the browser")); }
 function renderSelect() {
   const f = SEL.files[SEL.cur];
   view.innerHTML = `
-  <div class="head"><div class="grow"><h1>Select</h1><p>Add photos, scans or PDFs, then drag a box over any part of a page. That part is read at once, ready to copy. Nothing is saved.</p></div>
-    <div class="tools"><label class="small mut" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer" title="Copy each new result to the clipboard"><input type="checkbox" id="s_auto" ${SEL.autoCopy ? "checked" : ""}> Copy automatically</label>
-      ${SEL.files.length ? `<button class="btn p" id="s_add">${icon("upload")} Add files</button>` : ""}</div></div>
-  ${!SEL.files.length ? `<div class="drop sel-empty" id="s_drop"><div class="ico">${icon("upload", "l")}</div><div class="grow"><b>Drop images or PDFs here</b><div class="small">JPG, PNG, WebP, TIFF, PDF · or paste with Ctrl+V · then drag a box over any part to read it</div></div>
+  <div class="head"><div class="grow"><h1>Select</h1><p>Drag a box over text to read and copy it. Nothing is saved.</p></div>
+    <div class="tools"><label class="tg" title="Copy each new result to the clipboard"><input type="checkbox" id="s_auto" ${SEL.autoCopy ? "checked" : ""}>Auto-copy</label>
+      ${SEL.files.length ? `<button class="btn p" id="s_add">${icon("plus")}Add files</button>` : ""}</div></div>
+  ${!SEL.files.length ? `<div class="drop sel-empty" id="s_drop"><div class="ico">${icon("select", "l")}</div><div class="grow"><b>Drop files here</b><div class="small">Images or PDF · or paste with Ctrl+V</div></div>
     <div class="acts"><button class="btn p" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>` : `
   <div class="sel-grid">
-   <div class="sel-files card" id="s_files">${SEL.files.map((x, i) => `<button class="sel-file ${i === SEL.cur ? "cur" : ""}" data-i="${i}" title="${esc(x.name)}"><span class="th">${x.thumb ? `<img src="${x.thumb}" alt="">` : icon("image")}</span><span class="nm">${esc(x.name)}</span>${x.boxes.length ? `<span class="count">${x.boxes.length}</span>` : ""}<span class="rm" data-rm="${i}" title="Remove">${icon("x", "s")}</span></button>`).join("")}</div>
-   <div class="card sel-stage-card"><div class="panehead"><span style="color:var(--ink)">${esc(f.name)}</span><div class="grow"></div><span class="small mut" id="s_hint">Drag to select · click a box to see it</span></div>
-     <div class="stage sel-stage" id="s_drop"><div class="sel-page" id="s_page"><div class="sel-wait" id="s_wait"><span class="spin"></span> opening…</div></div></div></div>
+   <div class="sel-files card" id="s_files">${SEL.files.map((x, i) => `<button class="sel-file ${i === SEL.cur ? "cur" : ""}" data-i="${i}" title="${esc(x.name)}"><span class="th">${x.thumb ? `<img src="${x.thumb}" alt="">` : icon("image")}</span><span class="nm">${esc(x.name)}</span>${x.boxes.length ? `<span class="count">${x.boxes.length}</span>` : ""}<span class="rm" data-rm="${i}" title="Remove" aria-label="Remove">${icon("x", "s")}</span></button>`).join("")}</div>
+   <div class="card sel-stage-card"><div class="panehead"><span class="ph-t">${esc(f.name)}</span><div class="grow"></div><span class="small mut" id="s_hint">${icon("select", "s")} Drag to select</span></div>
+     <div class="stage sel-stage" id="s_drop"><div class="sel-page" id="s_page"><div class="sel-wait" id="s_wait"><span class="spin"></span> Opening…</div></div></div></div>
    <div class="sel-results" id="s_res"></div>
   </div>`}`;
   if ($("#s_add")) $("#s_add").onclick = () => pickFiles(selAdd); if ($("#s_browse")) { $("#s_browse").onclick = () => pickFiles(selAdd); $("#s_cam").onclick = () => pickFiles(selAdd, true); }
   $("#s_auto").onchange = e => { SEL.autoCopy = e.target.checked; localStorage.setItem("thaocr.selAutoCopy", SEL.autoCopy ? "1" : "0"); };
-  if ($("#s_drop")) wireDrop($("#s_drop"), selAdd);
+  if ($("#s_drop")) wireDrop($("#s_drop"), selAdd); clickToBrowse($(".drop#s_drop"), $("#s_browse"));
   if (!f) return;
   view.querySelectorAll(".sel-file").forEach(b => b.onclick = e => { const rm = e.target.closest("[data-rm]");
     if (rm) { const i = +rm.dataset.rm; SEL.files.splice(i, 1); SEL.cur = Math.min(SEL.cur >= i && SEL.cur > 0 ? SEL.cur - 1 : SEL.cur, SEL.files.length - 1); renderSelect(); return; }
@@ -799,8 +847,8 @@ function renderSelect() {
   selResults(f);
   // thumbnails of files not decoded yet
   SEL.files.forEach((x, i) => { if (!x.thumb) selImage(x).then(() => { const b = view.querySelector(`.sel-file[data-i="${i}"] .th`); if (b && SEL.files[i] === x) b.innerHTML = `<img src="${x.thumb}" alt="">`; }).catch(() => { }); });
-  selImage(f).then(im => { if (SEL.files[SEL.cur] !== f || !$("#s_page")) return; selMountPage(f, im); selLines(f).catch(e => toast("models: " + e.message)); })
-    .catch(e => { $("#s_wait").textContent = "Could not open this file: " + e.message; });
+  selImage(f).then(im => { if (SEL.files[SEL.cur] !== f || !$("#s_page")) return; selMountPage(f, im); selLines(f).catch(e => toast("Models: " + e.message)); })
+    .catch(e => { $("#s_wait").textContent = "Can't open this file: " + e.message; });
 }
 function selMountPage(f, im) {
   const page = $("#s_page"); page.innerHTML = ""; const c = im.canvas; c.className = "sel-canvas"; page.appendChild(c);
@@ -826,12 +874,12 @@ function selFocus(f, id) { f.focus = id; if (f.redraw) f.redraw(); view.querySel
 function selResults(f) {
   const el = $("#s_res"); if (!el) return;
   const all = f.boxes.filter(b => b.state === "done" && b.text).map(b => b.text).join("\n\n");
-  el.innerHTML = `<div class="card pad sel-reshead"><b class="grow">Selections${f.boxes.length ? ` · ${f.boxes.length}` : ""}</b>${f.boxes.length > 1 ? `<button class="btn sm" id="s_copyall">${icon("copy", "s")} Copy all</button>` : ""}${f.boxes.length ? `<button class="btn sm ghost" id="s_clear" title="Remove all boxes">${icon("trash", "s")}</button>` : ""}</div>
+  el.innerHTML = `<div class="card sel-reshead"><b class="grow">Selections${f.boxes.length ? ` · ${f.boxes.length}` : ""}</b>${f.boxes.length > 1 ? `<button class="btn sm" id="s_copyall">${icon("copy", "s")}Copy all</button>` : ""}${f.boxes.length ? `<button class="btn sm ghost icon" id="s_clear" title="Remove all boxes" aria-label="Remove all boxes">${icon("trash", "s")}</button>` : ""}</div>
    ${f.boxes.length ? f.boxes.map((b, i) => `<div class="card sel-item ${b.id === f.focus ? "focus" : ""}" data-id="${b.id}">
-      <div class="sel-ih"><span class="tag">${i + 1}</span><span class="small mut grow">${b.state === "reading" ? "reading…" : b.state === "failed" ? "failed" : `${b.lines || 0} line${b.lines === 1 ? "" : "s"} · ${Math.round((b.conf || 0) * 100)}% sure · ${fmtMs(b.ms || 0)}`}</span>
-        <button class="btn sm" data-copy="${b.id}" ${b.state !== "done" ? "disabled" : ""}>${icon("copy", "s")} Copy</button><button class="btn sm ghost" data-del="${b.id}" title="Remove">${icon("x", "s")}</button></div>
-      ${b.state === "reading" ? `<div class="sel-skel"><i></i><i></i><i></i></div>` : b.state === "failed" ? `<div class="small" style="color:var(--bad)">${esc(b.err || "")}</div>` : `<textarea class="sel-text" data-id="${b.id}" rows="${Math.min(10, Math.max(2, (b.text.match(/\n/g) || []).length + 1))}" spellcheck="false" placeholder="No text found in this box">${esc(b.text)}</textarea>`}</div>`).join("")
-     : `<div class="card pad small mut">Drag a box over the text you want. Each box appears here with a Copy button. You can edit the text before copying.</div>`}`;
+      <div class="sel-ih"><span class="tag">${i + 1}</span><span class="small mut grow">${b.state === "reading" ? "Reading…" : b.state === "failed" ? "Failed" : `${plural(b.lines || 0, "line")} · ${Math.round((b.conf || 0) * 100)}% · ${fmtMs(b.ms || 0)}`}</span>
+        <button class="btn sm" data-copy="${b.id}" ${b.state !== "done" ? "disabled" : ""}>${icon("copy", "s")}Copy</button><button class="btn sm ghost icon" data-del="${b.id}" title="Remove" aria-label="Remove selection ${i + 1}">${icon("x", "s")}</button></div>
+      ${b.state === "reading" ? `<div class="sel-skel"><i></i><i></i><i></i></div>` : b.state === "failed" ? `<div class="small" style="color:var(--bad)">${esc(b.err || "")}</div>` : `<textarea class="sel-text" data-id="${b.id}" rows="${Math.min(10, Math.max(2, (b.text.match(/\n/g) || []).length + 1))}" spellcheck="false" placeholder="No text found" aria-label="Text of selection ${i + 1}">${esc(b.text)}</textarea>`}</div>`).join("")
+     : `<div class="card sel-hint">${icon("select", "l")}<span>Draw a box on the page.<br>The text appears here.</span></div>`}`;
   const byId = id => f.boxes.find(b => b.id === id);
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => selCopy(byId(b.dataset.copy).text));
   el.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { f.boxes = f.boxes.filter(x => x.id !== b.dataset.del); if (f.redraw) f.redraw(); selResults(f); selFileCount(f); });
@@ -844,9 +892,16 @@ function selResults(f) {
 
 /* ---------------------------------------------------------------- router + boot */
 const ROUTES = {select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
-function route() { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); (ROUTES[r] || renderScan)(arg); window.scrollTo(0, 0); }
+const TITLES = {scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
+function route(e) { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); document.title = (TITLES[r] ? TITLES[r] + " · " : "") + "ThaOCR";
+  view.classList.toggle("wide", r === "review" || r === "select");
+  view.classList.add("enter"); clearTimeout(route.t); route.t = setTimeout(() => view.classList.remove("enter"), 350);  // entry animation on page change only, not on re-renders
+  (ROUTES[r] || renderScan)(arg); window.scrollTo(0, 0);
+  if (e && e.type === "hashchange" && !(document.activeElement && document.activeElement.closest && document.activeElement.closest(".page"))) view.focus({preventScroll: true});  // screen readers land on the new page
+}
 window.addEventListener("hashchange", route);
 (async () => {
+  applyTheme(); $("#themetog").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   setSideCollapsed(localStorage.getItem("thaocr.sideCollapsed") === "1");
   try { const m = sessionStorage.getItem("thaocr.resetMsg"); if (m) { sessionStorage.removeItem("thaocr.resetMsg"); setTimeout(() => toast(m), 600); } } catch { }
   $("#sidetog").onclick = () => setSideCollapsed(!$("#shell").classList.contains("collapsed"));
@@ -865,7 +920,7 @@ window.addEventListener("hashchange", route);
     if (((e.ctrlKey || e.metaKey) && e.shiftKey && k === "r") || (k === "f5" && (e.ctrlKey || e.shiftKey)))
       try { sessionStorage.setItem("thaocr.hardReload", "1"); } catch { }
   }, true);
-  if (!seenBefore || hard) $("#notice").classList.remove("hide");
+  if (!seenBefore || hard) { $("#notice").classList.remove("hide"); setTimeout(() => $("#notice_ok").focus(), 60); }
   $("#notice_ok").onclick = () => { $("#notice").classList.add("hide"); if (!seenBefore) { store.settings.noticeSeen = true; store.save(); preload(); } };
   if (!location.hash) location.hash = "#/scan"; else route(); sidebar();
   try { await deviceCheck(); } catch (e) { console.warn(e); }

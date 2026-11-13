@@ -5,7 +5,7 @@ Everything in this folder is static. The browser downloads the ONNX models once,
 server-side storage; the app says so before first use.
 
 ```
-index.html / app.js / app.css   the UI (same look as the backend-served app)
+index.html / app.js / app.css   the UI (light + dark theme: follows the system, switch in the sidebar or Settings)
 docview.js                      reflowed, editable page view (shared with the backend app)
 ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure)
 ocr/pipeline.js                 regions -> blocks -> text -> paragraphs -> page result (same schema as POST /process)
@@ -60,7 +60,7 @@ ruling lines or line alignment and exported as real Word tables; a narrow column
 label/value table, so labels stay beside their values; in a bordered table a faint rule the scan lost is recovered
 from the baseline rows that start a record. Line order inside a block is geometric.
 
-Settings > Page analysis switches these rules off ("Models only"): grouping, reading order and paragraphs then come
+Settings > Layout > Page analysis switches these rules off ("Models only"): grouping, reading order and paragraphs then come
 from the layout and structure models alone (`ThaOCR.config.rules = false`). On the test pages this is clearly worse
 (paragraphs split per line, dot-leader lines broken, label columns out of order), so the default keeps the rules.
 
@@ -69,7 +69,7 @@ handwriting-trained recogniser (`crnn_m_v2_hw_int8`, loaded on first need); the 
 Tables are de-skewed before the cell grid is built and group-header rows span the table.
 
 Training data from use: every line a user edits in the review is a (line image, corrected text) pair. Settings ->
-"Export corrected lines" writes them as JSON (PNG crops, base64) for fine-tuning the recogniser with `training/rec`.
+"Export corrections" writes them as JSON (PNG crops, base64) for fine-tuning the recogniser with `training/rec`.
 
 Not ported from the backend yet (rules that need OpenCV): red-stamp lifting and reading text under stamps, ink-based
 bullet detection, bold words by stroke weight, text colours, figure splitting, box snapping, decoration/rule detection.
