@@ -645,10 +645,10 @@ function renderReview(id) {
     document.addEventListener("keydown", REVIEW.key); }
   const wrap = $("#r_docwrap");
   if (wrap) {
-    const avail = Math.max(320, wrap.clientWidth - 32), rendered = new Set();
+    const avail = Math.max(innerWidth < 861 ? 320 : 160, wrap.clientWidth - 32)  /* the page fits the pane's real width (no overflow); phones reflow */, rendered = new Set();
     const renderPage = s => { if (rendered.has(s.page_id)) return; rendered.add(s.page_id); const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`), page = s.result; if (!body) return; body.style.minHeight = "";
     buildDocUpTo = pid => { const k = pages.findIndex(x => x.page_id === pid); pages.slice(0, k + 1).forEach(renderPage); };
-      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {flow: true, columnWidth: columnWidths(page), scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
+      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {flow: innerWidth < 861, natural: true, columnWidth: columnWidths(page), scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
       else { const dp = buildDocPage(s, (b, l, text) => applyEdit(s, b, l, text)); body.appendChild(dp); const fit = () => scaleToFit(body, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); } };
     if (multi && window.IntersectionObserver) { // placeholders keep the scroll height; a page is built when it comes near
       for (const s of pages) { const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`); if (body) body.style.minHeight = (Math.min(1, avail / s.result.width) * s.result.height) + "px"; }

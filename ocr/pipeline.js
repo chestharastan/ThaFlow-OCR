@@ -554,9 +554,36 @@
     return assemble(img, blocks, timings, tStart, {ignored});
   };
 
+  /** A table region that also took the text around the table (a subtitle or a paragraph above the rows, a note below):
+      the single-line rows before the first record row (a row with cells side by side) and after the last one are peeled
+      off into a text block above / below the table - but only when that run holds a line that is clearly not a cell (it
+      runs across 2+ cells of the record row, starts left of the table's first column, or spans most of the table). */
+  function peelTableText(blocks) {
+    const out = [], ux = (a, b) => Math.min(a[2], b[2]) - Math.max(a[0], b[0]), union = ls => [Math.min(...ls.map(l => l.bbox[0])), Math.min(...ls.map(l => l.bbox[1])), Math.max(...ls.map(l => l.bbox[2])), Math.max(...ls.map(l => l.bbox[3]))];
+    for (const b of blocks) {
+      const ls = b.cls === "table" ? (b.lines || []).filter(l => l.text) : []; if (ls.length < 3) { out.push(b); continue; }
+      ls.sort((p, q) => (p.bbox[1] + p.bbox[3]) - (q.bbox[1] + q.bbox[3]));
+      const rows = []; for (const l of ls) { const c = (l.bbox[1] + l.bbox[3]) / 2, h = l.bbox[3] - l.bbox[1], r = rows[rows.length - 1]; if (r && Math.abs(c - r.c) < 0.5 * Math.min(h, r.h)) r.ls.push(l); else rows.push({c, h, ls: [l]}); }
+      const rec = r => r.ls.length >= 2, first = rows.findIndex(rec); if (first < 0) { out.push(b); continue; }
+      const last = rows.length - 1 - rows.slice().reverse().findIndex(rec), tw = Math.max(1, b.box[2] - b.box[0]);
+      const notCell = (r, R) => { const g = r.ls[0].bbox, x0 = Math.min(...R.ls.map(c => c.bbox[0])), h = r.h; return R.ls.filter(c => ux(g, c.bbox) > 0).length >= 2 || g[0] < x0 - h || g[2] - g[0] > 0.6 * tw; };
+      let top = 0; while (top < first && !rec(rows[top])) top++; if (!rows.slice(0, top).some(r => notCell(r, rows[first]))) top = 0;
+      let bot = rows.length; while (bot - 1 > last && !rec(rows[bot - 1])) bot--; if (!rows.slice(bot).some(r => notCell(r, rows[last]))) bot = rows.length;
+      if (!top && bot === rows.length) { out.push(b); continue; }
+      const head = rows.slice(0, top).flatMap(r => r.ls), tail = rows.slice(bot).flatMap(r => r.ls), moved = new Set([...head, ...tail]);
+      const text = lines => { const g = block("text", union(lines), b.score, "table_text", "table_text"); g.lines.push(...lines); return g; };
+      if (head.length) out.push(text(head));
+      b.lines = b.lines.filter(l => !moved.has(l)); const keep = b.lines.filter(l => l.text);
+      if (keep.length) { const u = union(keep), pad = 0.3 * U.median(keep.map(l => l.bbox[3] - l.bbox[1])); b.box = [b.box[0], Math.max(b.box[1], u[1] - pad), b.box[2], Math.min(b.box[3], u[3] + pad)]; }
+      out.push(b);
+      if (tail.length) out.push(text(tail));
+    }
+    return out;
+  }
   /** Shared ending of every page: bullets, structure, fonts per block, layout, render, document. */
   async function assemble(img, blocks, timings, tStart, extra) {
     const W = img.width, H = img.height, ms = t => +(performance.now() - t).toFixed(1);
+    blocks = peelTableText(blocks);
     let t = performance.now();
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { b.lines = mergeBulletLines(b.lines); for (const ln of b.lines) if (ln.text && !["table", "form_field"].includes(b.cls)) textBullet(ln); }
     if (!modelOnly()) blocks = mergeLabelColumns(blocks, W);
@@ -581,5 +608,5 @@
     return assemble(img, blocks, timings, tStart, extra || {});
   };
 
-  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, runsWithBreaks};
+  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, runsWithBreaks, peelTableText};
 })();
