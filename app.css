@@ -113,6 +113,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .acc{display:inline-flex;align-items:center;gap:10px}
 .bar{height:6px;border-radius:999px;background:var(--line-2);overflow:hidden}
 .bar i{display:block;height:100%;background:var(--ink);border-radius:999px;transition:width .3s}
+.bar i.fill{width:100%;border-radius:0;transform-origin:0 50%;transform:scaleX(0);transition:none;will-change:transform}   /* the process bar: compositor only */
 .acc .bar{width:56px}.acc .bar i.ok{background:var(--ok)}.acc .bar i.warn{background:var(--warn)}
 .empty{padding:56px 20px;text-align:center;color:var(--mut)}
 

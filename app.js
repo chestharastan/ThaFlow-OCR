@@ -316,7 +316,9 @@ function startJob() {
     const first = JOB.files.find(x => x.page_id); if (first && location.hash === "#/process") setTimeout(() => { if (location.hash === "#/process") location.hash = "#/review/" + first.page_id; }, 1200);
   })();
 }
-function renderIfProcess() { if (location.hash === "#/process") renderProcess(); }
+// progress callbacks come in bursts (a download chunk every few ms): paint at most once per frame
+let procQueued = false;
+function renderIfProcess() { if (procQueued || location.hash !== "#/process") return; procQueued = true; requestAnimationFrame(() => { procQueued = false; if (location.hash === "#/process") renderProcess(); }); }
 function renderProcess() {
   if (!JOB) { view.innerHTML = `<div class="head"><div class="grow"><h1>Processing</h1></div></div><div class="card empty">Nothing is running. <a href="#/scan">Scan</a></div>`; return; }
   const cur = JOB.files[Math.min(JOB.current ?? 0, JOB.files.length - 1)], last = JOB.results[JOB.results.length - 1], running = JOB.status === "running";
@@ -324,6 +326,11 @@ function renderProcess() {
   const recFrac = JOB.step && JOB.step.stage === "rec" && JOB.step.total ? JOB.step.done / JOB.step.total : 0;
   const fileFrac = cur.status === "running" ? Math.min(0.95, (si < 0 ? 0 : si === 3 ? 0.35 + 0.5 * recFrac : si >= 4 ? 0.9 : si * 0.12)) : 0;
   const pct = JOB.load ? Math.round(JOB.load.frac * 100) : Math.round((JOB.done + (running ? fileFrac : 0)) / JOB.total * 100);
+  // how far the next progress update will move the bar (%) and how long it should take (s): the bar trickles toward it, so it never
+  // sits still between updates (recognition reports once per batch of 16 lines, which is many seconds on a phone)
+  const pace = (() => { if (!running || JOB.load) return {ahead: 0, tau: 3}; const bm = T.benchmarkStored() || {}, stg = JOB.step ? JOB.step.stage : "decode", n = JOB.step && JOB.step.total ? Math.min(16, JOB.step.total - JOB.step.done) : 0;
+    const [d, secs] = stg === "rec" && JOB.step.total ? [0.5 * n / JOB.step.total, n * (bm.recMsPerLine || 120) * 1.25 / 1000] : stg === "layout" ? [0.12, (bm.layoutMs || 800) / 1000] : stg === "textdet" ? [0.11, (bm.detMs || 1500) * 1.3 / 1000] : stg === "font" || stg === "structure" ? [0.05, 1.5] : [0.12, 0.4];
+    return {ahead: d / JOB.total * 100, tau: Math.max(0.4, secs / 2)}; })();
   const t = last ? last.timings : null;
   const stepsHtml = [
     ["Read the file", "", si > 0 || !!last],
@@ -357,14 +364,14 @@ function renderProcess() {
    <div class="card"><div class="panehead"><span style="color:var(--ink)" id="p_name">${esc(cur.name)}</span><div class="grow"></div><span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
     <div class="stage"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" style="display:block;max-width:100%;max-height:70vh"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
    <div class="col">
-    <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" style="width:${pct}%;transition:none"></i></div>
+    <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" class="fill"></i></div>
       <div class="small mut" id="p_note" style="margin-top:10px${note ? "" : ";display:none"}">${note}</div></div>
     <div class="card pad"><div class="pipe" id="p_steps">${steps.map(stepHtml).join("")}</div></div>
     <div id="p_files">${filesHtml}</div><div id="p_failed">${failedHtml}</div></div></div>`;
     const prev = PVIEW && PVIEW.id === JOB.id && PVIEW.phase === phase ? PVIEW.disp : pct;
-    PVIEW = {key, id: JOB.id, phase, target: pct, disp: Math.min(prev, pct), running, html: {}};
-    $("#p_pct").textContent = Math.round(PVIEW.disp) + "%"; $("#p_bar").style.width = PVIEW.disp + "%";
-    if (overlay) { const img = $("#p_img"), cv = $("#p_cv"); img.onload = () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true}); cv.classList.remove("hide"); cv.style.maxWidth = "100%"; cv.style.maxHeight = "70vh"; cv.style.width = "auto"; img.classList.add("hide"); }; if (img.complete) img.onload(); }
+    PVIEW = {key, id: JOB.id, phase, target: pct, disp: Math.min(prev, pct), running, ahead: pace.ahead, tau: pace.tau, html: {}};
+    $("#p_pct").textContent = Math.round(PVIEW.disp) + "%"; $("#p_bar").style.transform = `scaleX(${(PVIEW.disp / 100).toFixed(4)})`;
+    if (overlay) { const img = $("#p_img"), cv = $("#p_cv"); img.onload = () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true, scale: Math.min(1, 1400 / Math.max(last.width, last.height))}); cv.classList.remove("hide"); cv.style.maxWidth = "100%"; cv.style.maxHeight = "70vh"; cv.style.width = "auto"; img.classList.add("hide"); }; if (img.complete) img.onload(); }
     progressLoop();
     return;
   }
@@ -380,10 +387,10 @@ function renderProcess() {
     if (el.className !== st.cls) { const wasDone = el.classList.contains("done"); el.className = st.cls; if (wasDone !== st.done) el.querySelector(".n").innerHTML = st.done ? icon("check", "s") : String(i + 1); }
     el.querySelector(".sub").textContent = st.s || ""; });
   if (PVIEW.phase !== phase) { PVIEW.phase = phase; PVIEW.disp = Math.min(PVIEW.disp, pct); } // new phase: the bar may start again from 0
-  PVIEW.target = pct; PVIEW.running = running; progressLoop();
+  PVIEW.target = pct; PVIEW.running = running; PVIEW.ahead = pace.ahead; PVIEW.tau = pace.tau; progressLoop();
 }
-/** Eases the shown percentage toward the real one, and creeps forward slowly between progress callbacks so the
- *  bar never looks frozen during a long step (never more than a few % ahead of the real value, never 100 early). */
+/** Eases the shown percentage toward the real one, then trickles toward the next expected value (never past 92% of the
+ *  next step, never 100 early) so the bar keeps moving between progress callbacks. */
 let PVIEW = null;
 function progressLoop() {
   if (PVIEW && PVIEW.raf) return;
@@ -392,14 +399,14 @@ function progressLoop() {
     const pe = $("#p_pct"), be = $("#p_bar");
     if (!PVIEW || !pe || !be) { if (PVIEW) PVIEW.raf = 0; return; }
     const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
-    const v = PVIEW, cap = v.running ? Math.min(99, v.target + 6) : v.target;
+    const v = PVIEW, cap = v.running ? Math.min(99, v.target + (v.ahead || 0) * 0.92) : v.target;
     if (v.disp < v.target) v.disp += Math.max(0.05, (v.target - v.disp) * Math.min(1, dt * 6)); // ease in
     else if (v.disp > v.target && !v.running) v.disp = v.target;
-    else if (v.running && v.disp < cap) v.disp += dt * 0.8 * (1 - (v.disp - v.target) / 6); // creep, slowing down
+    else if (v.running && v.disp < cap) v.disp += (cap - v.disp) * (1 - Math.exp(-dt / (v.tau || 3))); // trickle, slowing as it nears the cap
     v.disp = Math.min(v.disp, Math.max(cap, v.target));
     const shown = Math.floor(v.disp);
     if (pe.textContent !== shown + "%") pe.textContent = shown + "%";
-    be.style.width = v.disp.toFixed(2) + "%";
+    be.style.transform = `scaleX(${(v.disp / 100).toFixed(4)})`;   // transform, not width: no layout per frame
     if (!v.running && Math.abs(v.disp - v.target) < 0.01) { v.raf = 0; return; }
     v.raf = requestAnimationFrame(tick);
   };
@@ -627,7 +634,7 @@ async function renderSettings() {
     <div class="tiers" id="s_tiers">${["high", "mid", "low"].map(t => `<div class="tier ${tier === t ? "on" : ""}" data-t="${t}"><b>${TIER_LABEL[t]}${RECO.tier === t ? " · recommended" : ""}</b>${TIER_SUB[t]}</div>`).join("")}</div>
     <div class="small mut" style="margin-top:12px">${b ? `About ${fmtSecs(T.estimate(b, 40))} per page on this device` : "Speed is measured on the first scan"}</div></div>
    <details class="card pad adv" id="s_adv" ${ADV_OPEN ? "open" : ""}><summary>Advanced</summary>
-    <div class="small mut" style="margin:12px 0 14px">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB" : ""} · ${DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU"} · ${DEVICE.threadsOK ? "multi-thread" : "single-thread"}${DEVICE.mobile ? " · mobile" : ""}${b ? `<br>layout ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per line · ${esc(b.backend)}` : ""}</div>
+    <div class="small mut" style="margin:12px 0 14px">${DEVICE.threads} threads${DEVICE.memoryGB ? " · " + DEVICE.memoryGB + " GB" : ""} · ${DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU"} · ${DEVICE.threadsOK ? "multi-thread" : "single-thread"}${DEVICE.mobile ? " · mobile" : ""}${T.loaded() ? (T.inWorker() ? " · background worker" : " · main thread") : ""}${b ? `<br>layout ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per line · ${esc(b.backend)}` : ""}</div>
     <div class="field"><label>Compute</label><div class="sel"><select id="s_backend"><option value="auto" ${store.settings.backend === "auto" ? "selected" : ""}>Automatic</option><option value="webgpu" ${store.settings.backend === "webgpu" ? "selected" : ""}>GPU</option><option value="wasm" ${store.settings.backend === "wasm" ? "selected" : ""}>CPU</option></select></div></div>
     ${stage("layout", "Layout")}${stage("textdet", "Text lines")}${stage("rec", "Text recogniser")}${stage("font", "Fonts")}${stage("structure", "Structure")}
     <div class="field"><label>Page analysis</label><div class="sel"><select id="s_rules"><option value="rules" ${store.settings.rules !== false ? "selected" : ""}>Models + rules (recommended)</option><option value="model" ${store.settings.rules === false ? "selected" : ""}>Models only</option></select></div></div>
@@ -690,6 +697,7 @@ async function resetEverything() {
   resetModels();
   return before;
 }
+T.listeners.push(e => { if (e.type === "unloaded") { LOADING = null; sidebar(); } });
 function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
   view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1></div></div>

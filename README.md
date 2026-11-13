@@ -27,6 +27,13 @@ Runtime: `ThaOCR.config.ortBase` is the jsDelivr URL of onnxruntime-web 1.31.1 (
 works under the isolation headers, threads included); the docx library loads from jsDelivr too. For offline work copy
 the `dist/` files of onnxruntime-web into `vendor/` and set `ortBase` to `"vendor/"`.
 
+Responsiveness: inference runs in onnxruntime-web's own worker (`ThaOCR.config.worker`), so the page, the progress bar and
+the scan animation stay smooth while a page is read. Measured on a 34-line page with the CPU throttled 4x, the main thread was
+blocked 3% of a scan (longest gap 0.3 s) instead of 100% (one 99 s gap); the recognised text is identical. `"auto"` (default)
+also runs the WebGPU provider in the worker, `"cpu"` (or `?worker=cpu`) keeps the GPU on the main thread, `false` (or `?worker=0`)
+turns the worker off. If the worker cannot start or stops answering, the models load again on the main thread and the browser is
+remembered as "no worker" (`thaocr.noWorker` in localStorage: 7 days, 1 day if it hung). Settings > Advanced shows which one runs.
+
 Models: `ThaOCR.config.modelBase` (ocr/engine.js) is the Hugging Face resolve URL of `Thareah/ThaOCR-models`; the
 browser fetches only the chosen set, once, into the Cache API (a file is stored only when it arrived complete; a
 dropped connection is retried up to 5 times and resumes with a `Range` request, so a flaky phone connection does not

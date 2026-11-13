@@ -462,8 +462,8 @@
     const step = (stage, msg, extra) => onStep && onStep(Object.assign({stage, msg}, extra || {}));
     const tStart = performance.now(), timings = {};
     step("decode", "reading the file"); const img = await T.loadImage(src); const W = img.width, H = img.height;
-    step("layout", "finding regions"); let t = performance.now(); const regions = await T.detectLayout(img); let {blocks, ignored} = cleanRegions(regions, W, H); timings.layout_ms = ms(t);
-    step("textdet", "finding text lines"); t = performance.now(); let lines = await T.detectLines(img.canvas); if (T.config.cascade) lines = await cascade(img, blocks, lines);
+    step("layout", "finding regions"); await T.breathe(true); let t = performance.now(); const regions = await T.detectLayout(img); let {blocks, ignored} = cleanRegions(regions, W, H); timings.layout_ms = ms(t);
+    step("textdet", "finding text lines"); await T.breathe(true); t = performance.now(); let lines = await T.detectLines(img.canvas); if (T.config.cascade) lines = await cascade(img, blocks, lines);
     const orphans = assign(lines, blocks);
     // a "decoration" that swallowed text lines (a whole letterhead band) is a misdetection: give the lines back as
     // orphans and drop the region when it is large or contains a logo / stamp / QR
@@ -481,9 +481,9 @@
     timings.textdet_ms = ms(t); timings.lines_detected = lines.length; timings.mode = modelOnly() ? "model" : "rules";
     // recognise
     const todo = []; for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) for (const ln of b.lines) todo.push([b, ln]);
-    step("rec", "reading the text", {done: 0, total: todo.length}); t = performance.now();
+    step("rec", "reading the text", {done: 0, total: todo.length}); await T.breathe(true); t = performance.now();
     const crops = [], plan = []; // plan[i] = {idx} (one crop) or {left, right} (leader line split into parts)
-    for (const [b, ln] of todo) { const c = T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 48); const sp = (!["table", "form_field"].includes(b.cls)) ? splitLeader(c) : null;
+    for (let ti = 0; ti < todo.length; ti++) { const [b, ln] = todo[ti]; if (ti % 24 === 23) await T.breathe(); const c = T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 48); const sp = (!["table", "form_field"].includes(b.cls)) ? splitLeader(c) : null;
       if (!sp) { plan.push({idx: crops.length}); crops.push(c); continue; }
       const e = {leader: true, left: -1, right: -1}; if (sp.left) { e.left = crops.length; crops.push(sp.left); } if (sp.right) { e.right = crops.length; crops.push(sp.right); } plan.push(e); }
     const res = await T.recognize(crops, 16, (d, n) => step("rec", "reading the text", {done: d, total: n}));
@@ -502,7 +502,7 @@
     timings.rec_ms = ms(t); timings.lines_recognized = todo.length;
     // fonts (printed lines)
     t = performance.now();
-    if (T.sessions.font) { step("font", "fonts and sizes"); const sel = todo.map((x, i) => [x, i]).filter(([[b, ln]]) => b.cls !== "handwriting" && (ln.text || "").length >= 2);
+    if (T.sessions.font) { step("font", "fonts and sizes"); await T.breathe(true); const sel = todo.map((x, i) => [x, i]).filter(([[b, ln]]) => b.cls !== "handwriting" && (ln.text || "").length >= 2);
       const c32 = sel.map(([[, ln]]) => T.cropLine(ln.stamped ? img.clean : img.canvas, ln.quad, 32)); const fr = await T.classifyFonts(c32); sel.forEach(([[, ln]], k) => { ln.font = fr[k]; if (ln.font) ln.bold = ln.font.weight === "bold" && ln.font.weight_confidence >= 0.6; });
       // mixed lines (a bold label or word inside a regular line) leave the model unsure: classify word by word
       const LABEL_RE = /^\S{1,24}\s?[៖:]/; // "សំណុំលិខិត៖ ..." - a bold label in front of regular text
@@ -511,7 +511,7 @@
       for (const [ln, k] of unsure) { try { await wordBold(ln, c32[k]); } catch (e) { console.warn("word bold", e); } } }
     timings.font_ms = ms(t);
     // bullets, structure, fonts per block
-    step("structure", "paragraphs and reading order");
+    step("structure", "paragraphs and reading order"); await T.breathe(true);
     return assemble(img, blocks, timings, tStart, {ignored});
   };
 
