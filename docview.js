@@ -4,6 +4,8 @@
    fitted (font size) so it wraps into the same number of lines as the photo. Typefaces / sizes / colours / bold runs /
    figures come from the backend. Text stays editable (opts.editable).
    opts.flow switches to a flowing layout instead (renderFlow): paragraphs wrap to the container width at a reading size.
+   opts.natural keeps the page layout but lets paragraphs flow in their boxes (no line-count fitting, no stretched justification),
+   fits single and stacked lines to their width, and sets elements printed side by side in one row.
    Shared by the classic demo and the ThaOCR app: window.DocView.render(page, opts) -> HTMLElement */
 (function () {
   "use strict";
@@ -60,11 +62,34 @@
 
     const root = document.createElement("div"); root.className = "dv-page";
     root.style.cssText = `width:${S(W)};min-height:${S(page.height)};padding:${S(doc.margins.top)} ${S(doc.margins.right)} ${S(doc.margins.bottom)} ${S(doc.margins.left)};--dv-body:${S(bodyPx)}`;
-    const edit = (el, e) => { if (!opts.editable) return; el.contentEditable = "true"; el.spellcheck = false; el.addEventListener("blur", () => { const t = el.innerText.replace(/\s+$/, ""); if (t !== e.text && opts.onEdit) opts.onEdit(e.block, e.lines, t); }); };
-    renderInto(root, doc.elements, doc.margins.left, W - doc.margins.right, doc.margins.top);
+    const NAT = !!opts.natural, TP = window.ThaOCR && window.ThaOCR.pipeline, textW = Math.max(1, W - doc.margins.left - doc.margins.right), colW = id => (opts.columnWidth ? opts.columnWidth(id) : textW);
+    // natural: a paragraph's text from its CURRENT lines, wrapped lines joined, stacked lines kept ("\n"); see ThaOCR.pipeline.softBreaks
+    const runsOf = e => { const b = blocks[e.block]; if (!NAT || !TP || !TP.runsWithBreaks || !b || !b.lines || !(e.lines || []).length) return e.runs; const want = new Set(e.lines), pl = b.lines.filter(l => want.has(l.reading_order) && l.text); return pl.length ? TP.runsWithBreaks(pl, colW(e.block)) : e.runs; };
+    const edit = (el, e) => { if (!opts.editable) return; el.contentEditable = "true"; el.spellcheck = false; let shown = null;  // saved only when really changed
+      el.addEventListener("focus", () => { shown = el.innerText.replace(/\s+$/, ""); });
+      el.addEventListener("blur", () => { const t = el.innerText.replace(/\s+$/, ""); if ((NAT ? shown != null && t !== shown : t !== e.text) && opts.onEdit) opts.onEdit(e.block, e.lines, t); shown = null; }); };
+    renderInto(root, NAT ? sideBySide(doc.elements) : doc.elements, doc.margins.left, W - doc.margins.right, doc.margins.top);
     scheduleFit(root, fits);
     return root;
 
+    // Elements printed side by side (a letterhead, the emblem, the motto with its ornament; two text columns) become one row of
+    // columns: within a run between tables, elements are swept top-down into bands of overlapping height; a band whose
+    // elements fall into 2+ columns (x ranges that do not overlap) is one row, each column stacking its elements.
+    function sideBySide(elements) {
+      const out = []; let run = [];
+      const flush = () => {
+        const items = run.map((e, k) => ({e, k, ex: extent(e)})).sort((a, b) => a.ex[1] - b.ex[1] || a.k - b.k), bands = [];
+        for (const it of items) { const b = bands[bands.length - 1], h = it.ex[3] - it.ex[1];
+          if (b && it.ex[1] < b.bot - Math.min(0.25 * h, 0.25 * (b.bot - b.top))) { b.items.push(it); b.bot = Math.max(b.bot, it.ex[3]); } else bands.push({top: it.ex[1], bot: it.ex[3], items: [it]}); }
+        for (const b of bands) {
+          const cols = []; for (const g of b.items.slice().sort((p, q) => p.ex[0] - q.ex[0])) { const c = cols.find(c => Math.min(c.x1, g.ex[2]) - Math.max(c.x0, g.ex[0]) > 0); if (c) { c.items.push(g); c.x0 = Math.min(c.x0, g.ex[0]); c.x1 = Math.max(c.x1, g.ex[2]); } else cols.push({x0: g.ex[0], x1: g.ex[2], items: [g]}); }
+          for (let i = 0; i < cols.length; i++) for (let j = i + 1; j < cols.length; j++) if (Math.min(cols[i].x1, cols[j].x1) - Math.max(cols[i].x0, cols[j].x0) > 0) { cols[i].items.push(...cols[j].items); cols[i].x0 = Math.min(cols[i].x0, cols[j].x0); cols[i].x1 = Math.max(cols[i].x1, cols[j].x1); cols.splice(j, 1); j = i; }  // a member that bridged two columns merges them
+          if (cols.length < 2) { out.push(...b.items.sort((p, q) => p.k - q.k).map(g => g.e)); continue; }
+          out.push({type: "row", block: b.items[0].e.block, columns: cols.sort((p, q) => p.x0 - q.x0).map(c => ({x0: c.x0, x1: c.x1, elements: c.items.sort((p, q) => p.ex[1] - q.ex[1] || p.k - q.k).map(g => g.e)}))}); }
+        run = []; };
+      for (const e of elements) { if (e.columns || e.type === "table") { flush(); out.push(e); } else run.push(e); }
+      flush(); return out;
+    }
     // container spans page-x [x0, x1]; its content starts at page-y y0
     function renderInto(box, elements, x0, x1, y0) {
       let prevBottom = y0;
@@ -113,7 +138,9 @@
         tbl.style.cssText = style(e.style, e.text, scale, bodyPx) + `margin-left:${S(Math.max(0, cx0 - x0))};width:${S(cx1 - cx0)};`;
         const cg = document.createElement("colgroup"); for (const c of t.cols) { const col = document.createElement("col"); col.style.width = S(c.x1 - c.x0); cg.appendChild(col); } tbl.appendChild(cg);
         for (const r of t.rows) { const tr = document.createElement("tr"); if (r.y1 > r.y0) tr.style.height = S(r.y1 - r.y0);
-          r.cells.forEach((c, i) => { const td = document.createElement("td"); if (c.colspan > 1) { td.colSpan = c.colspan; td.className = "dv-span"; } td.style.cssText = alignCss(c.colspan > 1 ? "left" : (t.cols[i].align || "left")); td.textContent = c.text || ""; if (c.text) edit(td, {block: e.block, lines: c.lines, text: c.text}); tr.appendChild(td); });
+          r.cells.forEach((c, i) => { const td = document.createElement("td"); if (c.colspan > 1) { td.colSpan = c.colspan; td.className = "dv-span"; } td.style.cssText = alignCss(c.colspan > 1 ? "left" : (t.cols[i].align || "left")); td.textContent = c.text || ""; if (c.text) edit(td, {block: e.block, lines: c.lines, text: c.text});
+            if (NAT && c.text && !c.text.includes("\n") && (c.lines || []).length <= 1 && !(c.colspan > 1) && t.cols[i]) { td.style.whiteSpace = "nowrap"; fits.push({el: td, sizeEl: td, lines: 1, width: Math.max(4, (t.cols[i].x1 - t.cols[i].x0) * scale - 8), lh: 0, lo: 0.5, hi: 1, group: tbl}); }  // one-line cell: shrinks to fit its column (one size per column)
+            tr.appendChild(td); });
           tbl.appendChild(tr); }
         return tbl;
       }
@@ -126,9 +153,9 @@
           const pt = pitch(lb), st = style(it.style, it.text, scale, bodyPx);
           const bx = it.bullet_box ? it.bullet_box.x : ie[0];
           li.style.cssText = st + `margin-left:${S(Math.max(0, bx - x0))};margin-top:${S(Math.max(0, ie[1] - prev))};` + (pt ? `line-height:${S(pt)};` : "");
-          li.innerHTML = `<span class="dv-bullet">${esc(it.bullet)}</span><span class="dv-text">${runsHtml(it.runs, it.style && it.style.heavy, it.low)}</span>`;
+          li.innerHTML = `<span class="dv-bullet">${esc(it.bullet)}</span><span class="dv-text">${runsHtml(runsOf(it), it.style && it.style.heavy, it.low)}</span>`;
           edit(li.lastElementChild, it); ul.appendChild(li); prev = Math.max(prev, ie[3]);
-          fits.push({el: li.lastElementChild, sizeEl: li, lines: Math.max(1, lb.length), width: (ie[2] - ie[0]) * scale, lh: pt * scale, tight: !!(it.style && it.style.size_model)});
+          if (!NAT || lb.length <= 1) fits.push({el: li.lastElementChild, sizeEl: li, lines: Math.max(1, lb.length), width: (ie[2] - ie[0]) * scale, lh: pt * scale, tight: !!(it.style && it.style.size_model), lo: NAT ? 0.5 : 0});
         }
         return ul;
       }
@@ -141,7 +168,7 @@
       let align = e.align || "left";
       if (n >= 2 && align === "left") {  // justified in the photo? (non-last lines reach the right edge)
         const full = lb.slice(0, -1).filter(b => ext[2] - (b.x + b.width) < 0.03 * w).length;
-        if (full >= Math.max(1, 0.7 * (n - 1))) align = "justify";
+        if (full >= Math.max(1, 0.7 * (n - 1)) && !NAT) align = "justify";  // natural: words keep their normal spacing
       }
       if (align === "left" || align === "justify") css += `margin-left:${S(ext[0] - x0)};width:${S(w)};`;
       else css += `margin-left:auto;margin-right:auto;max-width:none;`;
@@ -157,7 +184,11 @@
         const [before, after] = e.text.split("\t"); p.className += " dv-tabline"; p.style.width = S(x1 - x0 - Math.max(0, ext[0] - x0)); p.style.textAlign = "left";
         p.innerHTML = `<span class="dv-tl">${esc(before)}</span><span class="dv-leader"></span><span class="dv-tr">${esc(after)}</span>`;
         fits.push({el: p, sizeEl: p, lines: 1, width: w * scale, lh: 0, tight: true}); return p; }
-      p.innerHTML = runsHtml(e.runs, e.style && e.style.heavy, e.low); edit(p, e);
+      const runs = runsOf(e); p.innerHTML = runsHtml(runs, e.style && e.style.heavy, e.low); edit(p, e);
+      if (NAT) { // one line, or lines stacked on purpose (a motto, a centred title): each line fits its width; a paragraph flows in its box
+        const stacked = n > 1 && runs.map(r => r.text).join("").split("\n").length === n;
+        if (n === 1 || stacked) { p.style.whiteSpace = "pre"; fits.push({el: p, sizeEl: p, lines: 1, width: w * scale, lh: 0, tight: !!(e.style && e.style.size_model), lo: 0.5}); }
+        return p; }
       fits.push({el: p, sizeEl: p, lines: n, width: w * scale, lh: (pt || 0) * scale, tight: !!(e.style && e.style.size_model)});
       return p;
     }
@@ -258,17 +289,18 @@
   // so every paragraph of one style keeps the same size instead of being stretched to its box.
   function scheduleFit(root, fits) {
     const go = () => {
-      if (!root.isConnected) { if ((go.tries = (go.tries || 0) + 1) < 50) setTimeout(go, 100); return; }
+      if (!root.isConnected) { if ((go.tries = (go.tries || 0) + 1) < 50) setTimeout(() => goAll(), 100); return; }
       for (const f of fits) {
-        const el = f.sizeEl, base = parseFloat(el.style.fontSize) || 14;
+        const el = f.sizeEl, base = parseFloat(el.style.fontSize) || parseFloat(getComputedStyle(el).fontSize) || 14;  // a table cell has no size of its own
         const lh = f.lh || parseFloat(getComputedStyle(el).lineHeight) || base * 1.6;
         const linesAt = k => { el.style.fontSize = (base * k).toFixed(2) + "px"; return Math.round(f.el.getBoundingClientRect().height / lh); };
-        const LO = f.tight ? 0.92 : 0.7, HI = f.tight ? 1.08 : 1.3;
+        const LO = f.lo || (f.tight ? 0.92 : 0.7), HI = f.hi || (f.tight ? 1.08 : 1.3);
         if (f.lines === 1) {
           el.style.fontSize = base + "px";
-          const span = document.createElement("span"); span.innerHTML = f.el.innerHTML; span.style.cssText = "white-space:nowrap;visibility:hidden;position:absolute";
+          const span = document.createElement("span"); span.innerHTML = f.el.innerHTML; span.style.cssText = `white-space:${el.style.whiteSpace === "pre" ? "pre" : "nowrap"};visibility:hidden;position:absolute`;
           el.appendChild(span); const tw = span.getBoundingClientRect().width; span.remove();
-          if (tw > 0 && f.width > 0) { const k = Math.min(HI, Math.max(LO, f.width / tw)); el.style.fontSize = (base * k).toFixed(2) + "px"; }
+          if (tw > 0 && f.width > 0) { const k = Math.min(HI, Math.max(LO, f.width / tw)); el.style.fontSize = (base * k).toFixed(2) + "px";
+            if (f.group) { const key = f.group.__fitKey || (f.group.__fitKey = {}); const col = f.el.cellIndex; key[col] = Math.min(key[col] ?? Infinity, k); f.k = k; f.base = base; } }
           continue;
         }
         if (!f.lh) continue;
@@ -278,7 +310,8 @@
         el.style.fontSize = (base * lo).toFixed(2) + "px";
       }
     };
-    Promise.allSettled([...loaded.values()]).then(() => (document.fonts ? document.fonts.ready : null)).then(() => requestAnimationFrame(go));
+    const goAll = () => { go(); for (const f of fits) if (f.group && f.k != null) { const k = f.group.__fitKey[f.el.cellIndex]; f.sizeEl.style.fontSize = (f.base * k).toFixed(2) + "px"; } };  // a table column shares its smallest size
+    Promise.allSettled([...loaded.values()]).then(() => (document.fonts ? document.fonts.ready : null)).then(() => requestAnimationFrame(goAll));
   }
 
   const CSS = `
