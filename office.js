@@ -1,4 +1,4 @@
-/* ThaOCR Office: page tools for PDF files, in the browser (the UI is the Office page in app.js).
+/* ThaOCR PDF Tools: page tools for PDF files, in the browser (the UI is the PDF Tools page, #/pdf, in app.js).
    window.ThaOffice = {config, lib(), locked(src), build(list, meta), zip(files), parseRanges(text, n), fmtRanges(nums)}
    A source is {bytes: Uint8Array of a PDF}; its parsed pdf-lib document is kept on it (src._lib) after first use.
    Pages are copied, not redrawn: text, fonts, images, links and each page's own rotation stay as they were. Only which
@@ -51,7 +51,7 @@
     // one copyPages call per source: fonts and images shared by its pages are written once, not once per page
     for (const [src, ks] of bySrc) { const doc = await open(src), copied = await out.copyPages(doc, ks.map(k => list[k].i)); ks.forEach((k, j) => { at[k] = copied[j]; }); }
     list.forEach((p, k) => { const pg = out.addPage(at[k]); if (turn(p.rot)) pg.setRotation(L.degrees(turn(pg.getRotation().angle + turn(p.rot)))); });
-    out.setProducer("ThaOCR"); out.setCreator("ThaOCR Office"); if (meta.title) out.setTitle(String(meta.title));
+    out.setProducer("ThaOCR"); out.setCreator("ThaOCR PDF Tools"); if (meta.title) out.setTitle(String(meta.title));
     return out.save();
   }
 

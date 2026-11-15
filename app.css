@@ -542,7 +542,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 @media(max-width:480px){.ztools .zpct{display:none}}
 
 /* ---------- reduced motion: keep spinners (they signal work), drop the rest */
-/* ---------- Office page: PDF page tools */
+/* ---------- PDF Tools page (#/pdf, code in office.js + the off* functions in app.js) */
 .off-feats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .off-feat{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:var(--r);background:var(--surface);border:1px solid var(--line)}
 .off-feat .fi{width:34px;height:34px;border-radius:10px;background:var(--cream);display:grid;place-items:center;flex:none;color:var(--ink)}

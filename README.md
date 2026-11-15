@@ -8,7 +8,7 @@ server-side storage; the app says so before first use.
 index.html / app.js / app.css   the UI (light + dark theme: follows the system, switch in the sidebar or Settings)
 docview.js                      reflowed, editable page view (shared with the backend app)
 export.js                       Word (.docx) and PDF export from one document model (window.ThaExport)
-office.js                       Office page core: merge / reorder / rotate / split / extract PDF pages (window.ThaOffice)
+office.js                       PDF Tools page core: merge / reorder / rotate / split / extract PDF pages (window.ThaOffice)
 ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure)
 ocr/pipeline.js                 regions -> blocks -> text -> paragraphs -> page result (same schema as POST /process)
 ocr/pdf.js                      PDF input (pdf.js from jsDelivr): text-layer pages are read without OCR, image pages are OCRed
@@ -88,7 +88,7 @@ Export (export.js): Word and PDF are written from one model built from `page.doc
   OCR instead" on such a page to get its tables.
 - Offline: copy the two library files into `vendor/` and point `ThaExport.config.docx` / `.harfbuzz` there.
 
-Office (first item in the sidebar): page tools for PDF files, separate from OCR. Open one or more PDFs (they are
+PDF Tools (first item in the sidebar, `#/pdf`): page tools for PDF files, separate from OCR. Open one or more PDFs (they are
 merged in the order added), see every page as a thumbnail (pdf.js, rendered when it scrolls into view), click to select
 (Shift for a range), drag to reorder (press and hold on a phone; a selected page carries the whole selection), rotate,
 delete, undo / redo. Download the result, extract the selected pages, or split: click the scissors between pages, or

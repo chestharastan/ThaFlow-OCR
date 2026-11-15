@@ -35,7 +35,7 @@ const ICONS = {
   "rotate-cw": '<rect x="4" y="9" width="11" height="11" rx="1.5"/><path d="M10 4h3a6 6 0 0 1 6 6v1"/><path d="m16 8 3 3 3-3"/>',
   "rotate-ccw": '<rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M14 4h-3a6 6 0 0 0-6 6v1"/><path d="m8 8-3 3-3-3"/>',
   scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.12 8.12 12 12M20 4 8.12 15.88M14.8 14.8 20 20"/>',
-  office: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>',
+  files: '<path d="M15 2H9a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7z"/><path d="M15 2v5h5"/><path d="M4 7v12a3 3 0 0 0 3 3h8"/>',
   minus: '<path d="M5 12h14"/>',
   redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
   "chevron-right": '<path d="m9 6 6 6-6 6"/>',
@@ -318,7 +318,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && document.q
 /* ---------------------------------------------------------------- scan (home) */
 function pickFiles(cb, camera, accept) { const inp = $("#fileinput"); inp.accept = accept || "image/*,application/pdf,.pdf"; if (camera) inp.setAttribute("capture", "environment"); else inp.removeAttribute("capture"); inp.value = ""; inp.onchange = () => cb([...inp.files]); inp.click(); }
 function wireDrop(el, cb) { el.ondragover = e => { e.preventDefault(); el.classList.add("on"); }; el.ondragleave = () => el.classList.remove("on"); el.ondrop = e => { e.preventDefault(); el.classList.remove("on"); cb([...e.dataTransfer.files].filter(f => /^image\//.test(f.type) || /\.(tiff?)$/i.test(f.name) || T.pdf.isPdf(f))); }; }
-document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/") || T.pdf.isPdf(x)); if (!f.length) return; if (location.hash.startsWith("#/select")) selAdd(f); else if (location.hash.startsWith("#/office")) offAdd(f); else addAndShow(f); });
+document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/") || T.pdf.isPdf(x)); if (!f.length) return; if (location.hash.startsWith("#/select")) selAdd(f); else if (location.hash.startsWith("#/pdf")) offAdd(f); else addAndShow(f); });
 async function addFiles(files) {
   for (const f of files) {
     if (T.pdf.isPdf(f)) { const p = {file: f, url: "", w: 0, h: 0, pdf: {pages: 0, error: null}}; pending.push(p);
@@ -915,7 +915,7 @@ async function resetEverything() {
 function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
   const tile = (ic, t, p) => `<div class="card tile"><div class="ti">${icon(ic)}</div><b>${t}</b><p>${p}</p></div>`;
-  const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, reset (page views)"], ["<kbd>Ctrl</kbd> + scroll", "Zoom at the pointer (or pinch)"], ["<kbd>Space</kbd> + drag", "Move a zoomed page (Select)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"], ["<kbd>R</kbd> <kbd>Del</kbd>", "Rotate or delete the selected pages (Office)"], ["<kbd>Alt</kbd> + arrows", "Move the selected pages (Office)"], ["<kbd>Ctrl</kbd> <kbd>Z</kbd>", "Undo (Office)"]];
+  const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, reset (page views)"], ["<kbd>Ctrl</kbd> + scroll", "Zoom at the pointer (or pinch)"], ["<kbd>Space</kbd> + drag", "Move a zoomed page (Select)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"], ["<kbd>R</kbd> <kbd>Del</kbd>", "Rotate or delete the selected pages (PDF Tools)"], ["<kbd>Alt</kbd> + arrows", "Move the selected pages (PDF Tools)"], ["<kbd>Ctrl</kbd> <kbd>Z</kbd>", "Undo (PDF Tools)"]];
   view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1><p>Quick tips for the best results.</p></div></div>
   <div class="tiles">
    ${tile("shield", "Private", "Runs in your browser. Files are never uploaded. No account, no server.")}
@@ -925,7 +925,7 @@ function renderHelp() {
    ${tile("pencil", "Check &amp; edit", `Lines under ${Math.round(LOW * 100)}% confidence are highlighted. Click any text to fix it.`)}
    ${tile("download", "Export", "Word keeps headings, tables, fonts and images. Text and JSON too.")}
    ${tile("select", "Select", "Drag a box over part of a page to read and copy only that part. Zoom in for small text.")}
-   ${tile("office", "Office", "Merge PDFs, drag pages into order, rotate or delete them, split into parts or extract the pages you pick.")}
+   ${tile("files", "PDF Tools", "Merge PDFs, drag pages into order, rotate or delete them, split into parts or extract the pages you pick.")}
    ${tile("clock", "Speed", "First visit downloads ~40 MB once. Seconds per page on a laptop, longer on a phone.")}
   </div>
   <div class="card pad"><h2>Shortcuts</h2><div class="keys">${keys.map(([k, t]) => `<span>${k}</span><span>${t}</span>`).join("")}</div></div>`;
@@ -1059,7 +1059,7 @@ function selResults(f) {
   void all;
 }
 
-/* ---------------------------------------------------------------- office: merge, reorder, rotate, split and extract PDF pages */
+/* ---------------------------------------------------------------- PDF Tools (#/pdf): merge, reorder, rotate, split and extract PDF pages */
 // Pages live only in this tab (nothing is saved). A card is {id, s: its source PDF, i: page index there, rot: extra turn
 // in degrees}; the id stays with the page through moves, so the selection and the split cuts follow it. office.js copies
 // the chosen pages into a new file with pdf-lib, so text, fonts and images come out exactly as they went in.
@@ -1080,10 +1080,10 @@ function offName(tail, ext = "pdf") {
 
 async function offAdd(list) {
   const files = [...list], pdfs = files.filter(f => T.pdf.isPdf(f));
-  if (pdfs.length < files.length) toast(pdfs.length ? `${plural(files.length - pdfs.length, "file")} skipped · Office opens PDF files` : "Office opens PDF files · photos go to Scan");
+  if (pdfs.length < files.length) toast(pdfs.length ? `${plural(files.length - pdfs.length, "file")} skipped · PDF files only` : "Only PDF files can be added here · photos go to Scan");
   if (!pdfs.length) return;
   const gen = OFF.gen; OFF.opening += pdfs.length;
-  if (location.hash !== "#/office") location.hash = "#/office"; else offSync();
+  if (location.hash !== "#/pdf") location.hash = "#/pdf"; else offSync();
   for (const f of pdfs) {
     let doc = null, msg = "";
     try {
@@ -1097,7 +1097,7 @@ async function offAdd(list) {
   }
 }
 function offReset() {
-  if (OFF.pages.length && !confirm("Remove all files from Office? Pages you have not downloaded are lost.")) return;
+  if (OFF.pages.length && !confirm("Remove all PDF files? Pages you have not downloaded are lost.")) return;
   for (const s of OFF.srcs) { T.pdf.close(s.doc); for (const u of s.thumbs) if (u && u !== "x") URL.revokeObjectURL(u); s._lib = null; }
   Object.assign(OFF, {srcs: [], pages: [], sel: new Set(), anchor: null, focus: null, undo: [], redo: [], split: null, splitMem: null, opening: 0, gen: OFF.gen + 1});
   OQ.list = []; renderOffice();
@@ -1207,8 +1207,8 @@ function renderOffice() {
   if (OQ.io) OQ.io.disconnect(); OQ.io = null; OQ.near.clear();
   if (!OFF.srcs.length && !OFF.opening) {
     view.innerHTML = `
-    <div class="head"><div class="grow"><h1>Office</h1><p>Merge, reorder, rotate and split PDF pages, right in your browser.</p></div></div>
-    <div class="drop off-drop" id="o_drop"><div class="ico">${icon("office", "l")}</div><div class="grow"><b>Drop PDF files here</b><div class="small">One or more PDFs · or paste with ${OFF_KEY.v}</div></div>
+    <div class="head"><div class="grow"><h1>PDF Tools</h1><p>Merge, reorder, rotate and split PDF pages, right in your browser.</p></div></div>
+    <div class="drop off-drop" id="o_drop"><div class="ico">${icon("files", "l")}</div><div class="grow"><b>Drop PDF files here</b><div class="small">One or more PDFs · or paste with ${OFF_KEY.v}</div></div>
       <div class="acts"><button class="btn p" id="o_browse">${icon("folder")}Choose PDF files</button></div></div>
     <div class="off-feats">
      <div class="off-feat"><span class="fi">${icon("layers")}</span><div><b>Merge</b><span>Add several PDFs and save them as one file</span></div></div>
@@ -1220,7 +1220,7 @@ function renderOffice() {
     return;
   }
   view.innerHTML = `
-  <div class="head"><div class="grow"><h1>Office</h1><p>${matchMedia("(pointer:coarse)").matches ? "Tap pages to select them · press and hold to move one" : "Click pages to select them · drag to reorder"} · nothing is uploaded.</p></div>
+  <div class="head"><div class="grow"><h1>PDF Tools</h1><p>${matchMedia("(pointer:coarse)").matches ? "Tap pages to select them · press and hold to move one" : "Click pages to select them · drag to reorder"} · nothing is uploaded.</p></div>
     <div class="tools"><button class="btn ghost" id="o_reset" title="Remove all files and start again">${icon("x", "s")}Clear</button><button class="btn" id="o_add">${icon("plus")}Add PDF</button><button class="btn p" id="o_save"></button></div></div>
   <div class="off-files" id="o_files"></div>
   <div class="card off-bar" id="o_bar" role="group" aria-label="Page tools"></div>
@@ -1272,7 +1272,7 @@ function renderOffice() {
 }
 /** bring the page up to date with OFF without rebuilding it: files, toolbar, cards (kept by id, so thumbnails stay) */
 function offSync(animate) {
-  if (!location.hash.startsWith("#/office")) return;
+  if (!location.hash.startsWith("#/pdf")) return;
   const grid = $("#o_grid"); if (!grid !== !(OFF.srcs.length || OFF.opening)) { renderOffice(); return; }
   if (!grid) return;
   offFiles(); offBar(); offGrid(grid, animate);
@@ -1402,7 +1402,7 @@ function offDnd(grid, stage) {
   grid.addEventListener("contextmenu", e => { if (e.target.closest(".off-pg") && (d || matchMedia("(pointer:coarse)").matches)) e.preventDefault(); });
   grid.addEventListener("dragstart", e => e.preventDefault());
 }
-// keys while Office is shown (not while typing, or with a dialog, menu or the preview open)
+// keys while PDF Tools is shown (not while typing, or with a dialog, menu or the preview open)
 document.addEventListener("keydown", e => {
   if (!$("#o_grid") || e.defaultPrevented) return;
   if (OFF.dragCancel) { if (e.key === "Escape") { e.preventDefault(); OFF.dragCancel(); } return; }
@@ -1456,10 +1456,10 @@ function offPreview(id) {
 }
 
 /* ---------------------------------------------------------------- router + boot */
-const ROUTES = {office: renderOffice, select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
-const TITLES = {office: "Office", scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
+const ROUTES = {pdf: renderOffice, office: () => location.replace("#/pdf"), select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
+const TITLES = {pdf: "PDF Tools", scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
 function route(e) { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); document.title = (TITLES[r] ? TITLES[r] + " · " : "") + "ThaOCR";
-  const wide = r === "review" || r === "select" || r === "office"; view.classList.toggle("wide", wide); $(".topbar").classList.toggle("wide", wide);
+  const wide = r === "review" || r === "select" || r === "pdf"; view.classList.toggle("wide", wide); $(".topbar").classList.toggle("wide", wide);
   view.classList.add("enter"); clearTimeout(route.t); route.t = setTimeout(() => view.classList.remove("enter"), 350);  // entry animation on page change only, not on re-renders
   (ROUTES[r] || renderScan)(arg); window.scrollTo(0, 0);
   if (e && e.type === "hashchange" && !(document.activeElement && document.activeElement.closest && document.activeElement.closest(".page"))) view.focus({preventScroll: true});  // screen readers land on the new page
