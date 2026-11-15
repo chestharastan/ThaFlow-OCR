@@ -334,5 +334,5 @@
 .dv-flow .dv-li{line-height:1.85}.dv-flow .dv-tabline{white-space:normal}`;
   function injectCss() { const old = document.getElementById("dv-css"); if (old) old.remove(); const st = document.createElement("style"); st.id = "dv-css"; st.textContent = CSS; document.head.appendChild(st); }
   injectCss();
-  window.DocView = {render, css: CSS};
+  window.DocView = {render, css: CSS, fonts: FONT_FILES};
 })();

@@ -291,9 +291,9 @@ function wireDocsTable() {
   view.querySelectorAll("tr.click").forEach(tr => { tr.onclick = e => { if (e.target.closest(".more") || e.target.closest(".menu")) return; location.hash = "#/review/" + tr.dataset.id; };
     tr.onkeydown = e => { if ((e.key === "Enter" || e.key === " ") && e.target === tr) { e.preventDefault(); location.hash = "#/review/" + tr.dataset.id; } }; });
   view.querySelectorAll(".more").forEach(btn => btn.onclick = e => { e.stopPropagation(); closeMenus(); const m = document.createElement("div"); m.className = "menu"; m.setAttribute("role", "menu");
-    m.innerHTML = `<button data-a="open" role="menuitem">${icon("external")}Open</button><button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><hr><button data-a="rerun" role="menuitem">${icon("refresh")}Run OCR again</button><button data-a="del" class="danger" role="menuitem">${icon("trash")}Delete</button>`;
+    m.innerHTML = `<button data-a="open" role="menuitem">${icon("external")}Open</button><button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="pdf" role="menuitem">${icon("file")}PDF (.pdf)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><hr><button data-a="rerun" role="menuitem">${icon("refresh")}Run OCR again</button><button data-a="del" class="danger" role="menuitem">${icon("trash")}Delete</button>`;
     btn.parentElement.appendChild(m); openMenu(m); m.onclick = async ev => { const a = ev.target.closest("button")?.dataset.a, d = store.get(btn.dataset.id); closeMenus(); if (!d) return; const g = groupDocs(groupKey(d));
-      if (a === "open") location.hash = "#/review/" + d.page_id; if (a === "rerun") await rerunGroup(g); if (a === "docx") exportDocx(g); if (a === "txt") download(groupTitle(g) + ".txt", groupText(g), "text/plain;charset=utf-8");
+      if (a === "open") location.hash = "#/review/" + d.page_id; if (a === "rerun") await rerunGroup(g); if (a === "docx") exportDocx(g); if (a === "pdf") exportPdf(g); if (a === "txt") download(groupTitle(g) + ".txt", groupText(g), "text/plain;charset=utf-8");
       if (a === "del") { if (!confirm(g.length > 1 ? `Delete this document and its ${g.length} pages?` : "Delete this document?")) return; await deleteGroup(g); route(); toast("Deleted"); } }; });
 }
 function closeMenus() { document.querySelectorAll(".menu").forEach(m => m.remove()); }
@@ -691,9 +691,9 @@ function renderReview(id) {
   view.querySelectorAll("[data-ocr]").forEach(b => b.onclick = async e => { e.stopPropagation(); const s = byId[b.dataset.ocr]; if (!(await rerunPages([s]))) return; afterRerun(groupDocs(groupKey(s)).concat([s])); if (!location.hash.startsWith("#/review/")) return; setTimeout(() => { for (const el of view.querySelectorAll(`.pagewrap[data-pid="${s.page_id}"]`)) el.scrollIntoView({block: "start"}); }, 50); });
   if ($("#r_del")) $("#r_del").onclick = async () => { if (confirm(multi ? `Delete this document and its ${pages.length} pages from this browser?` : "Delete this document from this browser?")) { await deleteGroup(pages); location.hash = "#/documents"; toast("Deleted"); } };
   $("#r_export").onclick = e => { e.stopPropagation(); if (document.querySelector("#r_export + .menu")) { closeMenus(); return; } closeMenus(); const m = document.createElement("div"); m.className = "menu"; m.setAttribute("role", "menu");
-    m.innerHTML = `<button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><button data-a="json" role="menuitem">${icon("braces")}JSON</button><button data-a="png" role="menuitem">${icon("image")}Page image${multi ? "s" : ""}</button>`;
+    m.innerHTML = `<button data-a="docx" role="menuitem">${icon("file")}Word (.docx)</button><button data-a="pdf" role="menuitem">${icon("file")}PDF (.pdf)</button><button data-a="txt" role="menuitem">${icon("list")}Text (.txt)</button><button data-a="json" role="menuitem">${icon("braces")}JSON</button><button data-a="png" role="menuitem">${icon("image")}Page image${multi ? "s" : ""}</button>`;
     $("#r_export").parentElement.appendChild(m); openMenu(m); m.onclick = ev => { const a = ev.target.closest("button")?.dataset.a; closeMenus(); const base = groupTitle(pages);
-      if (a === "docx") exportDocx(pages); if (a === "txt") download(base + ".txt", groupText(pages), "text/plain;charset=utf-8");
+      if (a === "docx") exportDocx(pages); if (a === "pdf") exportPdf(pages); if (a === "txt") download(base + ".txt", groupText(pages), "text/plain;charset=utf-8");
       if (a === "json") download(base + ".json", JSON.stringify(multi ? pages.map(s => s.result) : d.result, null, 1), "application/json");
       if (a === "png") pages.forEach((s, i) => setTimeout(() => { const x = document.createElement("a"); x.href = s.image_url; x.download = multi ? `${base} page ${i + 1}.jpg` : s.filename; x.click(); }, i * 400)); }; };
   // page images + canvases
@@ -773,41 +773,13 @@ function applyEdit(d, b, l, text) {
 function recount(d) { const all = d.result.blocks.flatMap(x => x.lines || []).filter(x => x.text); d.chars = all.reduce((a, x) => a + x.text.length, 0); d.avg_conf = all.reduce((a, x) => a + x.confidence, 0) / Math.max(1, all.length); d.low = all.filter(x => x.confidence < LOW).length; }
 function download(name, data, type) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([data], {type})); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
 
-/* ---------------------------------------------------------------- Word export (docx library, in the browser) */
-let docxLib = null;
-async function loadDocx() { if (docxLib) return docxLib; if (!window.docx) { await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/docx@9.15.3/dist/index.iife.js"; s.onload = res; s.onerror = () => rej(new Error("docx library not found")); document.head.appendChild(s); }); } docxLib = window.docx; return docxLib; }
-const dataUrlBytes = u => { const b = atob(u.split(",")[1]); const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; };
-function docxParagraphs(D, page) {
-  const {Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, TabStopType, TabStopPosition, LeaderType, Tab} = D, out = [], W = page.width, doc = page.document;
-  const none = {style: BorderStyle.NONE, size: 0, color: "FFFFFF"}, noBorders = {top: none, bottom: none, left: none, right: none};
-  const contentW = Math.max(1, W - ((doc && doc.margins) ? doc.margins.left + doc.margins.right : 0.16 * W)), pageWidthTwips = 9026; // A4 text width at 2 cm margins
-  const align = a => a === "center" ? AlignmentType.CENTER : a === "right" ? AlignmentType.RIGHT : a === "justify" ? AlignmentType.JUSTIFIED : AlignmentType.LEFT;
-  const byId = Object.fromEntries(page.blocks.map(b => [b.id, b])), colW = columnWidths(page);
-  const lineRuns = e => { const b = byId[e.block]; if (!b || !(e.lines || []).length || !(T.pipeline && T.pipeline.runsWithBreaks)) return null; const want = new Set(e.lines), pl = (b.lines || []).filter(l => want.has(l.reading_order) && l.text); return pl.length ? T.pipeline.runsWithBreaks(pl, colW(e.block)) : null; };
-  // wrapped lines flow as one paragraph; a break that was kept on purpose (stacked title lines, addresses) is a Word line break
-  const runs = (e, fallbackBold) => (lineRuns(e) || (e.runs && e.runs.length ? e.runs : [{text: e.text || "", bold: !!fallbackBold}])).flatMap(r => String(r.text).split("\n").map((t, k) => new TextRun({text: t, break: k ? 1 : undefined, bold: !!r.bold || !!fallbackBold, italics: e.style && e.style.slant === "italic", font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined, size: e.style && e.style.font_px ? Math.max(16, Math.round(e.style.font_px / W * 1190)) : undefined})));
-  const one = e => {
-    if (e.type === "row" || e.type === "footer_row") { e.columns.forEach(c => c.elements.forEach(one)); return; }
-    if (e.type === "list") { e.items.forEach(it => out.push(new Paragraph({children: runs(it), bullet: {level: Math.min(8, it.level || 0)}, alignment: align(e.align)}))); return; }
-    if (e.type === "figure" || e.type === "decoration") { if (!e.crop) return; try { const wIn = Math.max(0.3, Math.min(6.3, 6.3 * (e.box[2] / contentW))), hIn = wIn * (e.box[3] / Math.max(1, e.box[2])); out.push(new Paragraph({alignment: align(e.align), children: [new ImageRun({type: "png", data: dataUrlBytes(e.crop), transformation: {width: Math.round(wIn * 96), height: Math.round(hIn * 96)}})]})); } catch (err) { console.warn(err); } return; }
-    if (e.type === "table" && e.table) { const t = e.table, total = Math.max(1, t.cols[t.cols.length - 1].x1 - t.cols[0].x0), widths = t.cols.map(c => Math.max(300, Math.round(9026 * (c.x1 - c.x0) / total)));
-      out.push(new Table({width: {size: 9026 * Math.min(1, total / contentW), type: WidthType.DXA}, columnWidths: widths, rows: t.rows.map(r => new TableRow({children: r.cells.map((c, i) => new TableCell({width: {size: c.colspan > 1 ? widths.reduce((p, q) => p + q, 0) : widths[i], type: WidthType.DXA}, columnSpan: c.colspan > 1 ? c.colspan : undefined, borders: t.borders ? undefined : noBorders, children: (c.text || "").split("\n").map(tx => new Paragraph({alignment: align(c.colspan > 1 ? "left" : t.cols[i].align), children: runs({text: tx, style: e.style}, c.colspan > 1)}))}))}))}));
-      out.push(new Paragraph({children: [], spacing: {after: 60}})); return; }
-    if ((e.text || "").includes("\t") && e.type === "paragraph") { const [before, after] = e.text.split("\t"); out.push(new Paragraph({tabStops: [{type: TabStopType.RIGHT, position: TabStopPosition.MAX, leader: LeaderType.DOT}], children: [...runs({text: before, style: e.style}), new TextRun({children: [new Tab(), after || ""], font: e.style && e.style.family && !/^Latin/.test(e.style.family) ? e.style.family : undefined})]})); return; }
-    if (e.type === "heading") { out.push(new Paragraph({children: runs(e, true), heading: e.heading === 1 ? HeadingLevel.HEADING_1 : e.heading === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3, alignment: align(e.align)})); return; }
-    out.push(new Paragraph({children: runs(e), alignment: align(e.align), indent: e.level ? {left: 720 * e.level} : (e.first_line_indent ? {firstLine: 720} : undefined), spacing: {after: 120}}));
-  };
-  if (doc && doc.elements) doc.elements.forEach(one);
-  else [...page.blocks].sort((a, b) => a.reading_order - b.reading_order).forEach(b => { if (b.crop && b.crop.url) one({type: "figure", crop: b.crop.url, box: [b.box.x, b.box.y, b.box.width, b.box.height], align: b.align}); else b.lines.filter(l => l.text).forEach(l => out.push(new Paragraph({children: [new TextRun({text: (l.bullet ? l.bullet + " " : "") + l.text})]}))); });
-  void pageWidthTwips; return out;
-}
-async function exportDocx(docs) {
-  toast("Building Word file…");
-  try { const D = await loadDocx(); const sections = docs.map((d, i) => ({properties: {page: {margin: {top: 1134, bottom: 1134, left: 1134, right: 1134}}}, children: docxParagraphs(D, d.result)}));
-    const file = new D.Document({creator: "ThaOCR", title: docTitle(docs[0]), styles: {default: {document: {run: {font: "Khmer OS Siemreap", size: 22}}}}, sections});
-    const blob = await D.Packer.toBlob(file); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = docTitle(docs[0]) + ".docx"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000); toast("Downloaded"); }
+/* ---------------------------------------------------------------- Word and PDF export: export.js (window.ThaExport) */
+async function exportFile(kind, docs) {
+  toast(kind === "pdf" ? "Building PDF…" : "Building Word file…");
+  try { await ThaExport[kind](docs, {title: docs.length > 1 ? groupTitle(docs) : docTitle(docs[0]), columnWidths}); toast("Downloaded"); }
   catch (e) { console.error(e); toast("Export failed: " + String(e.message || e).slice(0, 80)); }
 }
+const exportDocx = docs => exportFile("docx", docs), exportPdf = docs => exportFile("pdf", docs);
 
 /* ---------------------------------------------------------------- documents / settings / help */
 function renderDocuments() {
