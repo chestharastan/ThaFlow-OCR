@@ -440,17 +440,22 @@ function renderProcess() {
     view.innerHTML = `
   <div class="head" id="p_head">${headHtml}</div>
   <div class="grid g-main">
-   <div class="card"><div class="panehead"><span class="ph-t" id="p_name">${esc(cur.name)}</span><div class="grow"></div><span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
-    <div class="stage"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" style="display:block;max-width:100%;max-height:70vh"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
+   <div class="card"><div class="panehead"><span class="ph-t" id="p_name">${esc(cur.name)}</span><div class="grow"></div>${zoomTools("p_zoom")}<span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
+    <div class="stage zoomable" id="p_box"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" draggable="false"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
    <div style="display:flex;flex-direction:column;gap:16px">
     <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" style="width:${pct}%;transition:none"></i></div>
       <div class="small mut" id="p_note" style="margin-top:10px${note ? "" : ";display:none"}">${note}</div></div>
     <div class="card pad"><div class="pipe" id="p_steps">${steps.map(stepHtml).join("")}</div></div>
     <div id="p_files">${filesHtml}</div><div id="p_failed">${failedHtml}</div></div></div>`;
     const prev = PVIEW && PVIEW.id === JOB.id && PVIEW.phase === phase ? PVIEW.disp : pct;
-    PVIEW = {key, id: JOB.id, phase, target: pct, disp: Math.min(prev, pct), running, html: {}};
+    const zstate = PVIEW && PVIEW.zfile === cur ? PVIEW.zstate : null;  // same file: the zoom stays when the result replaces the photo
+    const pv = PVIEW = {key, id: JOB.id, phase, target: pct, disp: Math.min(prev, pct), running, html: {}, zfile: cur, zstate, zp: null};
     $("#p_pct").textContent = Math.round(PVIEW.disp) + "%"; $("#p_bar").style.width = PVIEW.disp + "%";
-    if (overlay) { const img = $("#p_img"), cv = $("#p_cv"); img.onload = () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true}); cv.classList.remove("hide"); cv.style.maxWidth = "100%"; cv.style.maxHeight = "70vh"; cv.style.width = "auto"; img.classList.add("hide"); }; if (img.complete) img.onload(); }
+    const img = $("#p_img"), cv = $("#p_cv");
+    const mount = (w, h) => { if (!pv.zp && $("#p_box")) pv.zp = zoomPane({box: $("#p_box"), el: $("#p_stage"), bar: $("#p_zoom"), w, h, state: pv.zstate, onChange: st => { pv.zstate = st; }}); };
+    img.onload = overlay ? () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true}); cv.classList.remove("hide"); img.classList.add("hide"); mount(last.width, last.height); }
+      : () => mount(img.naturalWidth, img.naturalHeight);
+    if (img.complete && img.naturalWidth) img.onload();
     progressLoop();
     return;
   }
@@ -554,6 +559,74 @@ function openLightbox(d, img, onClose) {
   cv.onpointermove = e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; body.scrollLeft = drag.l - dx; body.scrollTop = drag.t - dy; };
   cv.onpointerup = cv.onpointercancel = e => { if (drag) { cv.releasePointerCapture(e.pointerId); drag = null; cv.style.cursor = "grab"; } };
   const start = () => { paint(); layout([.5, 0]); }; if (img.complete && img.naturalWidth) start(); else img.addEventListener("load", start, {once: true});
+}
+
+/* ---------------------------------------------------------------- zoom inside a pane (Processing, Select) */
+const zoomTools = id => `<span class="ztools" id="${id}" role="group" aria-label="Zoom"><button class="tool" data-z="out" title="Zoom out (−)" aria-label="Zoom out" disabled>${icon("zoom-out", "s")}</button><span class="num small zpct">100%</span><button class="tool" data-z="in" title="Zoom in (+) · or Ctrl + scroll, pinch, double-click" aria-label="Zoom in" disabled>${icon("zoom-in", "s")}</button><button class="btn sm ghost" data-z="reset" title="Reset zoom · whole page (0)" disabled>${icon("fit", "s")}Reset</button></span>`;
+/** Zoom and move a picture inside a pane. box = the pane (it scrolls), el = the picture, sized here at fit × zoom
+ *  (fit = the whole picture in view, never above its own size); w, h = the picture's own size in pixels.
+ *  Ctrl/⌘ + wheel or a trackpad pinch zooms at the pointer, two fingers pinch and move on touch screens,
+ *  double-click zooms in and back, keys + − 0, and the zoomTools() buttons in bar.
+ *  pan "drag": a zoomed picture follows a mouse drag. "keys": a left drag belongs to the page (Select draws boxes),
+ *  so the picture moves with Space + drag, the middle button, the wheel or the scrollbars.
+ *  state {z, fx, fy} (from onChange) restores an earlier zoom and position; onGesture() runs when a pinch starts. */
+function zoomPane({box, el, bar, w, h, pan = "drag", state, onChange, onGesture}) {
+  let z = 1, fit = 1, drag = null, pinch = null, space = false, pointing = false, lastW = 0, lastH = 0;
+  const maxZ = () => Math.min(16, Math.max(4, 4 / fit));  // at least 4 × the whole page, and up to 400 % of the picture
+  const clamp = v => Math.min(maxZ(), Math.max(1, v)), zoomed = () => z > 1.001;
+  const ui = () => { if (!bar) return; $(".zpct", bar).textContent = Math.round(z * 100) + "%";
+    $('[data-z="out"]', bar).disabled = $('[data-z="reset"]', bar).disabled = !zoomed(); $('[data-z="in"]', bar).disabled = z >= maxZ() - 0.001; };
+  const layout = () => { // offsetWidth: the size without scrollbars, so showing them does not change the fit
+    const s = getComputedStyle(box), aw = box.offsetWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight), ah = box.offsetHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom);
+    fit = Math.max(0.01, Math.min(1, aw / w, ah / h)); z = clamp(z);
+    el.style.width = Math.floor(w * fit * z) + "px"; el.style.height = Math.floor(h * fit * z) + "px"; el.classList.add("zsized"); box.classList.toggle("zoomed", zoomed()); ui(); };
+  const middle = () => { const r = box.getBoundingClientRect(); return [r.left + box.clientLeft + box.clientWidth / 2, r.top + box.clientTop + box.clientHeight / 2]; };
+  const frac = (x, y) => { const r = el.getBoundingClientRect(); return [(x - r.left) / r.width, (y - r.top) / r.height]; };
+  const state_ = () => { const [x, y] = middle(), [fx, fy] = frac(x, y); return {z, fx, fy}; };
+  const changed = () => { if (onChange) onChange(state_()); };
+  /** zoom to nz with the picture point f (fractions) under the screen point x, y */
+  const place = (nz, f, x, y) => { z = clamp(nz); layout(); const r = el.getBoundingClientRect(); box.scrollLeft += r.left + f[0] * r.width - x; box.scrollTop += r.top + f[1] * r.height - y; changed(); };
+  const set = (nz, x, y) => { if (x == null) [x, y] = middle(); place(nz, frac(x, y), x, y); };  // keeps the point under x, y (default: the middle)
+  const reset = () => set(1);
+  if (bar) bar.onclick = e => { const b = e.target.closest("[data-z]"); if (!b) return; const a = b.dataset.z; if (a === "in") set(z * 1.5); if (a === "out") set(z / 1.5); if (a === "reset") reset(); };
+  box.addEventListener("wheel", e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault();  // a trackpad pinch arrives as Ctrl + wheel
+    const d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1); set(z * Math.exp(-Math.max(-100, Math.min(100, d)) * 0.003), e.clientX, e.clientY); }, {passive: false});
+  const onScrollbar = e => { const r = box.getBoundingClientRect(); return e.clientX - r.left >= box.clientLeft + box.clientWidth || e.clientY - r.top >= box.clientTop + box.clientHeight; };
+  box.addEventListener("dblclick", e => { if (onScrollbar(e)) return; e.preventDefault(); if (zoomed()) reset(); else set(2.5, e.clientX, e.clientY); });
+  // two fingers: zoom by their distance, move with their midpoint (one finger keeps scrolling, or drawing on Select)
+  const two = t => ({x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2, d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1});
+  box.addEventListener("touchstart", e => { if (e.touches.length !== 2) return; e.preventDefault(); const p = two(e.touches); pinch = {z0: z, d0: p.d, f: frac(p.x, p.y)}; if (onGesture) onGesture(); }, {passive: false});
+  box.addEventListener("touchmove", e => { if (!pinch || e.touches.length !== 2) return; e.preventDefault(); const p = two(e.touches); place(pinch.z0 * p.d / pinch.d0, pinch.f, p.x, p.y); }, {passive: false});
+  const endPinch = e => { if (e.touches.length < 2) pinch = null; }; box.addEventListener("touchend", endPinch); box.addEventListener("touchcancel", endPinch);
+  box.addEventListener("gesturestart", e => e.preventDefault());  // Safari: no page zoom while pinching the picture
+  // mouse: drag to move
+  box.addEventListener("pointerdown", e => { if (e.pointerType === "touch" || onScrollbar(e)) return;
+    if (!(e.button === 1 || (e.button === 0 && (space || (pan === "drag" && zoomed() && el.contains(e.target)))))) return;
+    e.preventDefault(); e.stopPropagation();  // capture phase: the page underneath (drawing boxes) does not see it
+    drag = {id: e.pointerId, x: e.clientX, y: e.clientY, l: box.scrollLeft, t: box.scrollTop}; box.setPointerCapture(e.pointerId); box.classList.add("panning"); }, true);
+  box.addEventListener("pointermove", e => { if (e.pointerType === "mouse") pointing = true; if (!drag || e.pointerId !== drag.id) return; box.scrollLeft = drag.l - (e.clientX - drag.x); box.scrollTop = drag.t - (e.clientY - drag.y); });
+  const endDrag = e => { if (!drag || e.pointerId !== drag.id) return; drag = null; box.classList.remove("panning"); };
+  box.addEventListener("pointerup", endDrag); box.addEventListener("pointercancel", endDrag); box.addEventListener("lostpointercapture", endDrag);
+  box.addEventListener("mousedown", e => { if (drag || e.button === 1) e.preventDefault(); });  // no text selection, image drag or autoscroll
+  box.addEventListener("scroll", changed, {passive: true});
+  // keys, on the whole page while this pane is shown (not while typing); removed once the pane is gone
+  const typing = t => t && t.closest && t.closest("input,textarea,select,[contenteditable]");
+  const onKey = e => { if (!box.isConnected) return stop();
+    if (e.type === "keyup") { if (e.key === " " && space) { space = false; box.classList.remove("grab"); } return; }
+    if (typing(e.target) || e.ctrlKey || e.metaKey || e.altKey || $("#lightbox") || !$("#notice").classList.contains("hide")) return;
+    if (e.key === "Tab") pointing = false;
+    if (e.key === " ") { // Space moves the picture while the mouse is on the pane, unless Tab moved the focus since (Space then presses that button)
+      if (pan === "drag" || !pointing || !box.matches(":hover")) return; space = true; box.classList.add("grab"); }
+    else if (e.key === "+" || e.key === "=") set(z * 1.5); else if (e.key === "-" || e.key === "_") set(z / 1.5); else if (e.key === "0") reset(); else return;
+    e.preventDefault(); };
+  const onBlur = () => { space = false; box.classList.remove("grab"); };
+  const ro = window.ResizeObserver ? new ResizeObserver(() => { if (!box.isConnected) return stop(); if (box.offsetWidth === lastW && box.offsetHeight === lastH) return;
+    lastW = box.offsetWidth; lastH = box.offsetHeight; const [x, y] = middle(); place(z, frac(x, y), x, y); }) : null;
+  function stop() { document.removeEventListener("keydown", onKey); document.removeEventListener("keyup", onKey); window.removeEventListener("blur", onBlur); if (ro) ro.disconnect(); }
+  document.addEventListener("keydown", onKey); document.addEventListener("keyup", onKey); window.addEventListener("blur", onBlur);
+  layout(); lastW = box.offsetWidth; lastH = box.offsetHeight; if (ro) ro.observe(box);
+  if (state && state.z > 1.001) { const [x, y] = middle(); place(state.z, [state.fx, state.fy], x, y); }
+  return {set, reset, get zoom() { return z; }, state: state_};
 }
 
 function renderReview(id) {
@@ -836,7 +909,7 @@ async function resetEverything() {
 function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
   const tile = (ic, t, p) => `<div class="card tile"><div class="ti">${icon(ic)}</div><b>${t}</b><p>${p}</p></div>`;
-  const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, fit (full-size view)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"]];
+  const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, reset (page views)"], ["<kbd>Ctrl</kbd> + scroll", "Zoom at the pointer (or pinch)"], ["<kbd>Space</kbd> + drag", "Move a zoomed page (Select)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"]];
   view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1><p>Quick tips for the best results.</p></div></div>
   <div class="tiles">
    ${tile("shield", "Private", "Runs in your browser. Files are never uploaded. No account, no server.")}
@@ -845,7 +918,7 @@ function renderHelp() {
    ${tile("file", "PDF files", "Pages with text are read exactly, without OCR. Scans use OCR. Wrong text? Use <b>Run OCR instead</b>.")}
    ${tile("pencil", "Check &amp; edit", `Lines under ${Math.round(LOW * 100)}% confidence are highlighted. Click any text to fix it.`)}
    ${tile("download", "Export", "Word keeps headings, tables, fonts and images. Text and JSON too.")}
-   ${tile("select", "Select", "Drag a box over part of a page to read and copy only that part.")}
+   ${tile("select", "Select", "Drag a box over part of a page to read and copy only that part. Zoom in for small text.")}
    ${tile("clock", "Speed", "First visit downloads ~40 MB once. Seconds per page on a laptop, longer on a phone.")}
   </div>
   <div class="card pad"><h2>Shortcuts</h2><div class="keys">${keys.map(([k, t]) => `<span>${k}</span><span>${t}</span>`).join("")}</div></div>`;
@@ -878,7 +951,7 @@ async function selImage(f) {  // -> {canvas,width,height}, decoded once
 }
 async function selLines(f) {  // text lines of the whole page, detected once
   if (!f.linesP) f.linesP = (async () => { const hint = $("#s_hint"); if (!T.loaded() && hint) hint.innerHTML = `<span class="spin" style="vertical-align:-2px"></span> Loading models (first time only)…`;
-    try { await ensureModels(); } finally { const h = $("#s_hint"); if (h) h.innerHTML = `${icon("select", "s")} Drag to select`; } applyScale(); const im = await selImage(f); const ls = await T.detectLines(im.canvas); return ls.map(l => Object.assign(l, {bbox: l.bbox || T.util.bboxOf(l.quad)})); })();
+    try { await ensureModels(); } finally { const h = $("#s_hint"); if (h) h.innerHTML = selHint(SEL.files[SEL.cur]); } applyScale(); const im = await selImage(f); const ls = await T.detectLines(im.canvas); return ls.map(l => Object.assign(l, {bbox: l.bbox || T.util.bboxOf(l.quad)})); })();
   try { return await f.linesP; } catch (e) { f.linesP = null; throw e; }
 }
 /** quad (tl,tr,br,bl) cut to the x range [x0,x1] along its top and bottom edges */
@@ -905,6 +978,7 @@ async function selRead(f, box) {
   return Object.assign(box, {text, conf, lines: order.length, ms: performance.now() - t0, state: "done"});
 }
 function selCopy(text) { if (!text) { toast("Nothing to copy"); return; } navigator.clipboard.writeText(text).then(() => toast("Copied"), () => toast("Copy blocked by the browser")); }
+const selHint = f => `${icon("select", "s")} Drag to select${f && f.zoom && f.zoom.z > 1.001 && !matchMedia("(pointer:coarse)").matches ? " · Space + drag to move" : ""}`;
 function renderSelect() {
   const f = SEL.files[SEL.cur];
   view.innerHTML = `
@@ -915,8 +989,8 @@ function renderSelect() {
     <div class="acts"><button class="btn p" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>` : `
   <div class="sel-grid">
    <div class="sel-files card" id="s_files">${SEL.files.map((x, i) => `<button class="sel-file ${i === SEL.cur ? "cur" : ""}" data-i="${i}" title="${esc(x.name)}"><span class="th">${x.thumb ? `<img src="${x.thumb}" alt="">` : icon("image")}</span><span class="nm">${esc(x.name)}</span>${x.boxes.length ? `<span class="count">${x.boxes.length}</span>` : ""}<span class="rm" data-rm="${i}" title="Remove" aria-label="Remove">${icon("x", "s")}</span></button>`).join("")}</div>
-   <div class="card sel-stage-card"><div class="panehead"><span class="ph-t">${esc(f.name)}</span><div class="grow"></div><span class="small mut" id="s_hint">${icon("select", "s")} Drag to select</span></div>
-     <div class="stage sel-stage" id="s_drop"><div class="sel-page" id="s_page"><div class="sel-wait" id="s_wait"><span class="spin"></span> Opening…</div></div></div></div>
+   <div class="card sel-stage-card"><div class="panehead"><span class="ph-t">${esc(f.name)}</span><div class="grow"></div><span class="small mut" id="s_hint">${selHint(f)}</span>${zoomTools("s_zoom")}</div>
+     <div class="stage sel-stage zoomable" id="s_drop"><div class="sel-page" id="s_page"><div class="sel-wait" id="s_wait"><span class="spin"></span> Opening…</div></div></div></div>
    <div class="sel-results" id="s_res"></div>
   </div>`}`;
   if ($("#s_add")) $("#s_add").onclick = () => pickFiles(selAdd); if ($("#s_browse")) { $("#s_browse").onclick = () => pickFiles(selAdd); $("#s_cam").onclick = () => pickFiles(selAdd, true); }
@@ -940,7 +1014,12 @@ function selMountPage(f, im) {
   const draw = () => { layer.innerHTML = f.boxes.map((b, i) => `<div class="sel-box ${b.state} ${b.id === f.focus ? "focus" : ""}" data-id="${b.id}" style="${pctStyle(b.r)}"><span class="tag">${i + 1}</span>${b.state === "reading" ? '<span class="sweep"></span>' : ""}</div>`).join(""); };
   f.redraw = draw; draw();
   let start = null, live = null;
-  layer.onpointerdown = e => { if (e.button !== 0) return; const hit = e.target.closest(".sel-box"); if (hit) { selFocus(f, hit.dataset.id); return; }
+  const cancelDraw = () => { start = null; if (live) { live.remove(); live = null; } };
+  // zoom: per file, kept while this tab lives; a two-finger pinch cancels the box being drawn
+  f.zp = zoomPane({box: $("#s_drop"), el: page, bar: $("#s_zoom"), w: im.width, h: im.height, pan: "keys", state: f.zoom, onGesture: cancelDraw,
+    onChange: st => { const was = !!(f.zoom && f.zoom.z > 1.001); f.zoom = st; if (was !== st.z > 1.001) { const h = $("#s_hint"); if (h && !h.querySelector(".spin")) h.innerHTML = selHint(f); } }});
+  layer.ondblclick = e => { if (e.target.closest(".sel-box")) e.stopPropagation(); };  // double-click zooms, but not on a box
+  layer.onpointerdown = e => { if (!e.isPrimary || start) { cancelDraw(); return; } if (e.button !== 0) return; const hit = e.target.closest(".sel-box"); if (hit) { selFocus(f, hit.dataset.id); return; }
     start = toImg(e); live = document.createElement("div"); live.className = "sel-box live"; layer.appendChild(live); layer.setPointerCapture(e.pointerId); e.preventDefault(); };
   layer.onpointermove = e => { if (!start) return; const p = toImg(e); live.setAttribute("style", pctStyle([Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.max(start[0], p[0]), Math.max(start[1], p[1])])); };
   layer.onpointerup = async e => { if (!start) return; const p = toImg(e), r = [Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.max(start[0], p[0]), Math.max(start[1], p[1])]; start = null; live.remove();
@@ -949,7 +1028,7 @@ function selMountPage(f, im) {
     try { await selRead(f, box); if (SEL.autoCopy && box.text) selCopy(box.text); }
     catch (err) { box.state = "failed"; box.err = err.message; }
     if (f.redraw) f.redraw(); selResults(f); };
-  layer.onpointercancel = () => { start = null; if (live) live.remove(); };
+  layer.onpointercancel = cancelDraw;
 }
 function selFileCount(f) { const i = SEL.files.indexOf(f), b = view.querySelector(`.sel-file[data-i="${i}"]`); if (!b) return; let c = b.querySelector(".count"); if (!c) { c = document.createElement("span"); c.className = "count"; b.insertBefore(c, b.querySelector(".rm")); } c.textContent = f.boxes.length || ""; }
 function selFocus(f, id) { f.focus = id; if (f.redraw) f.redraw(); view.querySelectorAll(".sel-item").forEach(el => el.classList.toggle("focus", el.dataset.id === id)); const it = view.querySelector(`.sel-item[data-id="${id}"]`); if (it) it.scrollIntoView({block: "nearest", behavior: "smooth"}); }

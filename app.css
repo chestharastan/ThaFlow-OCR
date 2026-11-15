@@ -243,6 +243,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 /* ---------- process */
 .stage{background:var(--surface-2);border-radius:0 0 calc(var(--r) - 1px) calc(var(--r) - 1px);padding:28px;display:grid;place-items:center;min-height:480px}
 .stage .pageimg{position:relative;box-shadow:var(--page-shadow);background:var(--paper);max-width:100%;overflow:hidden;border-radius:4px}
+.pageimg>img,.pageimg>canvas{display:block;max-width:100%;max-height:70vh}
 /* scan line: a full-size layer moved with transform (GPU, no layout), gliding down and back up with easing */
 .scanline{position:absolute;inset:0;pointer-events:none;animation:scan 2.8s cubic-bezier(.45,0,.55,1) infinite alternate;will-change:transform;transition:opacity .4s}
 .scanline::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--paper-ink);box-shadow:0 0 14px 1px rgba(20,20,20,.45)}
@@ -497,6 +498,24 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 @keyframes shimmer{from{background-position:200% 0}to{background-position:0 0}}
 @media(max-width:1180px){.sel-grid{grid-template-columns:120px minmax(0,1fr)}.sel-results{grid-column:1/-1;position:static;max-height:none}.sel-files{max-height:70vh}}
 @media(max-width:700px){.sel-grid{grid-template-columns:1fr}.sel-files{flex-direction:row;overflow-x:auto;position:static}.sel-file{width:110px;flex:none}.sel-file .th{height:70px}.sel-file .th img{max-height:70px}}
+
+/* ---------- zoom inside a pane (Processing, Select): the pane scrolls, zoomPane() sizes the picture.
+   contain:size keeps a zoomed picture from widening the page grid; margin:auto centres it without clipping. */
+.stage.zoomable{display:flex;overflow:auto;contain:size;height:max(480px,calc(70vh + 56px));min-height:0}
+.sel-stage.zoomable{height:max(420px,calc(100vh - 230px))}
+@media(max-width:860px){.stage.zoomable{height:max(300px,calc(70vh + 32px))}}
+.zoomable>*{margin:auto;flex:none;user-select:none;-webkit-user-select:none}
+.zoomable .zsized{max-width:none}
+.stage .zsized>img,.stage .zsized>canvas{width:100%;height:100%;max-width:none;max-height:none}
+.zoomable img{-webkit-user-drag:none}
+.zoomable .pageimg{cursor:zoom-in}.zoomable.zoomed .pageimg{cursor:grab}
+.zoomable.grab,.zoomable.grab *{cursor:grab!important}
+.zoomable.panning,.zoomable.panning *{cursor:grabbing!important}
+.ztools{display:inline-flex;align-items:center;gap:2px;flex:none}
+.ztools .zpct{min-width:40px;text-align:center;color:var(--ink-2)}
+.ztools .btn{margin-left:2px}
+.tool:disabled{opacity:.4;pointer-events:none}
+@media(max-width:480px){.ztools .zpct{display:none}}
 
 /* ---------- reduced motion: keep spinners (they signal work), drop the rest */
 @media(prefers-reduced-motion:reduce){
