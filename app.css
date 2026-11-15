@@ -123,6 +123,11 @@ nav.tabs{display:flex;flex-direction:column;gap:2px}
 .fine svg.i{color:var(--mut)}
 .col{display:flex;flex-direction:column;gap:16px;min-width:0}
 .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.linkrow{display:flex;align-items:center;gap:12px;margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-s);transition:background .15s,border-color .15s}
+.linkrow:hover{background:var(--surface-2);border-color:var(--cream-2)}
+.linkrow .ti{width:34px;height:34px;border-radius:9px;background:var(--cream);display:grid;place-items:center;flex:none;color:var(--ink)}
+.linkrow b{display:block;font-weight:500}.linkrow .small{display:block;overflow-wrap:anywhere}
+.linkrow>svg.i{color:var(--mut);flex:none}
 
 /* ---------- buttons, badges, chips */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:36px;padding:0 14px;border-radius:var(--r-s);border:1px solid var(--line);background:var(--surface);color:var(--ink);font-weight:500;white-space:nowrap;line-height:1;box-shadow:var(--shadow);transition:background .15s,border-color .15s,color .15s,transform .06s}

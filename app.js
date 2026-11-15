@@ -818,6 +818,8 @@ function renderDocuments() {
     if (!confirm(`Delete ${m === 1 ? "1 document" : `all ${m} documents`} from this browser?\n\nExport anything you want to keep first. This cannot be undone.`)) return;
     await store.clear(); sidebar(); renderDocuments(); view.focus({preventScroll: true}); toast("All documents deleted"); };
 }
+/** the Hugging Face page of the model files (free to browse and download), from the configured download URL */
+const modelsPage = () => { const m = /^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\//.exec(T.config.modelBase || ""); return "https://huggingface.co/" + (m ? m[1] : "Thareah/ThaOCR-models"); };
 async function renderSettings() {
   view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1></div></div><div class="chips"><span class="chip"><span class="spin"></span>Loading…</span></div>`;
   await T.loadManifestSafe(); if (!RECO) await deviceCheck();
@@ -836,7 +838,8 @@ async function renderSettings() {
     <div class="field"><label>Model set</label><div class="tiers" id="s_tiers">${["high", "mid", "low"].map(t => `<button type="button" class="tier ${tier === t ? "on" : ""}" data-t="${t}" aria-pressed="${tier === t}" title="${TIER_TECH[t]}"><b>${TIER_LABEL[t]}</b><span>${TIER_SUB[t]}</span>${RECO.tier === t ? `<i class="rec">Recommended</i>` : ""}</button>`).join("")}</div></div>
     <div class="field"><label for="s_backend">Compute</label><div class="sel"><select id="s_backend">${opt("auto", store.settings.backend, "Automatic")}${opt("webgpu", store.settings.backend, "GPU (WebGPU)")}${opt("wasm", store.settings.backend, "CPU (WebAssembly)")}</select></div></div>
     ${b ? `<div class="kv"><span>Speed</span><b title="Regions ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per text line · ${b.backend}">~${T.estimate(b, 40)} s per page</b></div>` : `<p class="small mut" style="margin:0">Speed is measured after the first load.</p>`}
-    <div class="btnrow"><button class="btn sm" id="s_bench">${icon("refresh", "s")}Measure again</button><button class="btn sm" id="s_load">${icon("download", "s")}Load models now</button></div></div>
+    <div class="btnrow"><button class="btn sm" id="s_bench">${icon("refresh", "s")}Measure again</button><button class="btn sm" id="s_load">${icon("download", "s")}Load models now</button></div>
+    <a class="linkrow" href="${esc(modelsPage())}" target="_blank" rel="noopener"><span class="ti">${icon("layers")}</span><span class="grow"><b>Free models on Hugging Face</b><span class="small mut">${esc(modelsPage().replace("https://huggingface.co/", ""))} · see and download every model</span></span>${icon("external", "s")}<span class="sr">(opens in a new tab)</span></a></div>
    <div class="card pad"><h2>Layout</h2>
     <div class="field" style="margin:0"><label for="s_rules">Page analysis</label><div class="sel"><select id="s_rules">${opt("rules", store.settings.rules !== false ? "rules" : "model", "Models + layout rules (recommended)")}${opt("model", store.settings.rules !== false ? "rules" : "model", "Models only")}</select></div><div class="small mut">Rules join paragraphs, tables and label columns. Applies to the next scan.</div></div></div>
    <details class="card adv"><summary><span class="grow"><b>Models</b><span class="small mut">Advanced · overrides the model set</span></span>${icon("chevron-down")}</summary><div class="adv-body">
