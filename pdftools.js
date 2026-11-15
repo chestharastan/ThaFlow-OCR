@@ -1,9 +1,9 @@
-/* ThaOCR PDF Tools: page tools for PDF files, in the browser (the UI is the PDF Tools page, #/pdf, in app.js).
-   window.ThaOffice = {config, lib(), locked(src), build(list, meta), zip(files), parseRanges(text, n), fmtRanges(nums)}
+/* ThaOCR PDF page tools, in the browser (the UI is the PDF page, #/pdf, in app.js).
+   window.ThaPdfTools = {config, lib(), locked(src), build(list, meta), zip(files), parseRanges(text, n), fmtRanges(nums)}
    A source is {bytes: Uint8Array of a PDF}; its parsed pdf-lib document is kept on it (src._lib) after first use.
    Pages are copied, not redrawn: text, fonts, images, links and each page's own rotation stay as they were. Only which
    pages, their order and an extra quarter turn change. pdf-lib (MIT) loads from jsDelivr on first use
-   (ThaOffice.config.pdfLib); copy dist/pdf-lib.min.js to vendor/ and point it there for offline work. */
+   (ThaPdfTools.config.pdfLib); copy dist/pdf-lib.min.js to vendor/ and point it there for offline work. */
 (function () {
   "use strict";
   const CFG = {pdfLib: "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"};
@@ -51,7 +51,7 @@
     // one copyPages call per source: fonts and images shared by its pages are written once, not once per page
     for (const [src, ks] of bySrc) { const doc = await open(src), copied = await out.copyPages(doc, ks.map(k => list[k].i)); ks.forEach((k, j) => { at[k] = copied[j]; }); }
     list.forEach((p, k) => { const pg = out.addPage(at[k]); if (turn(p.rot)) pg.setRotation(L.degrees(turn(pg.getRotation().angle + turn(p.rot)))); });
-    out.setProducer("ThaOCR"); out.setCreator("ThaOCR PDF Tools"); if (meta.title) out.setTitle(String(meta.title));
+    out.setProducer("ThaOCR"); out.setCreator("ThaOCR"); if (meta.title) out.setTitle(String(meta.title));
     return out.save();
   }
 
@@ -102,5 +102,5 @@
     return out.join(sep);
   }
 
-  window.ThaOffice = {config: CFG, lib, open, locked, build, zip, crc32, parseRanges, fmtRanges};
+  window.ThaPdfTools = {config: CFG, lib, open, locked, build, zip, crc32, parseRanges, fmtRanges};
 })();
