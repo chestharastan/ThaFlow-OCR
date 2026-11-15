@@ -318,12 +318,14 @@ async function addFiles(files) {
     pending.push({file: f, url, w: dims[0], h: dims[1]}); }
 }
 async function addAndShow(files) { await addFiles(files); const was = location.hash; location.hash = "#/scan"; if (was === "#/scan") route(); }
+/** switch the model set (Best quality / Balanced / Light); the caller re-renders its page */
+function setTier(t) { store.settings.tier = t === RECO.tier ? null : t; store.settings.models = {}; const fake = T.recommend(Object.assign({}, DEVICE, {webgpu: t === "high", mobile: t === "low", threads: t === "high" ? 8 : t === "low" ? 4 : 6, memoryGB: t === "low" ? 4 : 8})); RECO = Object.assign({}, RECO, {choice: fake.choice, scale: fake.scale}); store.settings.longMin = null; store.settings.longMax = null; store.save(); resetModels(); }
 function devicePanel() {
   if (!DEVICE || !RECO) return `<div class="chips"><span class="chip"><span class="spin"></span>Checking device…</span></div>`;
   const b = T.benchmarkStored(), est = b ? T.estimate(b, 40) : null, tier = store.settings.tier || RECO.tier;
   return `<div class="chips">
     <span class="chip" title="${esc(RECO.reasons.join(" · "))}">${icon("cpu", "s")}${DEVICE.webgpu ? "GPU" : "CPU"} · ${DEVICE.threads} threads${DEVICE.memoryGB ? ` · ${DEVICE.memoryGB} GB` : ""}</span>
-    <a class="chip" href="#/settings" title="Model set${tier === RECO.tier ? " (recommended)" : ""} · change in Settings">${icon("layers", "s")}${TIER_LABEL[tier]}</a>
+    <span class="rel"><button type="button" class="chip" id="tier_chip" aria-haspopup="menu" title="Model set${tier === RECO.tier ? " (recommended)" : ""} · click to change">${icon("layers", "s")}${TIER_LABEL[tier]}${icon("chevron-down", "s")}</button></span>
     ${est ? `<span class="chip" title="Typical 40-line page on this device">${icon("clock", "s")}~${est} s / page</span>` : ""}
     <span class="chip ${T.loaded() ? "ok" : ""}">${icon(T.loaded() ? "check-circle" : "download", "s")}<span id="dl_line">${T.loaded() ? "Models ready" : "Models"}</span></span></div>`;
 }
@@ -354,6 +356,11 @@ function renderScan() {
   $("#s_browse").onclick = () => pickFiles(async f => { await addFiles(f); renderScan(); });
   $("#s_cam").onclick = () => pickFiles(async f => { await addFiles(f); renderScan(); }, true);
   clickToBrowse($("#drop"), $("#s_browse"));
+  if ($("#tier_chip")) $("#tier_chip").onclick = e => { e.stopPropagation(); const chip = e.currentTarget; if (chip.parentElement.querySelector(".menu")) { closeMenus(); return; } closeMenus();
+    const cur = store.settings.tier || RECO.tier, m = document.createElement("div"); m.className = "menu l"; m.setAttribute("role", "menu");
+    m.innerHTML = ["high", "mid", "low"].map(t => `<button data-t="${t}" role="menuitemradio" aria-checked="${cur === t}" title="${TIER_TECH[t]}">${icon(cur === t ? "check" : "layers", "s")}<span><b>${TIER_LABEL[t]}</b>${RECO.tier === t ? " · recommended" : ""}<span class="small mut" style="display:block;line-height:1.2">${TIER_SUB[t]}</span></span></button>`).join("") + `<hr><button data-a="settings" role="menuitem">${icon("sliders", "s")}Open Settings</button>`;
+    chip.parentElement.appendChild(m); openMenu(m);
+    m.onclick = ev => { const b = ev.target.closest("button"); if (!b) return; closeMenus(); if (b.dataset.a === "settings") { location.hash = "#/settings"; return; } if (b.dataset.t !== cur) { setTier(b.dataset.t); toast(TIER_LABEL[b.dataset.t] + " · loads on the next scan"); renderScan(); } }; };
   if (n) {
     $("#s_clear").onclick = () => { pending = []; renderScan(); };
     view.querySelectorAll(".frow .x").forEach(b => b.onclick = () => { pending.splice(+b.dataset.i, 1); renderScan(); });
@@ -841,7 +848,7 @@ async function renderSettings() {
   view.querySelectorAll("#s_theme button").forEach(x => x.onclick = () => setTheme(x.dataset.v));
   $("#s_rules").onchange = e => { store.settings.rules = e.target.value === "rules"; store.save(); applyScale(); toast("Saved · applies to the next scan"); };
   $("#s_backend").onchange = e => { store.settings.backend = e.target.value; store.save(); resetModels(); renderSettings(); };
-  view.querySelectorAll("#s_tiers .tier").forEach(t => t.onclick = () => { store.settings.tier = t.dataset.t === RECO.tier ? null : t.dataset.t; store.settings.models = {}; const fake = T.recommend(Object.assign({}, DEVICE, {webgpu: t.dataset.t === "high", mobile: t.dataset.t === "low", threads: t.dataset.t === "high" ? 8 : t.dataset.t === "low" ? 4 : 6, memoryGB: t.dataset.t === "low" ? 4 : 8})); RECO = Object.assign({}, RECO, {choice: fake.choice, scale: fake.scale}); store.settings.longMin = null; store.settings.longMax = null; store.save(); resetModels(); renderSettings(); });
+  view.querySelectorAll("#s_tiers .tier").forEach(t => t.onclick = () => { setTier(t.dataset.t); renderSettings(); });
   view.querySelectorAll("select[data-stage]").forEach(sel => sel.onchange = () => { store.settings.models = Object.assign({}, store.settings.models, {[sel.dataset.stage]: sel.value}); store.save(); resetModels(); toast("Saved · loads on the next scan"); });
   $("#s_reset").onclick = () => { store.settings.models = {}; store.settings.tier = null; store.save(); resetModels(); deviceCheck().then(renderSettings); };
   $("#s_bench").onclick = async () => { toast("Measuring…"); try { await ensureModels(); await T.benchmark(); renderSettings(); toast("Done"); } catch (e) { toast("Failed: " + e.message); } };
