@@ -28,6 +28,8 @@ const ICONS = {
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/>',
   more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  smartphone: '<rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/>',
   "chevron-down": '<path d="m6 9 6 6 6-6"/>',
   "chevron-right": '<path d="m9 6 6 6-6 6"/>',
   "arrow-right": '<path d="M5 12h14M13 6l6 6-6 6"/>',
@@ -270,6 +272,7 @@ async function rerunGroup(g) { if (!(await rerunPages(g))) return; afterRerun(g)
     other page (and what the user is typing there) alone */
 function afterRerun(g) { const h = location.hash; if (g.some(d => h === "#/review/" + d.page_id)) route(); else if (h === "#/documents") { if ($("#q") && $("#q").value) $("#q").dispatchEvent(new Event("input")); else route(); } }
 const TIER_LABEL = {high: "Best quality", mid: "Balanced", low: "Light"};
+const TIER_ICON = {high: "sparkles", mid: "zap", low: "smartphone"};
 const TIER_SUB = {high: "GPU or fast computer", mid: "Most computers", low: "Phones · smallest models"};
 const TIER_TECH = {high: "fp32 recogniser v2.4, detector at 2200 px", mid: "int8 recogniser, detector at 1800 px", low: "int8 recogniser and layout model, detector at 1300 px"};
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -357,8 +360,8 @@ function renderScan() {
   $("#s_cam").onclick = () => pickFiles(async f => { await addFiles(f); renderScan(); }, true);
   clickToBrowse($("#drop"), $("#s_browse"));
   if ($("#tier_chip")) $("#tier_chip").onclick = e => { e.stopPropagation(); const chip = e.currentTarget; if (chip.parentElement.querySelector(".menu")) { closeMenus(); return; } closeMenus();
-    const cur = store.settings.tier || RECO.tier, m = document.createElement("div"); m.className = "menu l"; m.setAttribute("role", "menu");
-    m.innerHTML = ["high", "mid", "low"].map(t => `<button data-t="${t}" role="menuitemradio" aria-checked="${cur === t}" title="${TIER_TECH[t]}">${icon(cur === t ? "check" : "layers", "s")}<span><b>${TIER_LABEL[t]}</b>${RECO.tier === t ? " · recommended" : ""}<span class="small mut" style="display:block;line-height:1.2">${TIER_SUB[t]}</span></span></button>`).join("") + `<hr><button data-a="settings" role="menuitem">${icon("sliders", "s")}Open Settings</button>`;
+    const cur = store.settings.tier || RECO.tier, m = document.createElement("div"); m.className = "menu l tiers"; m.setAttribute("role", "menu");
+    m.innerHTML = `<div class="mhead">Model set</div>` + ["high", "mid", "low"].map(t => `<button data-t="${t}" role="menuitemradio" aria-checked="${cur === t}" title="${TIER_TECH[t]}"><span class="tico">${icon(TIER_ICON[t])}</span><span class="tx"><b>${TIER_LABEL[t]}${RECO.tier === t ? `<em class="rec">Recommended</em>` : ""}</b><span class="sub">${TIER_SUB[t]}</span></span><span class="tck">${cur === t ? icon("check", "s") : ""}</span></button>`).join("") + `<hr><button data-a="settings" role="menuitem" class="more-row">${icon("sliders", "s")}<span>Open Settings</span>${icon("chevron-right", "s")}</button>`;
     chip.parentElement.appendChild(m); openMenu(m);
     m.onclick = ev => { const b = ev.target.closest("button"); if (!b) return; closeMenus(); if (b.dataset.a === "settings") { location.hash = "#/settings"; return; } if (b.dataset.t !== cur) { setTier(b.dataset.t); toast(TIER_LABEL[b.dataset.t] + " · loads on the next scan"); renderScan(); } }; };
   if (n) {
