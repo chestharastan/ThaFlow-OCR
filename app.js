@@ -31,6 +31,13 @@ const ICONS = {
   zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   smartphone: '<rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/>',
   "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+  "chevron-left": '<path d="m15 6-6 6 6 6"/>',
+  "rotate-cw": '<rect x="4" y="9" width="11" height="11" rx="1.5"/><path d="M10 4h3a6 6 0 0 1 6 6v1"/><path d="m16 8 3 3 3-3"/>',
+  "rotate-ccw": '<rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M14 4h-3a6 6 0 0 0-6 6v1"/><path d="m8 8-3 3-3-3"/>',
+  scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.12 8.12 12 12M20 4 8.12 15.88M14.8 14.8 20 20"/>',
+  office: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>',
+  minus: '<path d="M5 12h14"/>',
+  redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
   "chevron-right": '<path d="m9 6 6 6-6 6"/>',
   "arrow-right": '<path d="M5 12h14M13 6l6 6-6 6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
@@ -309,9 +316,9 @@ document.addEventListener("click", e => { if (!e.target.closest(".menu") && !e.t
 document.addEventListener("keydown", e => { if (e.key === "Escape" && document.querySelector(".menu")) closeMenus(); });
 
 /* ---------------------------------------------------------------- scan (home) */
-function pickFiles(cb, camera) { const inp = $("#fileinput"); if (camera) inp.setAttribute("capture", "environment"); else inp.removeAttribute("capture"); inp.value = ""; inp.onchange = () => cb([...inp.files]); inp.click(); }
+function pickFiles(cb, camera, accept) { const inp = $("#fileinput"); inp.accept = accept || "image/*,application/pdf,.pdf"; if (camera) inp.setAttribute("capture", "environment"); else inp.removeAttribute("capture"); inp.value = ""; inp.onchange = () => cb([...inp.files]); inp.click(); }
 function wireDrop(el, cb) { el.ondragover = e => { e.preventDefault(); el.classList.add("on"); }; el.ondragleave = () => el.classList.remove("on"); el.ondrop = e => { e.preventDefault(); el.classList.remove("on"); cb([...e.dataTransfer.files].filter(f => /^image\//.test(f.type) || /\.(tiff?)$/i.test(f.name) || T.pdf.isPdf(f))); }; }
-document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/") || T.pdf.isPdf(x)); if (!f.length) return; if (location.hash.startsWith("#/select")) selAdd(f); else addAndShow(f); });
+document.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].filter(x => x.type.startsWith("image/") || T.pdf.isPdf(x)); if (!f.length) return; if (location.hash.startsWith("#/select")) selAdd(f); else if (location.hash.startsWith("#/office")) offAdd(f); else addAndShow(f); });
 async function addFiles(files) {
   for (const f of files) {
     if (T.pdf.isPdf(f)) { const p = {file: f, url: "", w: 0, h: 0, pdf: {pages: 0, error: null}}; pending.push(p);
@@ -908,7 +915,7 @@ async function resetEverything() {
 function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
   const tile = (ic, t, p) => `<div class="card tile"><div class="ti">${icon(ic)}</div><b>${t}</b><p>${p}</p></div>`;
-  const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, reset (page views)"], ["<kbd>Ctrl</kbd> + scroll", "Zoom at the pointer (or pinch)"], ["<kbd>Space</kbd> + drag", "Move a zoomed page (Select)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"]];
+  const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, reset (page views)"], ["<kbd>Ctrl</kbd> + scroll", "Zoom at the pointer (or pinch)"], ["<kbd>Space</kbd> + drag", "Move a zoomed page (Select)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"], ["<kbd>R</kbd> <kbd>Del</kbd>", "Rotate or delete the selected pages (Office)"], ["<kbd>Alt</kbd> + arrows", "Move the selected pages (Office)"], ["<kbd>Ctrl</kbd> <kbd>Z</kbd>", "Undo (Office)"]];
   view.innerHTML = `<div class="head"><div class="grow"><h1>Help</h1><p>Quick tips for the best results.</p></div></div>
   <div class="tiles">
    ${tile("shield", "Private", "Runs in your browser. Files are never uploaded. No account, no server.")}
@@ -918,6 +925,7 @@ function renderHelp() {
    ${tile("pencil", "Check &amp; edit", `Lines under ${Math.round(LOW * 100)}% confidence are highlighted. Click any text to fix it.`)}
    ${tile("download", "Export", "Word keeps headings, tables, fonts and images. Text and JSON too.")}
    ${tile("select", "Select", "Drag a box over part of a page to read and copy only that part. Zoom in for small text.")}
+   ${tile("office", "Office", "Merge PDFs, drag pages into order, rotate or delete them, split into parts or extract the pages you pick.")}
    ${tile("clock", "Speed", "First visit downloads ~40 MB once. Seconds per page on a laptop, longer on a phone.")}
   </div>
   <div class="card pad"><h2>Shortcuts</h2><div class="keys">${keys.map(([k, t]) => `<span>${k}</span><span>${t}</span>`).join("")}</div></div>`;
@@ -1051,11 +1059,407 @@ function selResults(f) {
   void all;
 }
 
+/* ---------------------------------------------------------------- office: merge, reorder, rotate, split and extract PDF pages */
+// Pages live only in this tab (nothing is saved). A card is {id, s: its source PDF, i: page index there, rot: extra turn
+// in degrees}; the id stays with the page through moves, so the selection and the split cuts follow it. office.js copies
+// the chosen pages into a new file with pdf-lib, so text, fonts and images come out exactly as they went in.
+const OFF = {srcs: [], pages: [], sel: new Set(), anchor: null, focus: null, undo: [], redo: [], split: null, splitMem: null, opening: 0, busy: "", busyText: "", noClick: false, gen: 0, dragCancel: null};
+const OQ = {list: [], busy: 0, io: null, near: new Set()};  // thumbnails: queue, observer, cards near the screen
+const OFF_KEY = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "") ? {a: "⌘A", v: "⌘V", z: "⌘Z", y: "⇧⌘Z"} : {a: "Ctrl+A", v: "Ctrl+V", z: "Ctrl+Z", y: "Ctrl+Y"};
+const offId = () => Math.random().toString(36).slice(2, 10);
+const offStem = n => String(n || "document").replace(/\.pdf$/i, "");
+const offIdx = id => OFF.pages.findIndex(p => p.id === id);
+const offMulti = () => OFF.pages.some(p => p.s !== OFF.pages[0].s);
+const offSelPages = () => OFF.pages.filter(p => OFF.sel.has(p.id));
+const offUndoHint = () => matchMedia("(pointer:fine)").matches ? ` · ${OFF_KEY.z} to undo` : "";
+const offPick = () => pickFiles(offAdd, false, "application/pdf,.pdf");
+function offName(tail, ext = "pdf") {
+  const s = OFF.pages.length ? OFF.pages[0].s : OFF.srcs[0], base = offStem(s && s.name).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 90) || "document";
+  return `${base} (${tail.length > 60 ? tail.slice(0, 59) + "…" : tail}).${ext}`;
+}
+
+async function offAdd(list) {
+  const files = [...list], pdfs = files.filter(f => T.pdf.isPdf(f));
+  if (pdfs.length < files.length) toast(pdfs.length ? `${plural(files.length - pdfs.length, "file")} skipped · Office opens PDF files` : "Office opens PDF files · photos go to Scan");
+  if (!pdfs.length) return;
+  const gen = OFF.gen; OFF.opening += pdfs.length;
+  if (location.hash !== "#/office") location.hash = "#/office"; else offSync();
+  for (const f of pdfs) {
+    let doc = null, msg = "";
+    try {
+      doc = await T.pdf.open(f);
+      const s = {id: offId(), name: f.name, doc, bytes: doc.__bytes, n: doc.numPages, color: OFF.srcs.length % 6, thumbs: [], want: new Set()};
+      if (await ThaOffice.locked(s)) msg = `${f.name} is protected · remove the protection to edit it here`;
+      else if (gen === OFF.gen) { OFF.undo.push(offSnap()); OFF.redo = []; OFF.srcs.push(s); for (let i = 0; i < s.n; i++) OFF.pages.push({id: offId(), s, i, rot: 0}); doc = null; }
+    } catch (e) { console.warn(e); msg = e && e.name === "PasswordException" ? `${f.name} needs a password · it can't be opened here` : `Can't open ${f.name}`; }
+    if (doc) T.pdf.close(doc); if (msg) toast(msg);
+    if (gen === OFF.gen) { OFF.opening--; offSync(true); }
+  }
+}
+function offReset() {
+  if (OFF.pages.length && !confirm("Remove all files from Office? Pages you have not downloaded are lost.")) return;
+  for (const s of OFF.srcs) { T.pdf.close(s.doc); for (const u of s.thumbs) if (u && u !== "x") URL.revokeObjectURL(u); s._lib = null; }
+  Object.assign(OFF, {srcs: [], pages: [], sel: new Set(), anchor: null, focus: null, undo: [], redo: [], split: null, splitMem: null, opening: 0, gen: OFF.gen + 1});
+  OQ.list = []; renderOffice();
+}
+
+/* history: a snapshot is the page list (copies), so undo restores order, rotation and deleted pages */
+const offSnap = () => ({pages: OFF.pages.map(p => ({...p}))});
+function offDo(fn) { const snap = offSnap(); fn(); OFF.undo.push(snap); if (OFF.undo.length > 100) OFF.undo.shift(); OFF.redo = []; offSync(true); }
+function offUndo(redo) {
+  const snap = (redo ? OFF.redo : OFF.undo).pop(); if (!snap) return;
+  (redo ? OFF.undo : OFF.redo).push(offSnap()); OFF.pages = snap.pages;
+  const ids = new Set(OFF.pages.map(p => p.id)); OFF.sel = new Set([...OFF.sel].filter(id => ids.has(id))); offSync(true);
+}
+function offRotate(ids, deg) { if (!ids.length) return; const set = new Set(ids); offDo(() => { for (const p of OFF.pages) if (set.has(p.id)) p.rot = (p.rot + deg + 360) % 360; }); }
+function offDelete(ids) {
+  if (!ids.length) return; const set = new Set(ids), k = Math.min(...ids.map(offIdx).filter(x => x >= 0)), inGrid = !!(document.activeElement && document.activeElement.closest(".off-card"));
+  offDo(() => { OFF.pages = OFF.pages.filter(p => !set.has(p.id)); for (const id of ids) OFF.sel.delete(id); const next = OFF.pages[Math.min(k, OFF.pages.length - 1)]; OFF.focus = next ? next.id : null; });
+  toast(`Deleted ${plural(ids.length, "page")}${offUndoHint()}`); if (inGrid) offFocusCard(OFF.focus);
+}
+/** move the pages ids (kept in their order) to stand before the page now at index `to` (OFF.pages.length = the end) */
+function offMoveTo(ids, to) {
+  const set = new Set(ids), next = [...OFF.pages.slice(0, to).filter(p => !set.has(p.id)), ...OFF.pages.filter(p => set.has(p.id)), ...OFF.pages.slice(to).filter(p => !set.has(p.id))];
+  if (next.every((p, k) => p === OFF.pages[k])) return false;
+  offDo(() => { OFF.pages = next; }); return true;
+}
+/** Alt + arrow: the selection (or this page) one place (or one row) earlier or later */
+function offNudge(id, step) {
+  const ids = OFF.sel.has(id) ? offSelPages().map(p => p.id) : [id], ks = ids.map(offIdx), n = OFF.pages.length;
+  const to = step < 0 ? Math.max(0, Math.min(...ks) + step) : Math.min(n, Math.max(...ks) + 1 + step);
+  if (offMoveTo(ids, to)) offFocusCard(id);
+}
+function offSelect(id, range) {
+  const a = OFF.anchor ? offIdx(OFF.anchor) : -1;
+  if (range && a >= 0) { const b = offIdx(id); for (let k = Math.min(a, b); k <= Math.max(a, b); k++) OFF.sel.add(OFF.pages[k].id); }
+  else { if (OFF.sel.has(id)) OFF.sel.delete(id); else OFF.sel.add(id); OFF.anchor = id; }
+  OFF.focus = id; offSync();
+}
+function offFocusCard(id) { const el = id && $(`#o_grid [data-id="${id}"] .off-pg`); if (el) el.focus(); }
+function offCols(grid) { const c = grid.children; if (!c.length) return 1; let n = 0; while (n < c.length && c[n].offsetTop === c[0].offsetTop) n++; return Math.max(1, n); }
+
+/* split: cuts between pages (a cut after a page ends a part), or typed page ranges (one PDF per range) */
+function offParts() {
+  const sp = OFF.split, n = OFF.pages.length; if (!sp) return {parts: []};
+  const of = nums => ({nums, pages: nums.map(k => OFF.pages[k - 1])});
+  if (sp.mode === "ranges") { if (!sp.ranges.trim()) return {parts: [], err: ""}; try { return {parts: ThaOffice.parseRanges(sp.ranges, n).map(of)}; } catch (e) { return {parts: [], err: e.message}; } }
+  const parts = []; let cur = [];
+  OFF.pages.forEach((p, k) => { cur.push(k + 1); if (sp.cuts.has(p.id) && k < n - 1) { parts.push(cur); cur = []; } });
+  if (cur.length) parts.push(cur); return {parts: parts.map(of)};
+}
+
+/* saving */
+const offBuild = pages => ThaOffice.build(pages.map(p => ({src: p.s, i: p.i, rot: p.rot})), {title: offStem(pages[0].s.name)});
+async function offRun(kind, fn) {
+  if (OFF.busy) return; OFF.busy = kind; offSync();
+  try { await fn(); } catch (e) { console.error(e); toast("Couldn't make the PDF · " + String((e && e.message) || e).slice(0, 90)); }
+  finally { OFF.busy = ""; OFF.busyText = ""; offSync(); }
+}
+function offSave() {
+  const ps = OFF.pages.slice(); if (!ps.length) return;
+  offRun("save", async () => { const bytes = await offBuild(ps); download(offName(ps.some(p => p.s !== ps[0].s) ? "merged" : "edited"), bytes, "application/pdf"); toast("Downloaded"); });
+}
+function offExtract() {
+  const ps = offSelPages(); if (!ps.length) return; const nums = ps.map(p => offIdx(p.id) + 1);
+  offRun("extract", async () => { download(offName(`page${nums.length > 1 ? "s" : ""} ${ThaOffice.fmtRanges(nums, ",")}`), await offBuild(ps), "application/pdf"); toast(`Downloaded ${plural(ps.length, "page")}`); });
+}
+function offSplitGo() {
+  const {parts} = offParts(); if (!parts.length) return;
+  offRun("split", async () => {
+    const files = [];
+    for (let k = 0; k < parts.length; k++) { OFF.busyText = `Saving ${k + 1} of ${parts.length}…`; offSplitSum(); files.push({name: offName(`part ${k + 1}, page${parts[k].nums.length > 1 ? "s" : ""} ${ThaOffice.fmtRanges(parts[k].nums, ",")}`), data: await offBuild(parts[k].pages)}); }
+    if (files.length === 1) download(files[0].name, files[0].data, "application/pdf"); else download(offName("split", "zip"), ThaOffice.zip(files), "application/zip");
+    toast(files.length > 1 ? `Downloaded ${files.length} PDFs in one .zip` : "Downloaded");
+  });
+}
+/** OCR: the selected pages (or all) go to Scan as one PDF */
+function offOcr() {
+  const ps = OFF.sel.size ? offSelPages() : OFF.pages.slice(); if (!ps.length) return;
+  const name = OFF.sel.size ? offName(`page${ps.length > 1 ? "s" : ""} ${ThaOffice.fmtRanges(ps.map(p => offIdx(p.id) + 1), ",")}`) : offName("edited");
+  offRun("ocr", async () => { const bytes = await offBuild(ps); await addAndShow([new File([bytes], name, {type: "application/pdf"})]); toast("Added to Scan · press Start OCR"); });
+}
+
+/* thumbnails: rendered by pdf.js when a card comes near the screen, two at a time, kept per source page */
+function offWant(p) { const s = p.s; if (s.thumbs[p.i] || s.want.has(p.i)) return; s.want.add(p.i); OQ.list.push(p); offPump(); }
+function offPump() {
+  while (OQ.busy < 2 && OQ.list.length) {
+    const p = OQ.list.shift(), s = p.s;
+    if (!$("#o_grid") || !OFF.srcs.includes(s) || !OQ.near.has(p.id)) { s.want.delete(p.i); continue; }  // asked again when it comes back into view
+    OQ.busy++;
+    offThumb(s, p.i).then(u => { if (OFF.srcs.includes(s)) s.thumbs[p.i] = u; else URL.revokeObjectURL(u); }, e => { console.warn("thumbnail", e); s.thumbs[p.i] = "x"; })
+      .finally(() => { s.want.delete(p.i); OQ.busy--; offShowThumb(s, p.i); offPump(); });
+  }
+}
+async function offThumb(s, i) {
+  const page = await s.doc.getPage(i + 1);
+  try { const r = await T.pdf.render(page, Math.round(200 * Math.min(2, window.devicePixelRatio || 1))), b = await new Promise(res => r.canvas.toBlob(res, "image/jpeg", 0.85));
+    r.canvas.width = r.canvas.height = 0; if (!b) throw new Error("no thumbnail"); return URL.createObjectURL(b); }
+  finally { page.cleanup(); }
+}
+function offShowThumb(s, i) { const grid = $("#o_grid"); if (!grid) return; for (const p of OFF.pages) if (p.s === s && p.i === i) { const el = grid.querySelector(`[data-id="${p.id}"]`); if (el) offPaintThumb(el, p); } }
+function offPaintThumb(el, p) {
+  const u = p.s.thumbs[p.i], th = el.querySelector(".off-th"); if (!u || th._u === u) return; th._u = u;
+  th.innerHTML = u === "x" ? `<span class="off-bad" title="This page can't be shown">${icon("alert")}</span>` : `<img src="${u}" alt="" draggable="false">`;
+}
+
+/* page */
+function renderOffice() {
+  if (OQ.io) OQ.io.disconnect(); OQ.io = null; OQ.near.clear();
+  if (!OFF.srcs.length && !OFF.opening) {
+    view.innerHTML = `
+    <div class="head"><div class="grow"><h1>Office</h1><p>Merge, reorder, rotate and split PDF pages, right in your browser.</p></div></div>
+    <div class="drop off-drop" id="o_drop"><div class="ico">${icon("office", "l")}</div><div class="grow"><b>Drop PDF files here</b><div class="small">One or more PDFs · or paste with ${OFF_KEY.v}</div></div>
+      <div class="acts"><button class="btn p" id="o_browse">${icon("folder")}Choose PDF files</button></div></div>
+    <div class="off-feats">
+     <div class="off-feat"><span class="fi">${icon("layers")}</span><div><b>Merge</b><span>Add several PDFs and save them as one file</span></div></div>
+     <div class="off-feat"><span class="fi">${icon("grid")}</span><div><b>Organize</b><span>Drag pages into order, rotate or delete them</span></div></div>
+     <div class="off-feat"><span class="fi">${icon("scissors")}</span><div><b>Split &amp; extract</b><span>Cut into several PDFs or save the pages you pick</span></div></div>
+    </div>
+    <p class="fine">${icon("shield", "s")}Files never leave this device. Nothing is saved here, so download what you need.</p>`;
+    wireDrop($("#o_drop"), offAdd); $("#o_browse").onclick = offPick; clickToBrowse($("#o_drop"), $("#o_browse"));
+    return;
+  }
+  view.innerHTML = `
+  <div class="head"><div class="grow"><h1>Office</h1><p>${matchMedia("(pointer:coarse)").matches ? "Tap pages to select them · press and hold to move one" : "Click pages to select them · drag to reorder"} · nothing is uploaded.</p></div>
+    <div class="tools"><button class="btn ghost" id="o_reset" title="Remove all files and start again">${icon("x", "s")}Clear</button><button class="btn" id="o_add">${icon("plus")}Add PDF</button><button class="btn p" id="o_save"></button></div></div>
+  <div class="off-files" id="o_files"></div>
+  <div class="card off-bar" id="o_bar" role="group" aria-label="Page tools"></div>
+  <div class="off-stage" id="o_stage"><div class="off-grid" id="o_grid" role="list" aria-label="Pages"></div>
+    <div class="empty hide" id="o_none"><div class="ico">${icon("file", "l")}</div><b>No pages left</b><span>Undo, or add a PDF.</span></div><div class="off-ins hide" id="o_ins"></div></div>
+  <p class="fine">${icon("shield", "s")}Pages never leave this device. Nothing is saved here, so download when you're done.</p>`;
+  $("#o_reset").onclick = offReset; $("#o_add").onclick = offPick; $("#o_save").onclick = offSave;
+  $("#o_files").onclick = e => { const b = e.target.closest("button"); if (!b) return; const s = OFF.srcs.find(x => x.id === (b.dataset.rm || b.dataset.pick)); if (!s) return;
+    if (b.dataset.rm) { offDo(() => { OFF.pages = OFF.pages.filter(p => p.s !== s); OFF.sel = new Set(offSelPages().map(p => p.id)); }); toast(`Removed ${s.name}${offUndoHint()}`); }
+    else { OFF.sel = new Set(OFF.pages.filter(p => p.s === s).map(p => p.id)); offSync(); } };
+  const bar = $("#o_bar"), grid = $("#o_grid"), stage = $("#o_stage");
+  bar.onclick = e => { const b = e.target.closest("button"); if (!b || b.disabled) return; const a = b.dataset.a, sp = OFF.split;
+    if (b.dataset.m && sp) { sp.mode = b.dataset.m; offSync(); if (sp.mode === "ranges" && $("#o_ranges")) $("#o_ranges").focus(); return; }
+    if (a === "all") { OFF.sel = OFF.sel.size === OFF.pages.length ? new Set() : new Set(OFF.pages.map(p => p.id)); offSync(); }
+    else if (a === "rotl" || a === "rotr") offRotate([...OFF.sel], a === "rotl" ? -90 : 90);
+    else if (a === "del") offDelete([...OFF.sel]);
+    else if (a === "extract") offExtract();
+    else if (a === "undo" || a === "redo") offUndo(a === "redo");
+    else if (a === "ocr") offOcr();
+    else if (a === "split") { OFF.split = OFF.splitMem || {mode: "cuts", cuts: new Set(), ranges: ""}; offSync(); }
+    else if (a === "every" && sp) { sp.cuts = new Set(OFF.pages.slice(0, -1).map(p => p.id)); offSync(); }
+    else if (a === "nocuts" && sp) { sp.cuts.clear(); offSync(); }
+    else if (a === "splitx") { OFF.splitMem = sp; OFF.split = null; offSync(); }
+    else if (a === "splitgo") offSplitGo(); };
+  bar.oninput = e => { if (e.target.id === "o_ranges" && OFF.split) { OFF.split.ranges = e.target.value; offSync(); } };
+  bar.onkeydown = e => { if (e.target.id === "o_ranges" && e.key === "Enter") { e.preventDefault(); const go = $("#o_splitgo"); if (go && !go.disabled) offSplitGo(); } };
+  grid.onclick = e => {
+    if (OFF.noClick) { OFF.noClick = false; return; }
+    const card = e.target.closest(".off-card"); if (!card) return; const id = card.dataset.id, a = e.target.closest("[data-a]");
+    if (a) { if (a.dataset.a === "view") offPreview(id); else if (a.dataset.a === "rotr") offRotate([id], 90); else if (a.dataset.a === "del") offDelete([id]); return; }
+    if (e.target.closest(".off-cut")) { const c = OFF.split && OFF.split.cuts; if (c) { if (c.has(id)) c.delete(id); else c.add(id); offSync(); } return; }
+    if (e.target.closest(".off-pg")) offSelect(id, e.shiftKey);
+  };
+  grid.ondblclick = e => { const pg = e.target.closest(".off-pg"); if (pg) offPreview(pg.parentElement.dataset.id); };
+  grid.onkeydown = e => {
+    const pg = e.target.closest(".off-pg"); if (!pg) return; const id = pg.parentElement.dataset.id, k = offIdx(id), n = OFF.pages.length; if (k < 0) return;
+    const cols = offCols(grid), step = {ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols}[e.key];
+    if (step && e.altKey) { e.preventDefault(); offNudge(id, step); return; }
+    if (e.key === "Enter") { e.preventDefault(); offPreview(id); return; }
+    const to = step ? Math.max(0, Math.min(n - 1, k + step)) : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : null;
+    if (to == null || e.ctrlKey || e.metaKey) return; e.preventDefault();
+    if (e.shiftKey) { if (!OFF.anchor || offIdx(OFF.anchor) < 0) OFF.anchor = id; const a = offIdx(OFF.anchor); OFF.sel = new Set(OFF.pages.slice(Math.min(a, to), Math.max(a, to) + 1).map(p => p.id)); }
+    OFF.focus = OFF.pages[to].id; offSync(); offFocusCard(OFF.focus);
+  };
+  offDnd(grid, stage);
+  wireDrop(stage, offAdd);
+  OQ.io = new IntersectionObserver(es => { for (const x of es) { const id = x.target.dataset.id; if (x.isIntersecting) { OQ.near.add(id); const p = OFF.pages.find(q => q.id === id); if (p) offWant(p); } else OQ.near.delete(id); } }, {rootMargin: "600px 0px"});
+  offSync();
+}
+/** bring the page up to date with OFF without rebuilding it: files, toolbar, cards (kept by id, so thumbnails stay) */
+function offSync(animate) {
+  if (!location.hash.startsWith("#/office")) return;
+  const grid = $("#o_grid"); if (!grid !== !(OFF.srcs.length || OFF.opening)) { renderOffice(); return; }
+  if (!grid) return;
+  offFiles(); offBar(); offGrid(grid, animate);
+  const save = $("#o_save"); save.disabled = !OFF.pages.length || !!OFF.busy; save.innerHTML = OFF.busy === "save" ? `<span class="spin"></span>Saving…` : `${icon("download")}<span>Download<span class="off-xl"> PDF</span></span>`;
+}
+function offFiles() {
+  const multi = OFF.pages.length > 0 && offMulti(), count = new Map(); for (const p of OFF.pages) count.set(p.s, (count.get(p.s) || 0) + 1);
+  $("#o_files").innerHTML = OFF.srcs.filter(s => count.has(s)).map(s => `<span class="chip off-file">${multi ? `<i class="off-dot c${s.color}"></i>` : icon("file", "s")}<button type="button" class="nm" data-pick="${s.id}" title="Select the pages of ${esc(s.name)}">${esc(s.name)}</button><span class="mut">${plural(count.get(s), "page")}</span><button type="button" class="x" data-rm="${s.id}" title="Remove this file" aria-label="Remove ${esc(s.name)}">${icon("x", "s")}</button></span>`).join("")
+    + (OFF.opening ? `<span class="chip"><span class="spin"></span>Opening ${plural(OFF.opening, "file")}…</span>` : "");
+}
+const offBtn = (a, ic, label, tip, off, cls = "ghost") => `<button type="button" class="btn sm ${cls}" data-a="${a}" title="${esc(tip)}" ${off ? "disabled" : ""}>${icon(ic, "s")}<span class="lbl">${label}</span></button>`;
+function offBar() {
+  const bar = $("#o_bar"), act = document.activeElement;
+  if (act && act.id === "o_ranges") { offSplitSum(); return; }  // typing: only the summary changes
+  const keep = act && bar.contains(act) ? act.dataset.a || act.dataset.m : null, n = OFF.pages.length, k = OFF.sel.size, all = n > 0 && k === n, busy = !!OFF.busy, sp = OFF.split;
+  if (sp) bar.innerHTML = `<span class="off-ttl">${icon("scissors", "s")}Split</span>
+    <div class="seg" role="group" aria-label="How to split"><button type="button" data-m="cuts" class="${sp.mode === "cuts" ? "on" : ""}" aria-pressed="${sp.mode === "cuts"}">Between pages</button><button type="button" data-m="ranges" class="${sp.mode === "ranges" ? "on" : ""}" aria-pressed="${sp.mode === "ranges"}">By page numbers</button></div>
+    ${sp.mode === "cuts" ? `${offBtn("every", "scissors", "Every page", "Cut after every page", n < 2)}${offBtn("nocuts", "x", "Clear<span class=\"off-xl\"> cuts</span>", "Remove all cuts", !sp.cuts.size)}`
+      : `<input class="off-ranges" id="o_ranges" type="text" value="${esc(sp.ranges)}" placeholder="e.g. 1-3, 4-8, 10" aria-label="Page ranges · one PDF for each range" spellcheck="false" autocomplete="off">`}
+    <div class="grow"></div><span class="off-sum small" id="o_sum" aria-live="polite"></span>
+    <button type="button" class="btn sm ghost" data-a="splitx">Cancel</button><button type="button" class="btn sm p" data-a="splitgo" id="o_splitgo"></button>`;
+  else bar.innerHTML = `<button type="button" class="off-all ${all ? "on" : k ? "some" : ""}" data-a="all" role="checkbox" aria-checked="${all ? "true" : k ? "mixed" : "false"}" aria-label="Select all pages" title="Select all (${OFF_KEY.a})" ${n ? "" : "disabled"}><span class="bx">${icon(k && !all ? "minus" : "check", "s")}</span></button>
+    <span class="off-count">${k ? `<b>${k}</b> of ${n} selected` : n ? `${plural(n, "page")}<span class="mut off-tip"> · click to select</span>` : "No pages"}</span>
+    <span class="vsep"></span>
+    ${offBtn("rotl", "rotate-ccw", "Left", "Rotate left (Shift+R)", !k)}${offBtn("rotr", "rotate-cw", "Right", "Rotate right (R)", !k)}${offBtn("del", "trash", "Delete", "Delete (Del)", !k)}${OFF.busy === "extract" ? `<button type="button" class="btn sm ghost k" disabled><span class="spin"></span><span class="lbl">Saving…</span></button>` : offBtn("extract", "download", "Extract", "Download the selected pages as a new PDF", !k || busy, "ghost k")}
+    <div class="grow"></div>
+    <button type="button" class="btn sm ghost icon" data-a="undo" title="Undo (${OFF_KEY.z})" aria-label="Undo" ${OFF.undo.length ? "" : "disabled"}>${icon("undo", "s")}</button><button type="button" class="btn sm ghost icon" data-a="redo" title="Redo (${OFF_KEY.y})" aria-label="Redo" ${OFF.redo.length ? "" : "disabled"}>${icon("redo", "s")}</button>
+    <span class="vsep"></span>
+    ${OFF.busy === "ocr" ? `<button type="button" class="btn sm k" disabled><span class="spin"></span><span class="lbl">OCR</span></button>` : offBtn("ocr", "scan", "OCR", k ? "Read the text of the selected pages on the Scan page" : "Read the text of these pages on the Scan page", !n || busy, "k")}${offBtn("split", "scissors", "Split", "Split into several PDFs", n < 2 || busy, "k")}`;
+  bar.classList.toggle("splitting", !!sp); if (sp) offSplitSum();
+  if (keep) { const alt = {split: "[data-m].on", splitx: '[data-a="split"]'}[keep];  // into / out of split mode: focus stays in the bar
+    const el = bar.querySelector(`[data-a="${keep}"],[data-m="${keep}"]`) || (alt && bar.querySelector(alt)); if (el && !el.disabled) el.focus(); else offFocusCard(OFF.focus); }
+}
+function offSplitSum() {
+  const sum = $("#o_sum"), go = $("#o_splitgo"); if (!sum || !go || !OFF.split) return;
+  const {parts, err} = offParts(), cuts = OFF.split.mode === "cuts", ok = cuts ? parts.length > 1 : parts.length > 0, list = parts.map(p => ThaOffice.fmtRanges(p.nums));
+  sum.classList.toggle("err", !!err);
+  sum.textContent = err || (cuts && !ok ? "Click ✂ between two pages to cut" : !ok ? "One PDF for each range" : `${plural(parts.length, "PDF")}: ${list.slice(0, 6).join(" · ")}${list.length > 6 ? " · …" : ""}`);
+  sum.title = sum.textContent;
+  go.disabled = !ok || !!OFF.busy;
+  go.innerHTML = OFF.busy === "split" ? `<span class="spin"></span>${OFF.busyText || "Saving…"}` : `${icon("download", "s")}${ok && parts.length > 1 ? `Download ${parts.length} PDFs` : "Download"}`;
+}
+function offCard(p) {
+  const el = document.createElement("div"); el.className = "off-card"; el.dataset.id = p.id; el.setAttribute("role", "listitem"); el._r = p.rot;
+  el.innerHTML = `<button type="button" class="off-pg" tabindex="-1"><span class="off-th"><span class="off-ph"></span></span><span class="off-ck">${icon("check", "s")}</span></button>
+    <span class="off-acts"><button type="button" tabindex="-1" data-a="view" title="Preview (Enter)" aria-label="Preview">${icon("expand", "s")}</button><button type="button" tabindex="-1" data-a="rotr" title="Rotate right" aria-label="Rotate right">${icon("rotate-cw", "s")}</button><button type="button" tabindex="-1" data-a="del" title="Delete" aria-label="Delete">${icon("trash", "s")}</button></span>
+    <span class="off-cap"><b class="num"></b><span class="off-src"></span></span>
+    <button type="button" class="off-cut" hidden>${icon("scissors", "s")}</button>`;
+  return el;
+}
+function offGrid(grid, animate) {
+  const n = OFF.pages.length, multi = n > 0 && offMulti(), sp = OFF.split, cuts = !!(sp && sp.mode === "cuts"), old = new Map([...grid.children].map(el => [el.dataset.id, el]));
+  const flip = animate && old.size && !matchMedia("(prefers-reduced-motion: reduce)").matches ? new Map([...old].map(([id, el]) => [id, el.getBoundingClientRect()])) : null;
+  if (OFF.focus && offIdx(OFF.focus) < 0) OFF.focus = null; if (!OFF.focus && n) OFF.focus = OFF.pages[0].id;
+  // which part each page falls in (cuts), or which pages a range takes (ranges)
+  const part = new Map(); let inRange = null;
+  if (cuts) { let k = 0; OFF.pages.forEach((p, j) => { part.set(p.id, k); if (sp.cuts.has(p.id) && j < n - 1) k++; }); }
+  else if (sp) inRange = new Set(offParts().parts.flatMap(x => x.nums));
+  let prev = null;
+  OFF.pages.forEach((p, k) => {
+    let el = old.get(p.id); if (el) old.delete(p.id); else { el = offCard(p); if (OQ.io) OQ.io.observe(el); }
+    const sel = OFF.sel.has(p.id), pg = el.firstElementChild, cut = el.lastElementChild, src = el.querySelector(".off-src");
+    el.classList.toggle("picked", sel); pg.setAttribute("aria-pressed", sel ? "true" : "false"); pg.tabIndex = OFF.focus === p.id ? 0 : -1;
+    pg.setAttribute("aria-label", `Page ${k + 1} of ${n}${multi ? ` · ${p.s.name} page ${p.i + 1}` : p.i !== k ? ` · was page ${p.i + 1}` : ""}${p.rot ? ` · turned ${p.rot}°` : ""}`);
+    el.querySelector(".num").textContent = k + 1;
+    const html = cuts ? `<span class="off-part">Part ${part.get(p.id) + 1}</span>` : multi ? `<i class="off-dot c${p.s.color}"></i><span class="nm">${esc(offStem(p.s.name))}</span> · p.${p.i + 1}` : p.i !== k ? `p.${p.i + 1}` : "";
+    if (src._h !== html) { src.innerHTML = html; src._h = html; src.title = multi ? `${p.s.name} · page ${p.i + 1}` : ""; }
+    const d = ((p.rot - el._r) % 360 + 540) % 360 - 180; el._r += d; el.style.setProperty("--r", el._r + "deg");  // turn the short way
+    offPaintThumb(el, p);
+    cut.hidden = !cuts || k === n - 1;
+    if (!cut.hidden) { const on = sp.cuts.has(p.id); cut.classList.toggle("on", on); cut.setAttribute("aria-pressed", on ? "true" : "false"); cut.title = on ? `Join pages ${k + 1} and ${k + 2}` : `Split after page ${k + 1}`; cut.setAttribute("aria-label", cut.title); }
+    el.classList.toggle("alt", cuts && part.get(p.id) % 2 === 1); el.classList.toggle("out", !!inRange && !inRange.has(k + 1));
+    const at = prev ? prev.nextElementSibling : grid.firstElementChild; if (at !== el) grid.insertBefore(el, at); prev = el;
+  });
+  for (const el of old.values()) { if (OQ.io) OQ.io.unobserve(el); OQ.near.delete(el.dataset.id); el.remove(); }
+  grid.classList.toggle("cutting", cuts); $("#o_none").classList.toggle("hide", n > 0 || OFF.opening > 0);
+  if (flip) for (const el of grid.children) { const b = flip.get(el.dataset.id);
+    if (!b) { el.animate([{opacity: 0, transform: "scale(.94)"}, {opacity: 1, transform: "none"}], {duration: 200, easing: "ease-out"}); continue; }
+    const a = el.getBoundingClientRect(), dx = b.left - a.left, dy = b.top - a.top;
+    if (Math.abs(dx) + Math.abs(dy) > 1) el.animate([{transform: `translate(${dx}px,${dy}px)`}, {transform: "none"}], {duration: 240, easing: "cubic-bezier(.2,.7,.2,1)"}); }
+}
+
+/* drag to reorder: a mouse drags after 6 px; a finger after a short press (a quick swipe still scrolls). Dragging a
+   selected page carries the whole selection. */
+function offDnd(grid, stage) {
+  const ins = $("#o_ins"), phone = () => matchMedia("(max-width:860px)").matches; let d = null;
+  const end = () => { if (!d) return; clearTimeout(d.timer); cancelAnimationFrame(d.raf);
+    if (d.active) { grid.classList.remove("dnd"); grid.querySelectorAll(".dragging").forEach(x => x.classList.remove("dragging")); if (d.ghost) d.ghost.remove(); ins.classList.add("hide"); OFF.noClick = true; setTimeout(() => { OFF.noClick = false; }, 0); }
+    d = null; OFF.dragCancel = null; };
+  const place = () => {
+    d.ghost.style.transform = `translate(${d.x}px,${d.y}px) translate(${d.touch ? "-50%,-125%" : "14px,10px"})`;
+    const cards = [...grid.children]; if (!cards.length) return; const rs = cards.map(c => c.getBoundingClientRect()), rows = [];
+    rs.forEach((r, k) => { const row = rows[rows.length - 1]; if (row && Math.abs(r.top - row.top) < 2) row.end = k; else rows.push({top: r.top, start: k, end: k}); });
+    let row = rows[0], best = Infinity;
+    for (const r of rows) { const bottom = rs[r.start].bottom, dist = d.y < r.top ? r.top - d.y : d.y > bottom ? d.y - bottom : 0; if (dist < best) { best = dist; row = r; } }
+    let to = row.end + 1; for (let k = row.start; k <= row.end; k++) if (d.x < rs[k].left + rs[k].width / 2) { to = k; break; }
+    d.to = to;
+    const sr = stage.getBoundingClientRect(), gap = parseFloat(getComputedStyle(grid).columnGap) || 0, x = to <= row.end ? rs[to].left - gap / 2 : rs[row.end].right + gap / 2;
+    ins.style.left = (x - sr.left - 1.5) + "px"; ins.style.top = (row.top - sr.top) + "px"; ins.style.height = rs[row.start].width + "px"; ins.classList.remove("hide");
+  };
+  const start = () => {
+    if (!d || d.active) return; clearTimeout(d.timer); d.active = true; OFF.dragCancel = end;
+    d.ids = OFF.sel.has(d.id) ? offSelPages().map(p => p.id) : [d.id];
+    try { d.pg.setPointerCapture(d.pid); } catch { }
+    grid.classList.add("dnd"); for (const id of d.ids) { const c = grid.querySelector(`[data-id="${id}"]`); if (c) c.classList.add("dragging"); }
+    const img = d.pg.querySelector("img"), p = OFF.pages[offIdx(d.id)];
+    d.ghost = document.createElement("div"); d.ghost.className = "off-ghost";
+    d.ghost.innerHTML = (img ? `<img src="${img.src}" alt="" style="transform:rotate(${p ? p.rot : 0}deg)">` : "") + (d.ids.length > 1 ? `<span class="n">${d.ids.length}</span>` : "");
+    document.body.appendChild(d.ghost);
+    if (d.touch && navigator.vibrate) try { navigator.vibrate(10); } catch { }
+    const tick = () => { if (!d || !d.active) return; const top = phone() ? 120 : 70, bottom = innerHeight - (phone() ? 130 : 70);
+      const v = d.y < top ? -Math.min(22, (top - d.y) / 3 + 2) : d.y > bottom ? Math.min(22, (d.y - bottom) / 3 + 2) : 0;
+      if (v) { window.scrollBy(0, v); place(); } d.raf = requestAnimationFrame(tick); };
+    d.raf = requestAnimationFrame(tick); place();
+  };
+  grid.addEventListener("pointerdown", e => {
+    if (d || !e.isPrimary || e.button !== 0 || OFF.busy) return; const pg = e.target.closest(".off-pg"); if (!pg) return;
+    d = {id: pg.parentElement.dataset.id, pg, pid: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, touch: e.pointerType === "touch", active: false};
+    if (d.touch) d.timer = setTimeout(start, 380);
+  });
+  grid.addEventListener("pointermove", e => { if (!d || e.pointerId !== d.pid) return; d.x = e.clientX; d.y = e.clientY;
+    if (d.active) { place(); return; }
+    const far = Math.hypot(d.x - d.x0, d.y - d.y0); if (d.touch) { if (far > 10) end(); } else if (far > 6) start(); });
+  grid.addEventListener("pointerup", e => { if (!d || e.pointerId !== d.pid) return; const {active, ids, to, id} = d; end(); if (active && to != null) { OFF.focus = id; offMoveTo(ids, to); } });
+  grid.addEventListener("pointercancel", e => { if (d && e.pointerId === d.pid) end(); });
+  grid.addEventListener("touchmove", e => { if (d && d.active) e.preventDefault(); }, {passive: false});  // a held page moves; the page does not scroll
+  grid.addEventListener("contextmenu", e => { if (e.target.closest(".off-pg") && (d || matchMedia("(pointer:coarse)").matches)) e.preventDefault(); });
+  grid.addEventListener("dragstart", e => e.preventDefault());
+}
+// keys while Office is shown (not while typing, or with a dialog, menu or the preview open)
+document.addEventListener("keydown", e => {
+  if (!$("#o_grid") || e.defaultPrevented) return;
+  if (OFF.dragCancel) { if (e.key === "Escape") { e.preventDefault(); OFF.dragCancel(); } return; }
+  if ($("#o_preview") || $("#lightbox") || !$("#notice").classList.contains("hide") || document.querySelector(".menu")) return;
+  const t = e.target; if (t && t.closest && t.closest("input,textarea,select,[contenteditable]")) return;
+  const mod = e.ctrlKey || e.metaKey, key = (e.key || "").toLowerCase();
+  if (mod && !e.altKey && key === "z") { e.preventDefault(); offUndo(e.shiftKey); return; }
+  if (mod && !e.altKey && key === "y") { e.preventDefault(); offUndo(true); return; }
+  if (mod && !e.altKey && key === "a") { e.preventDefault(); OFF.sel = new Set(OFF.pages.map(p => p.id)); offSync(); return; }
+  if (mod || e.altKey) return;
+  const card = t && t.closest && t.closest(".off-card"), ids = () => OFF.sel.size ? [...OFF.sel] : card ? [card.dataset.id] : [];
+  if (e.key === "Delete" || e.key === "Backspace") { const x = ids(); if (x.length) { e.preventDefault(); offDelete(x); } }
+  else if (key === "r") { const x = ids(); if (x.length) { e.preventDefault(); offRotate(x, e.shiftKey ? -90 : 90); } }
+  else if (e.key === "Escape") { if (OFF.split) { OFF.splitMem = OFF.split; OFF.split = null; offSync(); } else if (OFF.sel.size) { OFF.sel.clear(); offSync(); } }
+});
+
+/* preview: one page large, ← → for the others, R / Shift+R turn it */
+function offPreview(id) {
+  if ($("#o_preview") || offIdx(id) < 0) return;
+  let k = offIdx(id), ang = 0, cv = null, tok = 0;
+  const el = document.createElement("div"); el.className = "lb off-lb"; el.id = "o_preview"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Page preview");
+  el.innerHTML = `<div class="lb-bar"><b id="o_pv_t"></b><span class="mut" id="o_pv_s"></span><div class="grow"></div>
+      <button class="tool" data-a="prev" title="Previous page (←)" aria-label="Previous page">${icon("chevron-left", "s")}</button><span class="small num off-pvn" id="o_pv_n"></span><button class="tool" data-a="next" title="Next page (→)" aria-label="Next page">${icon("chevron-right", "s")}</button>
+      <button class="tool" data-a="rotl" title="Rotate left (Shift+R)" aria-label="Rotate left">${icon("rotate-ccw", "s")}</button><button class="tool" data-a="rotr" title="Rotate right (R)" aria-label="Rotate right">${icon("rotate-cw", "s")}</button>
+      <button class="tool" data-a="close" title="Close (Esc)" aria-label="Close">${icon("x", "s")}</button></div>
+    <div class="lb-body" id="o_pv_body"><div class="off-pv" id="o_pv"></div></div>`;
+  const opener = document.activeElement; document.body.appendChild(el); document.body.style.overflow = "hidden"; $('[data-a="close"]', el).focus();
+  const body = $("#o_pv_body"), box = $("#o_pv");
+  const fit = () => { if (!cv) return; const W = Math.max(60, body.clientWidth - 48), H = Math.max(60, body.clientHeight - 48), q = ((ang % 180) + 180) % 180 !== 0, w = cv.width, h = cv.height, s = Math.min(W / (q ? h : w), H / (q ? w : h));
+    box.style.width = (q ? h : w) * s + "px"; box.style.height = (q ? w : h) * s + "px"; cv.style.width = w * s + "px"; cv.style.height = h * s + "px"; cv.style.transform = `translate(-50%,-50%) rotate(${ang}deg)`; };
+  const show = async () => {
+    const p = OFF.pages[k]; if (!p) { close(); return; } const my = ++tok, n = OFF.pages.length; ang = p.rot;
+    $("#o_pv_t").textContent = `Page ${k + 1} of ${n}`; $("#o_pv_s").textContent = p.s.name + (offMulti() || p.i !== k ? ` · page ${p.i + 1}` : ""); $("#o_pv_n").textContent = `${k + 1} / ${n}`;
+    $('[data-a="prev"]', el).disabled = k === 0; $('[data-a="next"]', el).disabled = k >= n - 1;
+    cv = null; box.style.width = box.style.height = ""; box.innerHTML = `<span class="spin"></span>`;
+    try { const page = await p.s.doc.getPage(p.i + 1), r = await T.pdf.render(page, Math.min(2600, Math.round(Math.max(innerWidth, innerHeight) * Math.min(2, window.devicePixelRatio || 1)))); page.cleanup();
+      if (my !== tok || !el.isConnected) return; cv = r.canvas; cv.style.transition = "none"; box.innerHTML = ""; box.appendChild(cv); fit(); requestAnimationFrame(() => { if (cv) cv.style.transition = ""; }); }
+    catch (e) { console.warn(e); if (my === tok) box.innerHTML = `<span class="small">This page can't be shown</span>`; }
+  };
+  const go = d => { const j = k + d; if (j < 0 || j >= OFF.pages.length) return; k = j; show(); };
+  const rot = d => { const p = OFF.pages[k]; if (!p) return; offRotate([p.id], d); ang += d; fit(); };
+  const close = () => { document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", fit); el.remove(); document.body.style.overflow = ""; tok++;
+    const p = OFF.pages[k]; if (p && $("#o_grid")) { OFF.focus = p.id; offSync(); offFocusCard(p.id); } else if (opener && opener.isConnected && opener.focus) opener.focus(); };
+  const onKey = e => { if (e.key === "Escape") close(); else if (e.key === "ArrowLeft") go(-1); else if (e.key === "ArrowRight") go(1);
+    else if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey) rot(e.shiftKey ? -90 : 90); else return; e.preventDefault(); e.stopPropagation(); };
+  document.addEventListener("keydown", onKey, true); window.addEventListener("resize", fit);
+  el.querySelector(".lb-bar").onclick = e => { const b = e.target.closest("[data-a]"); if (!b || b.disabled) return; const a = b.dataset.a;
+    if (a === "prev") go(-1); if (a === "next") go(1); if (a === "rotl") rot(-90); if (a === "rotr") rot(90); if (a === "close") close(); };
+  body.onclick = e => { if (e.target === body) close(); };
+  show();
+}
+
 /* ---------------------------------------------------------------- router + boot */
-const ROUTES = {select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
-const TITLES = {scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
+const ROUTES = {office: renderOffice, select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
+const TITLES = {office: "Office", scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
 function route(e) { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); document.title = (TITLES[r] ? TITLES[r] + " · " : "") + "ThaOCR";
-  const wide = r === "review" || r === "select"; view.classList.toggle("wide", wide); $(".topbar").classList.toggle("wide", wide);
+  const wide = r === "review" || r === "select" || r === "office"; view.classList.toggle("wide", wide); $(".topbar").classList.toggle("wide", wide);
   view.classList.add("enter"); clearTimeout(route.t); route.t = setTimeout(() => view.classList.remove("enter"), 350);  // entry animation on page change only, not on re-renders
   (ROUTES[r] || renderScan)(arg); window.scrollTo(0, 0);
   if (e && e.type === "hashchange" && !(document.activeElement && document.activeElement.closest && document.activeElement.closest(".page"))) view.focus({preventScroll: true});  // screen readers land on the new page

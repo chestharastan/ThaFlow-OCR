@@ -8,6 +8,7 @@ server-side storage; the app says so before first use.
 index.html / app.js / app.css   the UI (light + dark theme: follows the system, switch in the sidebar or Settings)
 docview.js                      reflowed, editable page view (shared with the backend app)
 export.js                       Word (.docx) and PDF export from one document model (window.ThaExport)
+office.js                       Office page core: merge / reorder / rotate / split / extract PDF pages (window.ThaOffice)
 ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure)
 ocr/pipeline.js                 regions -> blocks -> text -> paragraphs -> page result (same schema as POST /process)
 ocr/pdf.js                      PDF input (pdf.js from jsDelivr): text-layer pages are read without OCR, image pages are OCRed
@@ -15,8 +16,8 @@ ocr/device.js                   device check, model-set recommendation, benchmar
 ocr/store.js                    IndexedDB documents + page images
 models/                         models.json (manifest) + font/structure *_meta.json; the ONNX files themselves are
                                 pulled from https://huggingface.co/Thareah/ThaOCR-models (default set 41 MB)
-(no vendor folder)              onnxruntime-web 1.31.1, docx 9.15.3 and harfbuzzjs 1.6.4 load from jsDelivr
-                                (ThaOCR.config.ortBase, ThaExport.config.docx / .harfbuzz); a local copy in vendor/
+(no vendor folder)              onnxruntime-web 1.31.1, docx 9.15.3, harfbuzzjs 1.6.4 and pdf-lib 1.17.1 load from jsDelivr
+                                (ThaOCR.config.ortBase, ThaExport.config.docx / .harfbuzz, ThaOffice.config.pdfLib); a local copy in vendor/
                                 is git-ignored and only needed for offline work
 fonts/                          Khmer fonts for the reflowed view (OFL / LGPL)
 serve.py, vercel.json, _headers dev server and hosting headers (COOP/COEP -> multi-threaded WebAssembly)
@@ -86,6 +87,17 @@ Export (export.js): Word and PDF are written from one model built from `page.doc
 - Pages that were read from a PDF text layer carry no table structure (no layout model runs on them); use "Run
   OCR instead" on such a page to get its tables.
 - Offline: copy the two library files into `vendor/` and point `ThaExport.config.docx` / `.harfbuzz` there.
+
+Office (first item in the sidebar): page tools for PDF files, separate from OCR. Open one or more PDFs (they are
+merged in the order added), see every page as a thumbnail (pdf.js, rendered when it scrolls into view), click to select
+(Shift for a range), drag to reorder (press and hold on a phone; a selected page carries the whole selection), rotate,
+delete, undo / redo. Download the result, extract the selected pages, or split: click the scissors between pages, or
+type page ranges ("1-3, 4-8, 10"; Khmer digits work), one PDF per part, several parts in one .zip. "OCR" sends the
+selected pages (or all) to Scan as one PDF. Pages are copied with pdf-lib (`office.js`), not redrawn: text, fonts,
+images and links stay as they were; one copy per source keeps shared fonts written once. Nothing is stored: the
+files live in the tab until downloaded. Encrypted PDFs (an open password, or "protected" with permissions) are refused
+with a message, since their pages can't be copied without the password. Keys: R / Shift+R rotate, Del delete,
+Alt + arrows move, Ctrl+Z / Ctrl+Y undo / redo, Ctrl+A select all, Enter preview.
 
 Training data from use: every line a user edits in the review is a (line image, corrected text) pair. Settings ->
 "Export corrections" writes them as JSON (PNG crops, base64) for fine-tuning the recogniser with `training/rec`.
