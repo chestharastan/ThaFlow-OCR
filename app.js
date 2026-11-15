@@ -973,7 +973,7 @@ function renderSelect() {
   view.innerHTML = `
   <div class="head"><div class="grow"><h1>Select</h1><p>Drag a box over text to read and copy it. Nothing is saved.</p></div>
     <div class="tools"><label class="tg" title="Copy each new result to the clipboard"><input type="checkbox" id="s_auto" ${SEL.autoCopy ? "checked" : ""}>Auto-copy</label>
-      ${SEL.files.length ? `<button class="btn p" id="s_add">${icon("plus")}Add files</button>` : ""}</div></div>
+      ${SEL.files.length ? `<button class="btn" id="s_resetall" title="Remove the image and all selections, then paste or add a new one">${icon("undo", "s")}Reset all</button><button class="btn p" id="s_add">${icon("plus")}Add files</button>` : ""}</div></div>
   ${!SEL.files.length ? `<div class="drop sel-empty" id="s_drop"><div class="ico">${icon("select", "l")}</div><div class="grow"><b>Drop files here</b><div class="small">Images or PDF · or paste with Ctrl+V</div></div>
     <div class="acts"><button class="btn p" id="s_browse">${icon("folder")}Choose files</button><button class="btn" id="s_cam">${icon("camera")}Camera</button></div></div>` : `
   <div class="sel-grid">
@@ -982,6 +982,7 @@ function renderSelect() {
      <div class="stage sel-stage zoomable" id="s_drop"><div class="sel-page" id="s_page"><div class="sel-wait" id="s_wait"><span class="spin"></span> Opening…</div></div></div></div>
    <div class="sel-results" id="s_res"></div>
   </div>`}`;
+  if ($("#s_resetall")) $("#s_resetall").onclick = () => { SEL.files = []; SEL.cur = -1; renderSelect(); toast("Reset · paste or add a new image"); };
   if ($("#s_add")) $("#s_add").onclick = () => pickFiles(selAdd); if ($("#s_browse")) { $("#s_browse").onclick = () => pickFiles(selAdd); $("#s_cam").onclick = () => pickFiles(selAdd, true); }
   $("#s_auto").onchange = e => { SEL.autoCopy = e.target.checked; localStorage.setItem("thaocr.selAutoCopy", SEL.autoCopy ? "1" : "0"); };
   if ($("#s_drop")) wireDrop($("#s_drop"), selAdd); clickToBrowse($(".drop#s_drop"), $("#s_browse"));
