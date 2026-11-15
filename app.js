@@ -405,7 +405,9 @@ function startJob() {
     const first = JOB.files.find(x => x.page_id); if (first && location.hash === "#/process") setTimeout(() => { if (location.hash === "#/process") location.hash = "#/review/" + first.page_id; }, 1200);
   })();
 }
-function renderIfProcess() { if (location.hash === "#/process") renderProcess(); }
+// progress callbacks come in bursts (a download chunk every few ms): paint at most once per frame
+let procQueued = false;
+function renderIfProcess() { if (procQueued || location.hash !== "#/process") return; procQueued = true; requestAnimationFrame(() => { procQueued = false; if (location.hash === "#/process") renderProcess(); }); }
 function renderProcess() {
   if (!JOB) { view.innerHTML = `<div class="head"><div class="grow"><h1>Processing</h1></div></div><div class="card empty"><div class="ico">${icon("scan", "l")}</div><b>Nothing running</b><a class="btn p" href="#/scan">${icon("scan")}Scan a page</a></div>`; return; }
   const cur = JOB.files[Math.min(JOB.current ?? 0, JOB.files.length - 1)], last = JOB.results[JOB.results.length - 1], running = JOB.status === "running";
@@ -436,6 +438,11 @@ function renderProcess() {
   const overlay = !!(last && last.page_id === cur.page_id), imgSrc = overlay ? JOB.lastImage : cur.url;
   const scan = running && cur.status === "running" ? (JOB.load ? "scanline soft" : "scanline") : "";
   const key = `${JOB.id}|${imgSrc}|${overlay}`, phase = JOB.load ? "load" : "run";
+  // how far the next progress update will move the bar (%) and how long it should take (s): the bar trickles toward it, so it never
+  // sits still between updates (recognition reports once per batch of 16 lines, which is many seconds on a phone)
+  const pace = (() => { if (!running || JOB.load) return {ahead: 0, tau: 3}; const bm = T.benchmarkStored() || {}, stg = JOB.step ? JOB.step.stage : "decode", n = JOB.step && JOB.step.total ? Math.min(16, JOB.step.total - JOB.step.done) : 0;
+    const [d, secs] = stg === "rec" && JOB.step.total ? [0.5 * n / JOB.step.total, n * (bm.recMsPerLine || 120) * 1.25 / 1000] : stg === "layout" ? [0.12, (bm.layoutMs || 800) / 1000] : stg === "textdet" ? [0.11, (bm.detMs || 1500) * 1.3 / 1000] : stg === "font" || stg === "structure" ? [0.05, 1.5] : [0.12, 0.4];
+    return {ahead: d / JOB.total * 100, tau: Math.max(0.4, secs / 2)}; })();
 
   // Build the page only when the picture changes; otherwise patch the parts that changed in place, so the scan
   // line, spinners and progress bar keep animating instead of restarting on every progress callback.
@@ -446,14 +453,14 @@ function renderProcess() {
    <div class="card"><div class="panehead"><span class="ph-t" id="p_name">${esc(cur.name)}</span><div class="grow"></div>${zoomTools("p_zoom")}<span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
     <div class="stage zoomable" id="p_box"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" draggable="false"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
    <div style="display:flex;flex-direction:column;gap:16px">
-    <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" style="width:${pct}%;transition:none"></i></div>
+    <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" class="fill"></i></div>
       <div class="small mut" id="p_note" style="margin-top:10px${note ? "" : ";display:none"}">${note}</div></div>
     <div class="card pad"><div class="pipe" id="p_steps">${steps.map(stepHtml).join("")}</div></div>
     <div id="p_files">${filesHtml}</div><div id="p_failed">${failedHtml}</div></div></div>`;
     const prev = PVIEW && PVIEW.id === JOB.id && PVIEW.phase === phase ? PVIEW.disp : pct;
     const zstate = PVIEW && PVIEW.zfile === cur ? PVIEW.zstate : null;  // same file: the zoom stays when the result replaces the photo
-    const pv = PVIEW = {key, id: JOB.id, phase, target: pct, disp: Math.min(prev, pct), running, html: {}, zfile: cur, zstate, zp: null};
-    $("#p_pct").textContent = Math.round(PVIEW.disp) + "%"; $("#p_bar").style.width = PVIEW.disp + "%";
+    const pv = PVIEW = {key, id: JOB.id, phase, target: pct, disp: Math.min(prev, pct), running, ahead: pace.ahead, tau: pace.tau, html: {}, zfile: cur, zstate, zp: null};
+    $("#p_pct").textContent = Math.round(PVIEW.disp) + "%"; $("#p_bar").style.transform = `scaleX(${(PVIEW.disp / 100).toFixed(4)})`;
     const img = $("#p_img"), cv = $("#p_cv");
     const mount = (w, h) => { if (!pv.zp && $("#p_box")) pv.zp = zoomPane({box: $("#p_box"), el: $("#p_stage"), bar: $("#p_zoom"), w, h, state: pv.zstate, onChange: st => { pv.zstate = st; }}); };
     img.onload = overlay ? () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true}); cv.classList.remove("hide"); img.classList.add("hide"); mount(last.width, last.height); }
@@ -474,10 +481,10 @@ function renderProcess() {
     if (el.className !== st.cls) { const wasDone = el.classList.contains("done"); el.className = st.cls; if (wasDone !== st.done) el.querySelector(".n").innerHTML = st.done ? icon("check", "s") : String(i + 1); }
     el.querySelector(".sub").textContent = st.s || ""; el.querySelector(".ms").textContent = st.ms != null ? fmtMs(st.ms) : ""; });
   if (PVIEW.phase !== phase) { PVIEW.phase = phase; PVIEW.disp = Math.min(PVIEW.disp, pct); } // new phase: the bar may start again from 0
-  PVIEW.target = pct; PVIEW.running = running; progressLoop();
+  PVIEW.target = pct; PVIEW.running = running; PVIEW.ahead = pace.ahead; PVIEW.tau = pace.tau; progressLoop();
 }
-/** Eases the shown percentage toward the real one, and creeps forward slowly between progress callbacks so the
- *  bar never looks frozen during a long step (never more than a few % ahead of the real value, never 100 early). */
+/** Eases the shown percentage toward the real one, then trickles toward the next expected value (never past 92% of the
+ *  next step, never 100 early) so the bar keeps moving between progress callbacks. */
 let PVIEW = null;
 function progressLoop() {
   if (PVIEW && PVIEW.raf) return;
@@ -486,14 +493,14 @@ function progressLoop() {
     const pe = $("#p_pct"), be = $("#p_bar");
     if (!PVIEW || !pe || !be) { if (PVIEW) PVIEW.raf = 0; return; }
     const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
-    const v = PVIEW, cap = v.running ? Math.min(99, v.target + 6) : v.target;
+    const v = PVIEW, cap = v.running ? Math.min(99, v.target + (v.ahead || 0) * 0.92) : v.target;
     if (v.disp < v.target) v.disp += Math.max(0.05, (v.target - v.disp) * Math.min(1, dt * 6)); // ease in
     else if (v.disp > v.target && !v.running) v.disp = v.target;
-    else if (v.running && v.disp < cap) v.disp += dt * 0.8 * (1 - (v.disp - v.target) / 6); // creep, slowing down
+    else if (v.running && v.disp < cap) v.disp += (cap - v.disp) * (1 - Math.exp(-dt / (v.tau || 3))); // trickle, slowing as it nears the cap
     v.disp = Math.min(v.disp, Math.max(cap, v.target));
     const shown = Math.floor(v.disp);
     if (pe.textContent !== shown + "%") pe.textContent = shown + "%";
-    be.style.width = v.disp.toFixed(2) + "%";
+    be.style.transform = `scaleX(${(v.disp / 100).toFixed(4)})`;   // transform, not width: no layout per frame
     if (!v.running && Math.abs(v.disp - v.target) < 0.01) { v.raf = 0; return; }
     v.raf = requestAnimationFrame(tick);
   };
