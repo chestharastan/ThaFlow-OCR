@@ -191,7 +191,8 @@
   };
   T.loaded = () => !!(T.sessions.layout && T.sessions.textdet && T.sessions.rec);
   /** A second recogniser (the handwriting-trained CRNN) for doubtful lines; loaded on first need, wasm only. */
-  T.altRecId = () => { const m = T.manifest; if (!m) return null; const want = m.models.filter(x => x.stage === "rec" && /hw/.test(x.id)); return (want.find(x => /int8/.test(x.id)) || want[0] || {}).id || null; };
+  T.altRecId = () => { const m = T.manifest; if (!m) return null; const cur = T.spec(T.active.rec); if (cur && cur.handwriting) return null;  // the active reader is itself handwriting-trained (v3+): no older second opinion
+    const want = m.models.filter(x => x.stage === "rec" && /hw/.test(x.id)); return (want.find(x => /int8/.test(x.id)) || want[0] || {}).id || null; };
   T.loadAltRec = async function (id, onProgress) {
     if (T.sessions.rec_alt && T.sessions.rec_alt.spec.id === id) return T.sessions.rec_alt;
     const spec = T.spec(id); if (!spec) throw new Error("unknown model " + id);

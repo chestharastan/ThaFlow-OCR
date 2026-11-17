@@ -3,7 +3,7 @@
  "defaults": {
   "layout": "layout_yolo11n_v4_22cls",
   "textdet": "db_ppocrv5_khmer_v2",
-  "rec": "crnn_m_v2_stamp2",
+  "rec": "crnn_m_v3_owner",
   "font": "font_cnn_v2",
   "structure": "struct_v1"
  },
@@ -462,6 +462,36 @@
     32,
     256
    ]
+  },
+  {
+   "id": "crnn_m_v3_owner",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v3_owner.onnx",
+   "version": "v3",
+   "label": "CRNN-CTC M v3 (v2.3 + 4.9k real owner exam-handwriting lines)",
+   "sha256": "1c32cd5a6c53db6c03de5b5c25198779f7a69ab2c9fe3c139f8312ff812f1f9b",
+   "vocab": "rec/crnn_m_v3_owner.vocab.json",
+   "input_size": [
+    48,
+    null
+   ],
+   "handwriting": true
+  },
+  {
+   "id": "crnn_m_v3_owner_int8",
+   "stage": "rec",
+   "kind": "crnn_onnx",
+   "file": "rec/crnn_m_v3_owner_int8.onnx",
+   "version": "v3",
+   "label": "CRNN-CTC M v3 int8 (phone size)",
+   "sha256": "d042b94b05cc5b1d9c2fd2966cc153fe76f79706c59c47608b109fbf6fd76896",
+   "vocab": "rec/crnn_m_v3_owner.vocab.json",
+   "input_size": [
+    48,
+    null
+   ],
+   "handwriting": true
   }
  ],
  "sizes": {
@@ -494,7 +524,10 @@
   "rec/crnn_m_v2_stamp3_int8.onnx": 4817737,
   "font/font_cnn_v2.onnx": 1937813,
   "layout/layout_v4_n_22cls.onnx": 10946514,
-  "layout/layout_v4_n_22cls_int8.onnx": 3296959
+  "layout/layout_v4_n_22cls_int8.onnx": 3296959,
+  "rec/crnn_m_v3_owner.onnx": 19060368,
+  "rec/crnn_m_v3_owner_int8.onnx": 4817737,
+  "rec/crnn_m_v3_owner.vocab.json": 1198
  },
  "app": "ThaOCR web"
 }
