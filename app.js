@@ -86,7 +86,8 @@ const LATIN = {"Latin serif": '"Liberation Serif","Times New Roman",serif', "Lat
 const T = window.ThaOCR;
 const store = {
   skey: "thaocr.settings.v1", docs: [], jobs: [],
-  settings: {output: "docx", name: "Local user", models: {}, backend: "auto", tier: null, noticeSeen: false, longMin: null, longMax: null, rules: true},
+  settings: {output: "docx", name: "Local user", models: {}, backend: "auto", tier: null, noticeSeen: false, longMin: null, longMax: null, rules: true,
+    layout: null},  // layout: a layout model that also gives roles and reading order (PP-DocLayout from PaddleOCR-VL), or null = ThaOCR's layout + structure models
   load() { try { Object.assign(this.settings, JSON.parse(localStorage.getItem(this.skey) || "{}")); } catch {} },
   save() { localStorage.setItem(this.skey, JSON.stringify(this.settings)); },
   async init() { this.load(); this.docs = await T.db.all(); for (const d of this.docs) d.image_url = await T.db.imageUrl(d.page_id); },
@@ -127,7 +128,11 @@ if (darkMq.addEventListener) darkMq.addEventListener("change", () => { if (theme
 let DEVICE = null, RECO = null, LOADING = null;
 async function deviceCheck() { DEVICE = await T.deviceInfo(); await T.loadManifestSafe(); RECO = T.recommend(DEVICE); return RECO; }
 T.loadManifestSafe = async () => { if (T.manifest) return T.manifest; const r = await fetch(T.config.manifestBase + "models.json", {cache: "no-cache"}); T.manifest = await r.json(); return T.manifest; };
-function chosenModels() { const base = RECO ? RECO.choice : (T.manifest ? T.manifest.defaults : {}); return Object.assign({}, base, store.settings.models || {}); }
+/** The model of every stage: the device's model set, then the layout engine picked in Settings > Layout (it survives a
+    change of model set), then the per-stage overrides of Settings > Models. */
+function chosenModels() { const base = RECO ? RECO.choice : (T.manifest ? T.manifest.defaults : {}), eng = store.settings.layout && T.spec(store.settings.layout) ? {layout: store.settings.layout} : {}; return Object.assign({}, base, eng, store.settings.models || {}); }
+/** Pick the layout model. One that gives roles and reading order itself (PP-DocLayout) is the layout engine; any other is a per-stage override. */
+function setLayoutModel(id) { const m = Object.assign({}, store.settings.models); delete m.layout; if (id && T.layoutGivesStructure(id)) store.settings.layout = id; else { store.settings.layout = null; if (id) m.layout = id; } store.settings.models = m; store.save(); resetModels(); }
 function applyScale() { const sc = RECO ? RECO.scale : {longMin: 1600, longMax: 2200}; T.config.longMin = store.settings.longMin || sc.longMin; T.config.longMax = store.settings.longMax || sc.longMax; T.config.backend = store.settings.backend || "auto"; T.config.rules = store.settings.rules !== false; }
 /** Load the chosen model set (once); onProgress(text, fraction) */
 function ensureModels(onProgress) {
@@ -137,7 +142,7 @@ function ensureModels(onProgress) {
     const cur = {};
     await T.load(choice, p => { cur[p.stage] = p.got; const got = Object.values(cur).reduce((a, b) => a + b, 0); onProgress && onProgress(`${p.fromCache ? "Loading" : "Downloading"} ${p.stage} model…`, Math.min(0.98, got / total)); });
     void doneBytes;
-    if (!T.benchmarkStored() || T.benchmarkStored().backend !== T.backendUsed || T.benchmarkStored().models.rec !== T.active.rec) { onProgress && onProgress("Measuring speed on this device…", 0.99); await T.benchmark(); }
+    if (!T.benchmarkStored() || T.benchmarkStored().backend !== T.backendUsed || T.benchmarkStored().models.rec !== T.active.rec || T.benchmarkStored().models.layout !== T.active.layout) { onProgress && onProgress("Measuring speed on this device…", 0.99); await T.benchmark(); }
     onProgress && onProgress("Ready", 1); sidebar();
   })().catch(e => { LOADING = null; throw e; });
   return LOADING;
@@ -439,7 +444,7 @@ function renderProcess() {
     ["Find regions", t ? [plural(blocks.length, "region"), count("table", "table"), count("stamp", "stamp")].filter(Boolean).join(" · ") : "", si > 1 || !!t, t && t.layout_ms],
     ["Find lines", t ? plural(t.lines_detected, "line") : "", si > 2 || !!t, t && t.textdet_ms],
     ["Read text", t ? plural(t.lines_recognized, "line") : (JOB.step && JOB.step.stage === "rec" && JOB.step.total ? `${JOB.step.done} / ${JOB.step.total} lines` : ""), si > 3 || !!t, t && t.rec_ms],
-    ["Fonts & order", t ? (t.structure === "model" ? "Learned structure" : "Layout rules") : "", si > 4 || !!t, t && ((t.font_ms || 0) + (t.structure_ms || 0))],
+    ["Fonts & order", t ? (t.structure === "model" ? "Learned structure" : t.structure === "layout" ? "Order from the layout model" : "Layout rules") : "", si > 4 || !!t, t && ((t.font_ms || 0) + (t.structure_ms || 0))],
     ["Build document", t ? "Ready" : "", !!t, null]];
   const failed = JOB.files.filter(f => f.status === "failed");
   const b = T.benchmarkStored(), remaining = running ? (JOB.load ? "" : `~${Math.max(1, Math.round((JOB.total - JOB.done - fileFrac) * (b ? T.estimate(b, 40) : 8)))} s left`) : `Took ${fmtMs(Date.now() - JOB.started)}`;
@@ -831,6 +836,9 @@ async function renderSettings() {
   const sr = await storageReport(); const bytes = Math.max(0, sr.usage - sr.models);
   const dev = [plural(DEVICE.threads, "thread"), DEVICE.memoryGB ? DEVICE.memoryGB + " GB" : "", DEVICE.webgpu ? "WebGPU" + (DEVICE.gpuName ? " (" + esc(DEVICE.gpuName) + ")" : "") : "no WebGPU", DEVICE.threadsOK ? "" : "single-thread", DEVICE.mobile ? "mobile" : ""].filter(Boolean).join(" · ");
   const opt = (v, cur, t) => `<option value="${v}" ${cur === v ? "selected" : ""}>${t}</option>`;
+  // layout engines: layout models that give roles and reading order themselves (PP-DocLayout from PaddleOCR-VL)
+  const sizeOf = m => (m && T.manifest.sizes && T.manifest.sizes[m.file]) || 0, engines = T.modelsFor("layout").filter(m => T.layoutGivesStructure(m.id)), engine = T.layoutGivesStructure(choice.layout) ? choice.layout : "";
+  const ownBytes = sizeOf(T.spec(RECO.choice.layout)) + sizeOf(T.spec(RECO.choice.structure));
   view.innerHTML = `<div class="head"><div class="grow"><h1>Settings</h1><p>For this browser only.</p></div></div>
   ${ocrBusy() ? `<div class="note">${icon("info")}<div>OCR is running. Changes to models and stored data wait until it finishes.</div></div>` : ""}
   <div class="grid g-main"><div class="col">
@@ -844,6 +852,7 @@ async function renderSettings() {
     <div class="btnrow"><button class="btn sm" id="s_bench">${icon("refresh", "s")}Measure again</button><button class="btn sm" id="s_load">${icon("download", "s")}Load models now</button></div>
     <a class="linkrow" href="${esc(modelsPage())}" target="_blank" rel="noopener"><span class="ti">${icon("layers")}</span><span class="grow"><b>Free models on Hugging Face</b><span class="small mut">${esc(modelsPage().replace("https://huggingface.co/", ""))} · see and download every model</span></span>${icon("external", "s")}<span class="sr">(opens in a new tab)</span></a></div>
    <div class="card pad"><h2>Layout</h2>
+    <div class="field"><label for="s_layout">Regions and structure</label><div class="sel"><select id="s_layout">${opt("", engine, `ThaOCR layout + structure models · ${T.fmtBytes(ownBytes)}`)}${engines.map(m => opt(m.id, engine, esc((m.label || m.id).replace(/\s*\(.*\)$/, "")) + (sizeOf(m) ? " · " + T.fmtBytes(sizeOf(m)) : ""))).join("")}</select></div><div class="small mut">${engine ? "PaddleOCR-VL's layout model finds the regions, their roles and the reading order; ThaOCR reads the text and the fonts. A large one-time download from PaddlePaddle on Hugging Face; adds up to 2 s per page (under 1 s on a GPU)." : "Pick a PaddleOCR-VL layout model to get regions, roles and reading order from it; ThaOCR then only reads the text and the fonts."} Applies to the next scan.</div></div>
     <div class="field" style="margin:0"><label for="s_rules">Page analysis</label><div class="sel"><select id="s_rules">${opt("rules", store.settings.rules !== false ? "rules" : "model", "Models + layout rules (recommended)")}${opt("model", store.settings.rules !== false ? "rules" : "model", "Models only")}</select></div><div class="small mut">Rules join paragraphs, tables and label columns. Applies to the next scan.</div></div></div>
    <details class="card adv"><summary><span class="grow"><b>Models</b><span class="small mut">Advanced · overrides the model set</span></span>${icon("chevron-down")}</summary><div class="adv-body">
     ${stage("layout", "Layout", "Paragraphs, tables, stamps, logos")}${stage("textdet", "Text lines", "Finds each line")}${stage("rec", "Recogniser", "Reads Khmer &amp; English · int8 is faster, fp32 more accurate")}${stage("font", "Fonts", "Typeface, weight and size")}${stage("structure", "Structure", "Paragraphs and reading order")}
@@ -859,8 +868,9 @@ async function renderSettings() {
   $("#s_rules").onchange = e => { store.settings.rules = e.target.value === "rules"; store.save(); applyScale(); toast("Saved · applies to the next scan"); };
   $("#s_backend").onchange = e => { store.settings.backend = e.target.value; store.save(); resetModels(); renderSettings(); };
   view.querySelectorAll("#s_tiers .tier").forEach(t => t.onclick = () => { setTier(t.dataset.t); renderSettings(); });
-  view.querySelectorAll("select[data-stage]").forEach(sel => sel.onchange = () => { store.settings.models = Object.assign({}, store.settings.models, {[sel.dataset.stage]: sel.value}); store.save(); resetModels(); toast("Saved · loads on the next scan"); });
-  $("#s_reset").onclick = () => { store.settings.models = {}; store.settings.tier = null; store.save(); resetModels(); deviceCheck().then(renderSettings); };
+  view.querySelectorAll("select[data-stage]").forEach(sel => sel.onchange = () => { if (sel.dataset.stage === "layout") { setLayoutModel(sel.value); renderSettings(); } else { store.settings.models = Object.assign({}, store.settings.models, {[sel.dataset.stage]: sel.value}); store.save(); resetModels(); } toast("Saved · loads on the next scan"); });
+  $("#s_layout").onchange = e => { setLayoutModel(e.target.value); renderSettings(); toast("Saved · loads on the next scan"); };
+  $("#s_reset").onclick = () => { store.settings.models = {}; store.settings.tier = null; store.settings.layout = null; store.save(); resetModels(); deviceCheck().then(renderSettings); };
   $("#s_bench").onclick = async () => { toast("Measuring…"); try { await ensureModels(); await T.benchmark(); renderSettings(); toast("Done"); } catch (e) { toast("Failed: " + e.message); } };
   $("#s_load").onclick = async () => { try { await ensureModels((m) => toast(m)); renderSettings(); } catch (e) { toast("Failed: " + e.message); } };
   $("#s_clear").onclick = async () => { if (confirm("Delete all documents from this browser? This cannot be undone.")) { await store.clear(); sidebar(); renderSettings(); toast("Documents deleted"); } };
@@ -876,7 +886,7 @@ async function renderSettings() {
   // While a scan or re-run is running, changes that unload the models or remove data wait: they would break that run
   // ("models not loaded"). The theme and exporting corrections stay available.
   const guard = (el, ev) => { if (!el || !el[ev]) return; const h = el[ev]; el[ev] = e => { if (ocrBusy()) { toast("OCR is running · change this when it finishes"); renderSettings(); return; } return h.call(el, e); }; };
-  ["#s_rules", "#s_backend"].forEach(sel => guard($(sel), "onchange")); view.querySelectorAll("select[data-stage]").forEach(el => guard(el, "onchange"));
+  ["#s_rules", "#s_backend", "#s_layout"].forEach(sel => guard($(sel), "onchange")); view.querySelectorAll("select[data-stage]").forEach(el => guard(el, "onchange"));
   view.querySelectorAll("#s_tiers .tier").forEach(el => guard(el, "onclick")); ["#s_reset", "#s_bench", "#s_load", "#s_clear", "#s_cache", "#s_wipe"].forEach(sel => guard($(sel), "onclick"));
 }
 /* ---------------------------------------------------------------- corrections -> training data */

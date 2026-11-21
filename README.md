@@ -9,19 +9,22 @@ index.html / app.js / app.css   the UI (light + dark theme: follows the system, 
 docview.js                      reflowed, editable page view (shared with the backend app)
 export.js                       Word (.docx) and PDF export from one document model (window.ThaExport)
 pdftools.js                     PDF page core: merge / reorder / rotate / split / extract PDF pages (window.ThaPdfTools)
-ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure)
+ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure); the layout
+                                stage runs ThaOCR's YOLO model or PaddleOCR-VL's PP-DocLayout (regions + roles + reading order)
 ocr/pipeline.js                 regions -> blocks -> text -> paragraphs -> page result (same schema as POST /process)
 ocr/pdf.js                      PDF input (pdf.js from jsDelivr): text-layer pages are read without OCR, image pages are OCRed
 ocr/device.js                   device check, model-set recommendation, benchmark, time estimate
 ocr/store.js                    IndexedDB documents + page images
 models/                         models.json (manifest) + font/structure *_meta.json; the ONNX files themselves are
-                                pulled from https://huggingface.co/Thareah/ThaOCR-models (default set 41 MB)
+                                pulled from https://huggingface.co/Thareah/ThaOCR-models (default set 41 MB); the optional
+                                PaddleOCR-VL layout models come from PaddlePaddle's own Hugging Face repos
 (no vendor folder)              onnxruntime-web 1.31.1, docx 9.15.3, harfbuzzjs 1.6.4 and pdf-lib 1.17.1 load from jsDelivr
                                 (ThaOCR.config.ortBase, ThaExport.config.docx / .harfbuzz, ThaPdfTools.config.pdfLib); a local copy in vendor/
                                 is git-ignored and only needed for offline work
 fonts/                          Khmer fonts for the reflowed view (OFL / LGPL)
 serve.py, vercel.json, _headers dev server and hosting headers (COOP/COEP -> multi-threaded WebAssembly)
-test.html                       engine test page: ?img=<your image>&backend=wasm|webgpu&bench=1 (no sample images are shipped)
+test.html                       engine test page: ?img=<your image>&backend=wasm|webgpu&bench=1&layout=<layout model id>&rules=0
+                                (no sample images are shipped)
 ```
 
 Run locally: `python3 serve.py 8020` then open http://localhost:8020/ .
@@ -67,6 +70,29 @@ Settings > Layout > Page analysis switches these rules off ("Models only"): grou
 from the layout and structure models alone (`ThaOCR.config.rules = false`). On the test pages this is clearly worse
 (paragraphs split per line, dot-leader lines broken, label columns out of order), so the default keeps the rules.
 
+PaddleOCR-VL layout (Settings > Layout > Regions and structure, off by default): PaddleOCR-VL is two models, a layout
+model (PP-DocLayout: RT-DETR with a reading-order head) and a 0.9B vision-language model that reads each region. The
+app can use the layout model in place of its own layout and structure stages; the text is still read by ThaOCR's
+recogniser and the fonts by its font model. Two versions are in the manifest, both PaddlePaddle's own ONNX exports
+(Apache-2.0), downloaded from their Hugging Face repos at a pinned commit and cached like every other model:
+`pp_doclayout_v2` (PP-DocLayoutV2, the one in PaddleOCR-VL, 214 MB) and `pp_doclayout_v3` (PP-DocLayoutV3, the one in
+PaddleOCR-VL 1.5 / 1.6, 131 MB). One pass over the page squeezed to 800 x 800 gives every region with one of 25
+labels and its place in the reading order. `ocr/engine.js` resizes the page like OpenCV's bicubic (a smoothly shrunk
+page makes the model merge regions) and repeats the post-processing of PaddleX's PaddleOCR-VL pipeline (per-class
+thresholds, NMS, nested and duplicate boxes, order); on the test pages its regions equal the Python reference within
+one pixel. Labels map to the app's classes: doc_title -> title, paragraph_title -> section header, figure_title ->
+caption, number -> page number, seal -> stamp, header_image -> logo, image / chart -> figure, display_formula ->
+formula; an inline formula stays part of its text line. With such a model the blocks follow its reading order (a
+two-column page reads column by column), a region is one paragraph, a numbered heading stays a heading, and the
+structure model is not asked (it is still loaded for PDF text pages, which run no layout model). Stray lines outside
+every region are placed after the nearest region above them. The layout rules (tables from ruling lines, label
+columns, row segments, dot leaders) work as before. Measured on an Apple M2: 0.35-0.55 s a page on WebGPU, 1.5-1.8 s
+on WebAssembly (the YOLO model: 0.3 s). Limits: the labels have no signature, handwriting, QR code, checkbox or form
+field, which the YOLO model has; table cells still come from the app's own grid rules; the vision-language model is
+not used (about 1 GB, and it reads the text itself instead of giving a structure for another reader to fill).
+To make it the default, set `"layout"` in `defaults` of `models/models.json` to one of the two ids; for offline work
+save the files as `models/layout/pp_doclayout_v2.onnx` / `pp_doclayout_v3.onnx`.
+
 Doubtful lines (confidence < 0.6, typically handwriting or text under a stamp) get a second opinion from the
 handwriting-trained recogniser (`crnn_m_v2_hw_int8`, loaded on first need); the better-scoring reading wins.
 Tables are de-skewed before the cell grid is built and group-header rows span the table.
@@ -104,4 +130,4 @@ Training data from use: every line a user edits in the review is a (line image, 
 
 Not ported from the backend yet (rules that need OpenCV): red-stamp lifting and reading text under stamps, ink-based
 bullet detection, bold words by stroke weight, text colours, figure splitting, box snapping, decoration/rule detection.
-Layout models are Ultralytics YOLO11 (AGPL-3.0).
+Layout models are Ultralytics YOLO11 (AGPL-3.0); the optional PP-DocLayout models are PaddlePaddle's (Apache-2.0).

@@ -1,6 +1,8 @@
 /* ThaOCR browser pipeline: image -> layout -> lines -> text -> fonts -> structure -> page result (same schema as the
    backend's /process response, so the review UI and DocView work unchanged). Port of pipeline_service.py,
-   reading_order.py, parts of doc_structure.py / page_structure.py / document.py. */
+   reading_order.py, parts of doc_structure.py / page_structure.py / document.py.
+   With a PP-DocLayout layout model (PaddleOCR-VL) the regions arrive with their role and reading order: the blocks keep
+   that order ("order" on a block) and the structure model is not asked; ThaOCR's models read the text and the fonts. */
 (function () {
   "use strict";
   const T = window.ThaOCR = window.ThaOCR || {};
@@ -18,6 +20,8 @@
       row-segment joining, XY-cut reading order). */
   const modelOnly = () => T.config.rules === false;
   const unionBox = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+  /** Blocks joined into one keep the earliest place in the layout model's reading order (PP-DocLayout). */
+  const keepOrder = (into, parts) => { const o = parts.map(b => b.order).filter(v => v != null); if (o.length) into.order = Math.min(...o); };
 
   /* ---------------------------------------------------------------- stamps over text */
   /** Copy of the page with the coloured ink of each stamp box whitened (red or blue, by the box's dominant hue), so a
@@ -52,7 +56,7 @@
   function cleanRegions(regions, W, H) {
     const blocks = [], ignored = [];
     for (const r of regions.slice().sort((a, b) => b.score - a.score)) {
-      const b = block(r.cls, r.box, r.score, r.label);
+      const b = block(r.cls, r.box, r.score, r.label); if (r.order != null) b.order = r.order;
       if (b.cls === "figure" && U.bArea(b.box) > 0.5 * W * H) { ignored.push({...r, reason: "page_sized_figure"}); continue; }
       if (blocks.some(k => iou(b.box, k.box) > 0.7)) { ignored.push({...r, reason: "duplicate"}); continue; }
       blocks.push(b);
@@ -110,11 +114,12 @@
     while (changed && text.length > 1) { changed = false;
       outer: for (let i = 0; i < text.length - 1; i++) { const a = text[i];
         for (let j = i + 1; j < text.length; j++) { const b = text[j]; const [, ay0, ax1, ay1] = a.box, [, by0, bx1, by1] = b.box, ax0 = left(a), bx0 = left(b), h = Math.min(lh(a), lh(b));
+          if (a.order != null && b.order != null) continue;  // two regions of a layout model that also gives the reading order (PP-DocLayout) are two paragraphs already
           if (by0 - ay1 > 0.7 * h || by0 < ay0) continue; const ov = Math.min(ax1, bx1) - Math.max(ax0, bx0), wa = ax1 - ax0, wb = bx1 - bx0; if (ov < 0.5 * Math.min(wa, wb)) continue;
           if (firstX0.get(b) - ax0 > 0.8 * h) continue;
           const aLast = a.lines.length ? a.lines.reduce((p, l) => l.bbox[3] > p.bbox[3] ? l : p) : null; if (aLast && aLast.bbox[2] < bx1 - 3 * h && b.lines.length >= 2) continue;
           if (Math.abs(bx0 - ax0) > 0.8 * h && Math.min(wa, wb) < 0.6 * Math.max(wa, wb)) continue;
-          a.box = [Math.min(ax0, bx0), Math.min(ay0, by0), Math.max(ax1, bx1), Math.max(ay1, by1)]; a.lines = a.lines.concat(b.lines); a.score = Math.max(a.score, b.score); if (a.source === "orphan" && b.source !== "orphan") a.source = b.source;
+          a.box = [Math.min(ax0, bx0), Math.min(ay0, by0), Math.max(ax1, bx1), Math.max(ay1, by1)]; a.lines = a.lines.concat(b.lines); a.score = Math.max(a.score, b.score); if (a.source === "orphan" && b.source !== "orphan") a.source = b.source; keepOrder(a, [a, b]);
           text.splice(j, 1); changed = true; break outer; } } }
     return other.concat(text);
   }
@@ -223,7 +228,7 @@
           return hit >= 0.6 * b.lines.length; });
         if (!right.length) continue;
         const all = [a, ...right]; a.box = [Math.min(...all.map(b => b.box[0])), Math.min(...all.map(b => b.box[1])), Math.max(...all.map(b => b.box[2])), Math.max(...all.map(b => b.box[3]))];
-        a.lines = all.flatMap(b => b.lines); a.cls = "table"; a.label = "table"; a.source = "aligned"; a.borders = false; a.score = Math.max(...all.map(b => b.score || 0));
+        a.lines = all.flatMap(b => b.lines); a.cls = "table"; a.label = "table"; a.source = "aligned"; a.borders = false; a.score = Math.max(...all.map(b => b.score || 0)); keepOrder(a, all);
         blocks = blocks.filter(b => !right.includes(b)); changed = true; break; }
     }
     return blocks;
@@ -243,7 +248,7 @@
     for (const L of blocks.filter(labelish)) { const vals = blocks.filter(b => partner(L, b)); if (!vals.length) continue;
       const g = groups.find(g => g.values.some(v => vals.includes(v))); if (g) { g.labels.push(L); for (const v of vals) if (!g.values.includes(v)) g.values.push(v); } else groups.push({labels: [L], values: vals}); }
     for (const g of groups) { const all = [...g.labels, ...g.values], head = g.labels[0]; if (all.some(b => !blocks.includes(b))) continue;
-      head.box = all.reduce((a, b) => unionBox(a, b.box), head.box); head.lines = all.flatMap(b => b.lines); head.cls = "table"; head.label = "table"; head.source = "labels"; head.borders = false; head.score = Math.max(...all.map(b => b.score || 0));
+      head.box = all.reduce((a, b) => unionBox(a, b.box), head.box); head.lines = all.flatMap(b => b.lines); head.cls = "table"; head.label = "table"; head.source = "labels"; head.borders = false; head.score = Math.max(...all.map(b => b.score || 0)); keepOrder(head, all);
       blocks = blocks.filter(b => b === head || !all.includes(b)); }
     return blocks;
   }
@@ -310,11 +315,12 @@
   }
   const ROLE_TO_CLS = {title: "title", section_header: "section_header", list_item: "list", header: "header", footer: "footer", page_number: "page_number", caption: "caption", footnote: "footnote", text: "text"};
   /** Lines in reading order, paragraphs, indent levels and (model) roles for every text block. */
-  async function structure(blocks, W, H) {
+  async function structure(blocks, W, H, byLayout) {
     let textBlocks = blocks.filter(b => TEXT_CLASSES.has(b.cls)); const all = [];
     for (const b of textBlocks) { b.lines = sortLines(b.lines); if (!["table", "form_field", "handwriting"].includes(b.cls)) all.push(...b.lines.filter(l => l.text)); }
     let preds = null;
-    if (all.length >= 2 && T.sessions.structure) { try { const p = await T.predictStructure(all, W, H); preds = new Map(all.map((l, i) => [l, p[i]])); } catch (e) { console.warn("structure model failed", e); } }
+    // byLayout: the layout model (PP-DocLayout) already gave every region its role and its place in the reading order
+    if (!byLayout && all.length >= 2 && T.sessions.structure) { try { const p = await T.predictStructure(all, W, H); preds = new Map(all.map((l, i) => [l, p[i]])); } catch (e) { console.warn("structure model failed", e); } }
     if (preds && modelOnly()) {
       // the model's successor pointers give the order of the lines inside every block (and of the blocks, see render)
       for (const l of all) l.rank = preds.get(l).order;
@@ -333,11 +339,15 @@
       const lines = b.lines.filter(l => l.text), withP = preds && lines.length >= 2 && lines.every(l => preds.has(l));
       // order inside a block is geometric (rows top-down, left-right); the model's pointer order was unreliable
       const medH = U.median(lines.map(l => l.bbox[3] - l.bbox[1])) || 1;
+      // a region of a layout model that gives the structure (PP-DocLayout boxes one paragraph per region) is one paragraph:
+      // its line spacing alone never splits it (airy 1.7 spacing reads as a gap after every line), only a gap clearly
+      // wider than its own spacing does (two paragraphs the model boxed together)
+      const region = byLayout && b.order != null, gaps = lines.slice(1).map((l, i) => l.bbox[1] - lines[i].bbox[3]).filter(g => g > 0), ownGap = gaps.length >= 3 ? U.median(gaps) : Infinity;
       // paragraphs
       const paras = []; let cur = null;
       lines.forEach((l, i) => { const p = withP ? preds.get(l) : null; const prev = i ? lines[i - 1] : null;
         let starts = i === 0 || !!l.bullet || !!l.tab || !!(prev && prev.tab) || (p ? p.first_p >= 0.5 : false);
-        if (!p && prev) { const gap = l.bbox[1] - prev.bbox[3], indent = l.bbox[0] - Math.min(...lines.map(x => x.bbox[0])); if (gap > 0.7 * medH || indent > 0.8 * medH && prev.bbox[0] < l.bbox[0] - 0.8 * medH || prev.bbox[2] < l.bbox[2] - 3 * medH) starts = true;
+        if (!p && prev) { const gap = l.bbox[1] - prev.bbox[3], indent = l.bbox[0] - Math.min(...lines.map(x => x.bbox[0])); if (gap > (region ? Math.max(0.7 * medH, 1.8 * ownGap) : 0.7 * medH) || indent > 0.8 * medH && prev.bbox[0] < l.bbox[0] - 0.8 * medH || prev.bbox[2] < l.bbox[2] - 3 * medH) starts = true;
           // hanging indent: a label line (កម្មវត្ថុ៖ / យោង៖ / Subject:) that runs to the right edge continues under its indent
           const right = Math.max(...lines.map(x => x.bbox[2])), hang = l.bbox[0] - prev.bbox[0];
           if (starts && gap <= 0.7 * medH && cur && cur.lines.length === 1 && cur.lines[0] === prev && HANG_LABEL_RE.test(prev.text || "") && prev.bbox[2] >= right - 2 * medH && hang > 0.8 * medH && hang < 0.35 * (right - prev.bbox[0])) starts = false; }
@@ -440,9 +450,22 @@
       const cy = (b.box[1] + b.box[3]) / 2, below = ranked.filter(l => (l.bbox[1] + l.bbox[3]) / 2 >= b.box[1]).sort((p, q) => p.bbox[1] - q.bbox[1])[0]; return below ? below.rank - 0.5 : ranked[ranked.length - 1].rank + 0.5 + cy / 1e6; };
     return blocks.slice().sort((a, b) => key(a) - key(b) || a.box[1] - b.box[1] || a.box[0] - b.box[0]);
   }
+  /** Blocks in the layout model's reading order (PP-DocLayout ranks its regions). A block it did not rank - stray lines
+      outside every region, text peeled off a table - goes right after the nearest ranked block above it in its own
+      column, else right before the nearest one below it, else by its height on the page. */
+  function layoutOrder(blocks) {
+    const ranked = blocks.filter(b => b.order != null); if (!ranked.length) return null;
+    const cy = b => (b.box[1] + b.box[3]) / 2, sameCol = (a, b) => Math.min(a.box[2], b.box[2]) - Math.max(a.box[0], b.box[0]) > 0.2 * Math.min(a.box[2] - a.box[0], b.box[2] - b.box[0]);
+    const key = new Map(ranked.map(b => [b, b.order]));
+    for (const u of blocks) { if (u.order != null) continue;
+      const col = ranked.filter(r => sameCol(r, u)), pool = col.length ? col : ranked;
+      const above = pool.filter(r => cy(r) <= cy(u)).sort((p, q) => cy(q) - cy(p))[0], below = pool.filter(r => cy(r) > cy(u)).sort((p, q) => cy(p) - cy(q))[0];
+      key.set(u, above ? above.order + 0.5 : below.order - 0.5); }
+    return blocks.slice().sort((a, b) => key.get(a) - key.get(b) || a.box[1] - b.box[1] || a.box[0] - b.box[0]);
+  }
   function render(img, blocks) {
     const W = img.width, H = img.height, out = [];
-    const ordered = (modelOnly() && modelOrder(blocks)) || xyCut(blocks, W, H, b => b.box);
+    const ordered = layoutOrder(blocks) || (modelOnly() && modelOrder(blocks)) || xyCut(blocks, W, H, b => b.box);
     ordered.forEach((b, k) => { const order = k + 1, cls = b.cls, x0 = Math.max(0, b.box[0]), y0 = Math.max(0, b.box[1]), x1 = Math.min(W, b.box[2]), y1 = Math.min(H, b.box[3]), textCls = TEXT_CLASSES.has(cls);
       const blk = {id: "b" + order, type: legacyType(cls), label: cls, cls, cls_id: T.CLASSES.indexOf(cls), display: LABELS[cls] || cls, color: hex(COLORS[cls] || [120, 120, 120]), model_label: b.label, score: +b.score.toFixed(4), source: b.source, reading_order: order,
         box: {x: x0, y: y0, width: x1 - x0, height: y1 - y0}, lines: [], crop: null, text: "", recognized: textCls, font_px: b.font_px || null, font_src: b.font_src || null, align: b.align || "left", relabel: b.relabel || null, font: b.font || null, text_color: null};
@@ -515,7 +538,9 @@
       for (const b of blocks) for (const ln of b.lines) if (stampBoxes.some(sb => inter(ln.bbox, sb) > 0.05 * U.bArea(ln.bbox))) ln.stamped = true; }
     const cleanCanvas = stampBoxes.length && T.config.destamp === true ? destamp(img.canvas, stampBoxes) : img.canvas; img.clean = cleanCanvas; // opt-in: whitening the ink also carves the glyphs
     blocks = dropEmptyContainers(blocks); const lineH = lines.length ? U.median(lines.map(l => { const q = U.bboxOf(l.quad); return q[3] - q[1]; })) : 0; for (const b of blocks) fallbackWholeBlock(b, lineH);
-    if (modelOnly()) blocks.push(...orphans.map(ln => { const g = block("text", ln.bbox, ln.score, "orphan_lines", "orphan"); g.lines.push(ln); return g; })); // grouped later by the structure model
+    const byLayout = T.layoutGivesStructure();  // PP-DocLayout: roles and reading order come with the regions
+    if (modelOnly() && byLayout) blocks.push(...groupOrphans(orphans));  // no structure model to group stray lines: neighbours join
+    else if (modelOnly()) blocks.push(...orphans.map(ln => { const g = block("text", ln.bbox, ln.score, "orphan_lines", "orphan"); g.lines.push(ln); return g; })); // grouped later by the structure model
     else { blocks.push(...groupOrphans(orphans)); blocks = mergeParagraphs(blocks); blocks = mergeAlignedBlocks(blocks, W); mergeRowSegments(blocks); }
     timings.textdet_ms = ms(t); timings.lines_detected = lines.length; timings.mode = modelOnly() ? "model" : "rules";
     // recognise
@@ -551,7 +576,7 @@
     timings.font_ms = ms(t);
     // bullets, structure, fonts per block
     step("structure", "paragraphs and reading order"); await T.yieldUI();
-    return assemble(img, blocks, timings, tStart, {ignored});
+    return assemble(img, blocks, timings, tStart, {ignored, byLayout});
   };
 
   /** A table region that also took the text around the table (a subtitle or a paragraph above the rows, a note below):
@@ -571,12 +596,12 @@
       let bot = rows.length; while (bot - 1 > last && !rec(rows[bot - 1])) bot--; if (!rows.slice(bot).some(r => notCell(r, rows[last]))) bot = rows.length;
       if (!top && bot === rows.length) { out.push(b); continue; }
       const head = rows.slice(0, top).flatMap(r => r.ls), tail = rows.slice(bot).flatMap(r => r.ls), moved = new Set([...head, ...tail]);
-      const text = lines => { const g = block("text", union(lines), b.score, "table_text", "table_text"); g.lines.push(...lines); return g; };
-      if (head.length) out.push(text(head));
+      const text = (lines, d) => { const g = block("text", union(lines), b.score, "table_text", "table_text"); g.lines.push(...lines); if (b.order != null) g.order = b.order + d; return g; };  // d: just before / after its table in the layout model's order
+      if (head.length) out.push(text(head, -0.25));
       b.lines = b.lines.filter(l => !moved.has(l)); const keep = b.lines.filter(l => l.text);
       if (keep.length) { const u = union(keep), pad = 0.3 * U.median(keep.map(l => l.bbox[3] - l.bbox[1])); b.box = [b.box[0], Math.max(b.box[1], u[1] - pad), b.box[2], Math.min(b.box[3], u[3] + pad)]; }
       out.push(b);
-      if (tail.length) out.push(text(tail));
+      if (tail.length) out.push(text(tail, 0.25));
     }
     return out;
   }
@@ -585,9 +610,11 @@
     const W = img.width, H = img.height, ms = t => +(performance.now() - t).toFixed(1);
     blocks = peelTableText(blocks);
     let t = performance.now();
-    for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { b.lines = mergeBulletLines(b.lines); for (const ln of b.lines) if (ln.text && !["table", "form_field"].includes(b.cls)) textBullet(ln); }
+    // a numbered heading ("១. ...", "2. Method") the layout model itself calls a title stays a heading, number included, instead of becoming a list item
+    const heading = b => !!extra.byLayout && b.order != null && (b.cls === "title" || b.cls === "section_header");
+    for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { b.lines = mergeBulletLines(b.lines); for (const ln of b.lines) if (ln.text && !["table", "form_field"].includes(b.cls) && !heading(b)) textBullet(ln); }
     if (!modelOnly()) blocks = mergeLabelColumns(blocks, W);
-    await T.yieldUI(); const usedModel = await structure(blocks, W, H); timings.structure_ms = ms(t); await T.yieldUI(); timings.structure = usedModel ? "model" : "rules";
+    await T.yieldUI(); const usedModel = await structure(blocks, W, H, !!extra.byLayout); timings.structure_ms = ms(t); await T.yieldUI(); timings.structure = extra.byLayout ? "layout" : usedModel ? "model" : "rules";
     for (const b of blocks) if (TEXT_CLASSES.has(b.cls)) { blockFont(b); if (b.font && b.font.weight !== "bold" && b.lines.length >= 2) for (const ln of b.lines) if (ln.bold && !(ln.spans && ln.spans.length) && !(ln.font && ln.font.weight_confidence >= 0.97 && HEAVY.has(ln.font.family))) ln.bold = false; const pf = b.lines.map(l => l.font_px).filter(Boolean); if (pf.length) { b.font_px = +U.median(pf).toFixed(1); b.font_src = "pdf"; } if (!b.font_px && b.lines.length) { const hs = b.lines.filter(l => l.text).map(l => l.bbox[3] - l.bbox[1]); if (hs.length) { b.font_px = +(U.median(hs) * 0.78).toFixed(1); b.font_src = "image"; } } }
     timings.bullets_found = blocks.reduce((a, b) => a + b.lines.filter(l => l.bullet).length, 0); timings.bold_words = 0;
     const layout = pageLayout(blocks, W, H); const outBlocks = render(img, blocks); await T.yieldUI(); timings.order_ms = 0; timings.total_ms = ms(tStart);

@@ -492,6 +492,117 @@
     null
    ],
    "handwriting": true
+  },
+  {
+   "id": "pp_doclayout_v2",
+   "stage": "layout",
+   "kind": "pp_doclayout_onnx",
+   "file": "layout/pp_doclayout_v2.onnx",
+   "url": "https://huggingface.co/PaddlePaddle/PP-DocLayoutV2_onnx/resolve/7d44592493df02e28110d99de8ca4b1fbc7309bd/inference.onnx",
+   "version": "v2",
+   "label": "PaddleOCR-VL layout: PP-DocLayoutV2 (regions, roles, reading order)",
+   "sha256": "cd540dc296ff3115fe78efa65b68501e6a8dc74b198acc9834a725ffaa095aac",
+   "license": "Apache-2.0",
+   "source": "https://huggingface.co/PaddlePaddle/PaddleOCR-VL",
+   "input_size": [
+    800,
+    800
+   ],
+   "classes": [
+    "abstract",
+    "algorithm",
+    "aside_text",
+    "chart",
+    "content",
+    "display_formula",
+    "doc_title",
+    "figure_title",
+    "footer",
+    "footer_image",
+    "footnote",
+    "formula_number",
+    "header",
+    "header_image",
+    "image",
+    "inline_formula",
+    "number",
+    "paragraph_title",
+    "reference",
+    "reference_content",
+    "seal",
+    "table",
+    "text",
+    "vertical_text",
+    "vision_footnote"
+   ],
+   "threshold": {
+    "default": 0.5,
+    "display_formula": 0.4,
+    "doc_title": 0.4,
+    "inline_formula": 0.4,
+    "paragraph_title": 0.4,
+    "seal": 0.45,
+    "text": 0.4,
+    "vertical_text": 0.4
+   },
+   "merge_large": [
+    "chart",
+    "display_formula",
+    "doc_title",
+    "inline_formula",
+    "paragraph_title"
+   ]
+  },
+  {
+   "id": "pp_doclayout_v3",
+   "stage": "layout",
+   "kind": "pp_doclayout_onnx",
+   "file": "layout/pp_doclayout_v3.onnx",
+   "url": "https://huggingface.co/PaddlePaddle/PP-DocLayoutV3_onnx/resolve/46bbdf188bb0a772c08aed74882ce7e51a8f1ea6/inference.onnx",
+   "version": "v3",
+   "label": "PaddleOCR-VL 1.5 / 1.6 layout: PP-DocLayoutV3 (regions, roles, reading order)",
+   "sha256": "45bf71750b00739a41fc209f132eb104a4d6b5bb29483c9078164d8b87cf28ba",
+   "license": "Apache-2.0",
+   "source": "https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6",
+   "input_size": [
+    800,
+    800
+   ],
+   "classes": [
+    "abstract",
+    "algorithm",
+    "aside_text",
+    "chart",
+    "content",
+    "display_formula",
+    "doc_title",
+    "figure_title",
+    "footer",
+    "footer_image",
+    "footnote",
+    "formula_number",
+    "header",
+    "header_image",
+    "image",
+    "inline_formula",
+    "number",
+    "paragraph_title",
+    "reference",
+    "reference_content",
+    "seal",
+    "table",
+    "text",
+    "vertical_text",
+    "vision_footnote"
+   ],
+   "threshold": 0.3,
+   "merge_large": [
+    "chart",
+    "display_formula",
+    "doc_title",
+    "inline_formula",
+    "paragraph_title"
+   ]
   }
  ],
  "sizes": {
@@ -527,7 +638,9 @@
   "layout/layout_v4_n_22cls_int8.onnx": 3296959,
   "rec/crnn_m_v3_owner.onnx": 19060368,
   "rec/crnn_m_v3_owner_int8.onnx": 4817737,
-  "rec/crnn_m_v3_owner.vocab.json": 1198
+  "rec/crnn_m_v3_owner.vocab.json": 1198,
+  "layout/pp_doclayout_v2.onnx": 213963712,
+  "layout/pp_doclayout_v3.onnx": 130502049
  },
  "app": "ThaOCR web"
 }

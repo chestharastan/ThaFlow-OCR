@@ -1,5 +1,8 @@
 /* ThaOCR browser engine — the five ONNX stages (layout, text lines, recogniser, font, structure) with ONNX Runtime
-   Web, plus the image helpers. Port of backend/app/services/stages/*.py; nothing here talks to a server. */
+   Web, plus the image helpers. Port of backend/app/services/stages/*.py; nothing here talks to a server.
+   The layout stage has two kinds of model: ThaOCR's own YOLO11 (regions only; the structure model adds roles and
+   reading order) and PP-DocLayout, the layout half of PaddleOCR-VL, which gives regions, roles and reading order in
+   one pass, so ThaOCR's own models only read the text and the fonts. */
 (function () {
   "use strict";
   const T = window.ThaOCR = window.ThaOCR || {};
@@ -26,6 +29,12 @@
     if (a === "@qr_barcode") { if (!box) return "qr_code"; const w = box[2] - box[0], h = Math.max(1, box[3] - box[1]); return w / h > 1.6 || h / w > 1.6 ? "barcode" : "qr_code"; }
     return a || "text";
   }
+  /* PP-DocLayout (PaddleOCR-VL) labels -> this taxonomy. null = not a region of its own: an inline formula is part of
+     its text line, which the recogniser reads whole. */
+  const DOCLAYOUT = {abstract: "text", algorithm: "text", aside_text: "text", chart: "figure", content: "text", display_formula: "formula", doc_title: "title",
+    figure_title: "caption", footer: "footer", footer_image: "figure", footnote: "footnote", formula_number: "text", header: "header", header_image: "logo", image: "figure",
+    inline_formula: null, number: "page_number", paragraph_title: "section_header", reference: "text", reference_content: "text", seal: "stamp", table: "table", text: "text",
+    vertical_text: "text", vision_footnote: "footnote"};
   const legacyType = c => (c === "title" || c === "section_header") ? "title" : (c === "header" || c === "footer" || c === "page_number") ? "header" : c === "caption" ? "caption" : CROP_CLASSES.has(c) ? "image" : "paragraph";
   const hex = rgb => "#" + rgb.map(v => v.toString(16).padStart(2, "0")).join("");
   Object.assign(T, {CLASSES, TEXT_CLASSES, CROP_CLASSES, COLORS, LABELS, resolveClass, legacyType, hex});
@@ -42,6 +51,12 @@
   async function loadManifest() { if (T.manifest) return T.manifest; const r = await fetch(T.config.manifestBase + "models.json", {cache: "no-cache"}); if (!r.ok) throw new Error("models.json not found"); T.manifest = await r.json(); return T.manifest; }
   T.modelsFor = stage => (T.manifest ? T.manifest.models.filter(m => m.stage === stage && m.kind !== "ultralytics_pt") : []);
   T.spec = id => T.manifest && T.manifest.models.find(m => m.id === id);
+  /** Where a model file is downloaded from. A model hosted by its publisher (PP-DocLayout on PaddlePaddle's Hugging Face
+      repo, pinned to a commit) carries its own url; with a local modelBase ("models/", offline work) its file path is used. */
+  T.modelUrl = spec => spec.url && /^https?:/i.test(T.config.modelBase) ? spec.url : T.config.modelBase + spec.file;
+  const isDocLayout = spec => !!spec && spec.kind === "pp_doclayout_onnx";
+  /** true when the active (or the given) layout model also gives roles and reading order, so the structure model is not asked. */
+  T.layoutGivesStructure = id => isDocLayout(id ? T.spec(id) : T.sessions.layout && T.sessions.layout.spec);
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -128,7 +143,7 @@
      may queue again (it would wait on itself). */
   let ortQ = Promise.resolve();
   const serial = f => { const p = ortQ.then(f, f); ortQ = p.catch(() => { }); return p; };
-  const runModel = (sess, feeds) => serial(() => sess.run(feeds));
+  const runModel = (sess, feeds, fetches) => serial(() => fetches ? sess.run(feeds, fetches) : sess.run(feeds));
   const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
   let ortStarting = null;
   function ortStart(eps) {
@@ -166,7 +181,7 @@
       if (stage === "font" && !T.config.font) continue; if (stage === "structure" && !T.config.structure) continue;
       if (T.active[stage] === id && T.sessions[stage]) continue;
       const spec = T.spec(id); if (!spec) throw new Error(`unknown model ${id}`);
-      const url = T.config.modelBase + spec.file;
+      const url = T.modelUrl(spec);
       const buf = await fetchCached(url, (got, total, fromCache) => onProgress && onProgress({stage, id, got, total, fromCache}));
       // the recogniser is tiny-batch sequential work: wasm is as fast as WebGPU and avoids per-run GPU sync
       const {sess, ep} = await session(buf, stage === "rec" || stage === "structure" || stage === "font" ? ["wasm"] : eps);
@@ -196,7 +211,7 @@
   T.loadAltRec = async function (id, onProgress) {
     if (T.sessions.rec_alt && T.sessions.rec_alt.spec.id === id) return T.sessions.rec_alt;
     const spec = T.spec(id); if (!spec) throw new Error("unknown model " + id);
-    const buf = await fetchCached(T.config.modelBase + spec.file, (got, total, fromCache) => onProgress && onProgress({stage: "rec_alt", id, got, total, fromCache}));
+    const buf = await fetchCached(T.modelUrl(spec), (got, total, fromCache) => onProgress && onProgress({stage: "rec_alt", id, got, total, fromCache}));
     const {sess, ep} = await session(buf, ["wasm"]); const v = await fetchJSON(T.config.modelBase + spec.vocab);
     T.sessions.rec_alt = {sess, ep, spec, vocab: v.itos || v}; return T.sessions.rec_alt;
   };
@@ -235,7 +250,8 @@
         if (iw <= 0 || ih <= 0) continue; const inter = iw * ih; if (inter / Math.max(1e-9, area[i] + area[j] - inter) > iou) alive[j] = 0; } }
     return keep;
   }
-  T.detectLayout = async function (img, conf = 0.3, iou = 0.5) {
+  T.detectLayout = function (img, conf, iou) { return isDocLayout(T.sessions.layout.spec) ? detectDocLayout(img) : detectYolo(img, conf, iou); };
+  async function detectYolo(img, conf = 0.3, iou = 0.5) {
     const {sess, spec} = T.sessions.layout, S = (spec.input_size && spec.input_size[0]) || 1024;
     const lb = letterbox(img.canvas, S), d = imgData(lb.canvas), n = S * S, x = new Float32Array(3 * n);
     for (let i = 0; i < n; i++) { x[i] = d[i * 4] / 255; x[n + i] = d[i * 4 + 1] / 255; x[2 * n + i] = d[i * 4 + 2] / 255; }  // RGB
@@ -251,7 +267,69 @@
       b[0] = Math.min(W, Math.max(0, b[0])); b[2] = Math.min(W, Math.max(0, b[2])); b[1] = Math.min(H, Math.max(0, b[1])); b[3] = Math.min(H, Math.max(0, b[3]));
       const name = names[cls[i]] || String(cls[i]); regions.push({cls: resolveClass(name, b, W, H), score: scores[i], box: b, label: name}); }
     return regions;
-  };
+  }
+
+  /* ------------------------------------------------------------------ layout + structure: PP-DocLayout (PaddleOCR-VL) */
+  /** canvas -> Float32Array [3, S, S] (RGB, 0..1): the whole page squeezed to S x S the way PaddleX feeds this model, with
+      OpenCV's bicubic (a = -0.75, pixel centres, edge pixels repeated, no smoothing before shrinking). The model is tuned
+      to that sharpness: on a page the browser shrank smoothly (drawImage) it merges neighbouring regions and misses small
+      ones (measured: 19 regions instead of 22 on a letter). */
+  function cubicSquare(canvas, S) {
+    const w = canvas.width, h = canvas.height, d = imgData(canvas), n = S * S, x = new Float32Array(3 * n), A = -0.75;
+    const taps = len => { const idx = new Int32Array(S * 4), wt = new Float32Array(S * 4), sc = len / S;
+      for (let i = 0; i < S; i++) { const f = (i + 0.5) * sc - 0.5, s0 = Math.floor(f), t = f - s0, u = 1 - t;
+        const c0 = ((A * (t + 1) - 5 * A) * (t + 1) + 8 * A) * (t + 1) - 4 * A, c1 = ((A + 2) * t - (A + 3)) * t * t + 1, c2 = ((A + 2) * u - (A + 3)) * u * u + 1;
+        wt.set([c0, c1, c2, 1 - c0 - c1 - c2], i * 4); for (let k = 0; k < 4; k++) idx[i * 4 + k] = Math.min(len - 1, Math.max(0, s0 - 1 + k)); }
+      return [idx, wt]; };
+    const [xi, xw] = taps(w), [yi, yw] = taps(h), px = v => Math.min(255, Math.max(0, Math.round(v))) / 255;   // rounded like the 8-bit image OpenCV returns
+    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) { let r = 0, g = 0, b = 0;
+      for (let a = 0; a < 4; a++) { const row = yi[j * 4 + a] * w, wy = yw[j * 4 + a];
+        for (let c = 0; c < 4; c++) { const p = (row + xi[i * 4 + c]) * 4, k = wy * xw[i * 4 + c]; r += d[p] * k; g += d[p + 1] * k; b += d[p + 2] * k; } }
+      const o = j * S + i; x[o] = px(r); x[n + o] = px(g); x[2 * n + o] = px(b); }
+    return x;
+  }
+  /** PP-DocLayoutV2 / V3 as exported by PaddlePaddle (inputs image, im_shape, scale_factor; one row per query:
+      class, score, x0, y0, x1, y1 in page pixels, reading-order rank[, tie-break]). The rows go through the same steps as
+      PaddleX's layout post-processing in the PaddleOCR-VL pipeline: per-class score threshold, NMS (IoU 0.6 inside a
+      class, 0.98 across classes), no page-sized image, nothing nested in a title / formula / chart, overlapping
+      duplicates, then the model's reading order. -> regions in reading order, each with {order} (0, 1, 2, ...). */
+  async function detectDocLayout(img) {
+    const {sess, spec} = T.sessions.layout, S = (spec.input_size && spec.input_size[0]) || 800, W = img.width, H = img.height, names = spec.classes || [];
+    const x = cubicSquare(img.canvas, S); await T.yieldUI();
+    const ort = window.ort, pair = (a, b) => new ort.Tensor("float32", Float32Array.from([a, b]), [1, 2]);
+    // only the box rows are fetched: V3 also has a 300 x 200 x 200 mask output (48 MB a page) that nothing here uses
+    const out = await runModel(sess, {image: new ort.Tensor("float32", x, [1, 3, S, S]), im_shape: pair(S, S), scale_factor: pair(S / H, S / W)}, [sess.outputNames[0]]);
+    const o = out[sess.outputNames[0]], M = o.dims[0], C = o.dims[1], v = o.data, thr = spec.threshold;
+    const thrOf = name => typeof thr === "number" ? thr : thr && thr[name] != null ? thr[name] : (thr && thr.default) || 0.5;
+    let rows = [];
+    for (let i = 0; i < M; i++) { const c = v[i * C], name = names[c], s = v[i * C + 1]; if (!name || !(s > thrOf(name))) continue;
+      rows.push({name, s, box: [2, 3, 4, 5].map(k => Math.round(v[i * C + k])), rank: C >= 7 ? v[i * C + 6] : i, tie: C >= 8 ? v[i * C + 7] : 0}); }
+    // NMS, best score first
+    const iouPx = (a, b) => { const iw = Math.min(a[2], b[2]) - Math.max(a[0], b[0]) + 1, ih = Math.min(a[3], b[3]) - Math.max(a[1], b[1]) + 1; if (iw <= 0 || ih <= 0) return 0;
+      const inter = iw * ih; return inter / ((a[2] - a[0] + 1) * (a[3] - a[1] + 1) + (b[2] - b[0] + 1) * (b[3] - b[1] + 1) - inter); };
+    rows.sort((a, b) => b.s - a.s); const kept = [];
+    for (const r of rows) if (!kept.some(k => iouPx(k.box, r.box) >= (k.name === r.name ? 0.6 : 0.98))) kept.push(r);
+    rows = kept;
+    // an "image" that covers (nearly) the whole page is the page itself
+    if (rows.length > 1) { const lim = (W > H ? 0.82 : 0.93) * W * H, f = rows.filter(r => r.name !== "image" || (Math.min(W, r.box[2]) - Math.max(0, r.box[0])) * (Math.min(H, r.box[3]) - Math.max(0, r.box[1])) <= lim); if (f.length) rows = f; }
+    // a box lying (90%) inside a title, formula or chart box is a part of it, not a region of its own
+    const area = bArea, large = new Set(spec.merge_large || []);
+    if (large.size) rows = rows.filter(r => !rows.some(q => q !== r && large.has(q.name) && area(r.box) > 0 && bInter(r.box, q.box) / area(r.box) >= 0.9));
+    rows.sort((a, b) => a.rank - b.rank || b.tie - a.tie);
+    // duplicates: of two boxes sharing 70% of the smaller one the larger stays (text printed over a picture, a stamp or a chart keeps both)
+    rows = rows.filter(r => r.name !== "reference"); const dead = new Set(), VIS = new Set(["image", "table", "seal", "chart"]);
+    for (let i = 0; i < rows.length; i++) { const a = rows[i]; if (a.box[2] - a.box[0] < 6 || a.box[3] - a.box[1] < 6) dead.add(i);
+      for (let j = i + 1; j < rows.length; j++) { if (dead.has(i) || dead.has(j)) continue; const b = rows[j], small = Math.min(area(a.box), area(b.box)), ov = small > 0 ? bInter(a.box, b.box) / small : 0;
+        if ((a.name === "inline_formula" || b.name === "inline_formula") && ov > 0.5) { if (a.name === "inline_formula") dead.add(i); if (b.name === "inline_formula") dead.add(j); continue; }
+        if (ov <= 0.7) continue;
+        if (a.name !== b.name && (VIS.has(a.name) || VIS.has(b.name)) && ((a.name !== "table" && b.name !== "table") || (VIS.has(a.name) && VIS.has(b.name)))) continue;
+        dead.add(area(a.box) >= area(b.box) ? j : i); } }
+    const regions = [];
+    rows.forEach((r, i) => { if (dead.has(i)) return; const cls = DOCLAYOUT[r.name]; if (cls === null) return;
+      const b = [Math.max(0, r.box[0]), Math.max(0, r.box[1]), Math.min(W, r.box[2]), Math.min(H, r.box[3])]; if (b[2] <= b[0] || b[3] <= b[1]) return;
+      regions.push({cls: cls || resolveClass(r.name, b, W, H), score: r.s, box: b, label: r.name, order: regions.length}); });
+    return regions;
+  }
 
   /* ------------------------------------------------------------------ text lines: DB */
   const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
