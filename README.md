@@ -36,7 +36,8 @@ the `dist/` files of onnxruntime-web into `vendor/` and set `ortBase` to `"vendo
 Models: `ThaOCR.config.modelBase` (ocr/engine.js) is the Hugging Face resolve URL of `Thareah/ThaOCR-models`; the
 browser fetches only the chosen set, once, into the Cache API (a file is stored only when it arrived complete; a
 dropped connection is retried up to 5 times and resumes with a `Range` request, so a flaky phone connection does not
-restart a file from zero). The manifest and the small meta JSON files stay in
+restart a file from zero; an attempt cut off by a screen lock, an app switch or going offline is not counted, and the
+next one waits until the page is visible and online again). The manifest and the small meta JSON files stay in
 `models/` on the site. To work offline, copy the ONNX/vocab files into `models/` (they are git-ignored) and set
 `modelBase` to `"models/"`.
 
@@ -53,10 +54,13 @@ them, otherwise the text comes out in visual order with subscripts lost. A text 
 (NUL glyphs, vowel signs starting words) is rejected and the page is OCRed instead. "Run OCR instead" on the review
 page forces OCR for a page.
 
-Device tiers (ocr/device.js): **Best quality** (WebGPU or >= 8 threads and >= 8 GB) = fp32 recogniser v2.4, detector at
-1600-2200 px; **Balanced** = int8 recogniser, 1600-1800 px; **Light** (phones, <= 4 threads or <= 4 GB) = int8 recogniser,
-1100-1300 px; phones also get the int8 layout model (3.3 MB instead of 10.9 MB), which Settings can switch back
-(Model set -> Balanced, or Models -> Layout). A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
+Device tiers (ocr/device.js): **Best quality** (not a phone, and WebGPU or >= 8 threads and >= 8 GB) = fp32 recogniser
+v2.4, detector at 1600-2200 px; **Balanced** = int8 recogniser, 1600-1800 px; **Light** (every phone, even one with
+WebGPU; <= 4 threads or <= 4 GB) = int8 recogniser, 1100-1300 px; phones also get the int8 layout model (3.3 MB instead
+of 10.9 MB), which Settings can switch back (Model set -> Balanced, or Models -> Layout). On a device recommended Light
+nothing is downloaded when the page opens, only at the first scan. Compute "Automatic" is the GPU on a computer with
+WebGPU and the CPU on a phone; Settings > Compute can pick the GPU. A model set picked in Settings is kept across
+reloads. A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
 
 Layout rules added in the browser version (not in the server): segments of one line are recognised separately and
 joined in reading order; dot leaders become a tab with the page number right-aligned (Document view and Word);

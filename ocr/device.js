@@ -6,7 +6,7 @@
 
   T.deviceInfo = async function () {
     const ua = navigator.userAgentData || null, nav = navigator;
-    const mobile = ua ? !!ua.mobile : /Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent);
+    const mobile = T.isMobile();
     let webgpu = false, gpuName = null;
     if (nav.gpu) { try { const ad = await nav.gpu.requestAdapter(); if (ad) { webgpu = true; const inf = ad.info || (ad.requestAdapterInfo ? await ad.requestAdapterInfo() : null); gpuName = inf && (inf.description || inf.device || inf.vendor || inf.architecture) || null; } } catch { } }
     let simd = false; try { simd = WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11])); } catch { }
@@ -18,7 +18,9 @@
 
   /** Pick the model set and detector scale for a device. tier: "high" | "mid" | "low" */
   T.recommend = function (info) {
-    const strong = info.webgpu || (info.threads >= 8 && (info.memoryGB || 8) >= 8 && !info.mobile);
+    // A phone is never "high", even with WebGPU: that set is the biggest first download and starts on its own when the
+    // page opens, which a phone often cannot finish (screen lock, weak signal). Settings > Model set can still pick it.
+    const strong = !info.mobile && (info.webgpu || (info.threads >= 8 && (info.memoryGB || 8) >= 8));
     const weak = info.mobile || info.threads <= 4 || (info.memoryGB && info.memoryGB <= 4) || info.saveData;
     const tier = strong ? "high" : weak ? "low" : "mid";
     const d = T.manifest ? T.manifest.defaults : {layout: "layout_yolo11n_v4_22cls", textdet: "db_ppocrv5_khmer_v2", rec: "crnn_m_v3_owner", font: "font_cnn_v2", structure: "struct_v1"};
@@ -33,7 +35,8 @@
       if (info.mobile && has(d.layout + "_int8")) choice.layout = d.layout + "_int8"; }
     const scale = tier === "high" ? {longMin: 1600, longMax: 2200} : tier === "mid" ? {longMin: 1600, longMax: 1800} : {longMin: 1100, longMax: 1300};
     const reasons = [];
-    if (info.webgpu) reasons.push("WebGPU available: the layout and line detectors run on the GPU");
+    if (T.plannedBackend("auto", info) === "webgpu") reasons.push("WebGPU available: the layout and line detectors run on the GPU");
+    else if (info.webgpu) reasons.push("WebGPU available, but a phone runs everything on the CPU (WebAssembly) unless Settings > Compute picks the GPU");
     else reasons.push("no WebGPU: everything runs on the CPU (WebAssembly)");
     if (!info.threadsOK) reasons.push("single-thread mode (this host does not send the cross-origin isolation headers)"); else reasons.push(`${Math.min(8, info.threads - 1)} worker threads`);
     if (info.mobile) reasons.push("phone or tablet: smaller detector scale, int8 recogniser" + (choice.layout !== d.layout ? " and int8 layout model" : ""));

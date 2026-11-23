@@ -60,14 +60,41 @@
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  /** true on a phone or tablet that says so in its user agent. */
+  T.isMobile = () => { const ua = navigator.userAgentData; return ua ? !!ua.mobile : /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent); };
+  /** What a compute setting ("auto" | "webgpu" | "wasm") runs on for a device ({webgpu, mobile}) -> "webgpu" | "wasm".
+      Automatic means the GPU on a computer with WebGPU and the CPU on a phone (the GPU can still be picked in Settings). */
+  T.plannedBackend = (want, info) => want === "wasm" || !(info && info.webgpu) ? "wasm" : want === "webgpu" || !info.mobile ? "webgpu" : "wasm";
+
+  /* Phones: locking the screen, switching apps or losing the signal kills a download in flight. Such a failed attempt is
+     not counted against the retry limit, and the next attempt waits until the page is visible again (and online, for up
+     to 30 s), so a long screen lock does not use up the retries. */
+  let awayN = 0;   // how many times the page has gone hidden or offline
+  document.addEventListener("visibilitychange", () => { if (document.hidden) awayN++; });
+  addEventListener("offline", () => { awayN++; });
+  function whenBack(onlineMs = 30000) {
+    return new Promise(res => {
+      let timer = null;
+      const done = () => { document.removeEventListener("visibilitychange", check); removeEventListener("online", check); clearTimeout(timer); res(); };
+      function check() {
+        if (document.hidden) { clearTimeout(timer); timer = null; return; }   // hidden: wait as long as it takes
+        if (navigator.onLine !== false) return done();
+        if (!timer) timer = setTimeout(done, onlineMs);                        // visible but offline: try again after a while anyway
+      }
+      document.addEventListener("visibilitychange", check); addEventListener("online", check); check();
+    });
+  }
+
   /** GET a file with progress -> ArrayBuffer. Phones drop connections mid-download, so a failed attempt is retried (with
    *  backoff) and continues with a Range request from the bytes already received; if the server will not resume it starts
-   *  over. HTTP 4xx (except 408/429) is not retried: the file is not there or not allowed. */
+   *  over. An attempt cut off by the page going hidden or offline is not counted (see whenBack). HTTP 4xx (except
+   *  408/429) is not retried: the file is not there or not allowed. */
   async function download(url, onProgress, tries = 5) {
-    const name = url.split("/").pop(); let chunks = [], got = 0, total = 0, resume = true, last;
-    for (let attempt = 0; attempt < tries; attempt++) {
-      if (attempt) await sleep(Math.min(8000, 700 * 2 ** (attempt - 1)));
-      const before = got;
+    const name = url.split("/").pop(); let chunks = [], got = 0, total = 0, resume = true, last, free = 0;
+    for (let attempt = 0, retry = false; attempt < tries; attempt++) {
+      if (retry) { await whenBack(); await sleep(Math.min(8000, 700 * 2 ** Math.max(0, attempt - 1))); }
+      retry = true;
+      const before = got, away0 = awayN;
       try {
         const res = await fetch(url, got && resume ? {headers: {Range: `bytes=${got}-`}} : undefined);
         if (!res.ok) { const e = new Error(`cannot download ${url} (${res.status})`); e.http = res.status; throw e; }
@@ -79,9 +106,11 @@
         const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
         return out.buffer;
       } catch (e) {
-        last = e; console.warn(`download ${name}: attempt ${attempt + 1}/${tries} failed at ${got} bytes:`, e.message || e);
+        last = e; const away = awayN !== away0 || document.hidden;   // the page went hidden or offline during this attempt
+        console.warn(`download ${name}: attempt ${attempt + 1}/${tries} failed at ${got} bytes${away ? " (page hidden or offline: not counted)" : ""}:`, e.message || e);
         if (e.http && e.http < 500 && e.http !== 408 && e.http !== 429) throw e;
-        if (got === before && before > 0) { resume = false; chunks = []; got = 0; }   // the resumed request itself failed: start over from zero
+        if (!away && got === before && before > 0) { resume = false; chunks = []; got = 0; }   // the resumed request itself failed: start over from zero
+        if (away && free < 20) { free++; attempt--; }
       }
     }
     throw new Error(`connection lost while downloading ${name} (${got}${total ? " of " + total : ""} bytes): ${last && last.message || last}. Check your network and try again.`);
@@ -113,7 +142,7 @@
       for (let i = 0; ; i++) {
         const s = document.createElement("script");
         try { await new Promise((res, rej) => { s.src = file; s.onload = res; s.onerror = () => rej(new Error("cannot load " + file)); document.head.appendChild(s); }); needFresh = false; return window.ort; }
-        catch (e) { s.remove(); if (i >= 2) { ortLoading = null; throw new Error(e.message + " - check your network and try again"); } await sleep(700 * 2 ** i); }
+        catch (e) { s.remove(); if (i >= 2) { ortLoading = null; throw new Error(e.message + " - check your network and try again"); } await whenBack(); await sleep(700 * 2 ** i); }
       }
     })();
     ortLoading.fresh = fresh || needFresh;
@@ -129,7 +158,7 @@
   }
   async function providers() {
     const want = T.config.backend;
-    if (want === "wasm") return ["wasm"];
+    if (T.plannedBackend(want, {webgpu: true, mobile: T.isMobile()}) === "wasm") return ["wasm"];   // CPU chosen, or Automatic on a phone
     if ((want === "auto" || want === "webgpu") && navigator.gpu) { try { const ad = await navigator.gpu.requestAdapter(); if (ad) return ["webgpu", "wasm"]; } catch { } }
     return ["wasm"];
   }

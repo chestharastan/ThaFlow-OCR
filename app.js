@@ -126,7 +126,11 @@ if (darkMq.addEventListener) darkMq.addEventListener("change", () => { if (theme
 
 /* ---------------------------------------------------------------- device + models */
 let DEVICE = null, RECO = null, LOADING = null;
-async function deviceCheck() { DEVICE = await T.deviceInfo(); await T.loadManifestSafe(); RECO = T.recommend(DEVICE); return RECO; }
+async function deviceCheck() { DEVICE = await T.deviceInfo(); await T.loadManifestSafe(); RECO = T.recommend(DEVICE);
+  const t = store.settings.tier; if (t && t !== RECO.tier) RECO = Object.assign({}, RECO, tierModels(t));   // the model set picked in Settings outlasts a reload
+  return RECO; }
+/** "GPU" or "CPU": what the next scan runs on (Settings > Compute; Automatic is the CPU on a phone) */
+const computeName = want => T.plannedBackend(want || store.settings.backend || "auto", DEVICE) === "webgpu" ? "GPU" : "CPU";
 T.loadManifestSafe = async () => { if (T.manifest) return T.manifest; const r = await fetch(T.config.manifestBase + "models.json", {cache: "no-cache"}); T.manifest = await r.json(); return T.manifest; };
 /** The model of every stage: the device's model set, then the layout engine picked in Settings > Layout (it survives a
     change of model set), then the per-stage overrides of Settings > Models. */
@@ -264,7 +268,7 @@ function sidebar() {
   pill.classList.toggle("hide", !(job || RERUN) || (job && r === "process"));
   if (job) { pill.href = "#/process"; $("#running_txt").textContent = "Working…"; $("#running_pct").textContent = Math.round(JOB.done / JOB.total * 100) + "%"; }
   else if (RERUN) { pill.href = "#/review/" + RERUN.pid; $("#running_txt").textContent = "Re-reading…"; $("#running_pct").textContent = Math.min(99, Math.round((RERUN.i - 1 + RERUN.frac) / RERUN.n * 100)) + "%"; }
-  $("#dev").textContent = "Private · " + (T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") + " ready" : DEVICE ? (DEVICE.webgpu ? "GPU" : "CPU") : "checking…");
+  $("#dev").textContent = "Private · " + (T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") + " ready" : DEVICE ? computeName() : "checking…");
 }
 const docTitle = d => d.filename.replace(/\.[^.]+$/, "");
 /* A multi-page PDF is one document made of several page records (one per page). Pages share a group key. */
@@ -334,12 +338,14 @@ async function addFiles(files) {
 }
 async function addAndShow(files) { await addFiles(files); const was = location.hash; location.hash = "#/scan"; if (was === "#/scan") route(); }
 /** switch the model set (Best quality / Balanced / Light); the caller re-renders its page */
-function setTier(t) { store.settings.tier = t === RECO.tier ? null : t; store.settings.models = {}; const fake = T.recommend(Object.assign({}, DEVICE, {webgpu: t === "high", mobile: t === "low", threads: t === "high" ? 8 : t === "low" ? 4 : 6, memoryGB: t === "low" ? 4 : 8})); RECO = Object.assign({}, RECO, {choice: fake.choice, scale: fake.scale}); store.settings.longMin = null; store.settings.longMax = null; store.save(); resetModels(); }
+function setTier(t) { store.settings.tier = t === RECO.tier ? null : t; store.settings.models = {}; RECO = Object.assign({}, RECO, tierModels(t)); store.settings.longMin = null; store.settings.longMax = null; store.save(); resetModels(); }
+/** the models and detector scale of a model set, whatever this device would be recommended */
+function tierModels(t) { const fake = T.recommend(Object.assign({}, DEVICE, {webgpu: t === "high", mobile: t === "low", threads: t === "high" ? 8 : t === "low" ? 4 : 6, memoryGB: t === "low" ? 4 : 8})); return {choice: fake.choice, scale: fake.scale}; }
 function devicePanel() {
   if (!DEVICE || !RECO) return `<div class="chips"><span class="chip"><span class="spin"></span>Checking device…</span></div>`;
   const b = T.benchmarkStored(), est = b ? T.estimate(b, 40) : null, tier = store.settings.tier || RECO.tier;
   return `<div class="chips">
-    <span class="chip" title="${esc(RECO.reasons.join(" · "))}">${icon("cpu", "s")}${DEVICE.webgpu ? "GPU" : "CPU"} · ${DEVICE.threads} threads${DEVICE.memoryGB ? ` · ${DEVICE.memoryGB} GB` : ""}</span>
+    <span class="chip" title="${esc(RECO.reasons.join(" · "))}">${icon("cpu", "s")}${T.loaded() ? (T.backendUsed === "webgpu" ? "GPU" : "CPU") : computeName()} · ${DEVICE.threads} threads${DEVICE.memoryGB ? ` · ${DEVICE.memoryGB} GB` : ""}</span>
     <span class="rel"><button type="button" class="chip" id="tier_chip" aria-haspopup="menu" title="Model set${tier === RECO.tier ? " (recommended)" : ""} · click to change">${icon("layers", "s")}${TIER_LABEL[tier]}${icon("chevron-down", "s")}</button></span>
     ${est ? `<span class="chip" title="Typical 40-line page on this device">${icon("clock", "s")}~${est} s / page</span>` : ""}
     <span class="chip ${T.loaded() ? "ok" : ""}">${icon(T.loaded() ? "check-circle" : "download", "s")}<span id="dl_line">${T.loaded() ? "Models ready" : "Models"}</span></span></div>`;
@@ -847,7 +853,7 @@ async function renderSettings() {
    <div class="card pad"><h2>Performance</h2>
     <p class="small mut" style="margin:-6px 0 14px" title="${esc(RECO.reasons.join(" · "))}">${icon("cpu", "s")} ${dev}</p>
     <div class="field"><label>Model set</label><div class="tiers" id="s_tiers">${["high", "mid", "low"].map(t => `<button type="button" class="tier ${tier === t ? "on" : ""}" data-t="${t}" aria-pressed="${tier === t}" title="${TIER_TECH[t]}"><b>${TIER_LABEL[t]}</b><span>${TIER_SUB[t]}</span>${RECO.tier === t ? `<i class="rec">Recommended</i>` : ""}</button>`).join("")}</div></div>
-    <div class="field"><label for="s_backend">Compute</label><div class="sel"><select id="s_backend">${opt("auto", store.settings.backend, "Automatic")}${opt("webgpu", store.settings.backend, "GPU (WebGPU)")}${opt("wasm", store.settings.backend, "CPU (WebAssembly)")}</select></div></div>
+    <div class="field"><label for="s_backend">Compute</label><div class="sel"><select id="s_backend">${opt("auto", store.settings.backend, `Automatic (${computeName("auto")})`)}${opt("webgpu", store.settings.backend, "GPU (WebGPU)")}${opt("wasm", store.settings.backend, "CPU (WebAssembly)")}</select></div></div>
     ${b ? `<div class="kv"><span>Speed</span><b title="Regions ${fmtMs(b.layoutMs)} · lines ${fmtMs(b.detMs)} · ${b.recMsPerLine.toFixed(0)} ms per text line · ${b.backend}">~${T.estimate(b, 40)} s per page</b></div>` : `<p class="small mut" style="margin:0">Speed is measured after the first load.</p>`}
     <div class="btnrow"><button class="btn sm" id="s_bench">${icon("refresh", "s")}Measure again</button><button class="btn sm" id="s_load">${icon("download", "s")}Load models now</button></div>
     <a class="linkrow" href="${esc(modelsPage())}" target="_blank" rel="noopener"><span class="ti">${icon("layers")}</span><span class="grow"><b>Free models on Hugging Face</b><span class="small mut">${esc(modelsPage().replace("https://huggingface.co/", ""))} · see and download every model</span></span>${icon("external", "s")}<span class="sr">(opens in a new tab)</span></a></div>
