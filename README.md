@@ -70,9 +70,11 @@ ruling lines or line alignment and exported as real Word tables; a narrow column
 label/value table, so labels stay beside their values; in a bordered table a faint rule the scan lost is recovered
 from the baseline rows that start a record. Line order inside a block is geometric.
 
-Document view (review page, right pane; docview.js) and the Word / PDF export read the page through one reading
-layout, `ThaOCR.pipeline.compose(page)`, built from `page.document` and the current line texts, so saved documents
-benefit too and the three always agree:
+Document view (review page, right pane; docview.js), the Word / PDF export, and the Text view / Copy / .txt
+(`ThaOCR.pipeline.composeBlocks`: paragraphs apart by a blank line, list items with their marker, table rows with
+tab-separated cells, a dot-leader line as one line) read the page through one reading layout,
+`ThaOCR.pipeline.compose(page)`, built from `page.document` and the current line texts, so saved documents benefit
+too and they always agree. In the PDF a list marker no bundled font has ("➢", "❖", "✓") is drawn as a small shape:
 - a paragraph the layout model split over several blocks is one paragraph again where the text only wrapped (the part
   before ends at the right edge, the next starts at the left edge or under a first-line indent / the text of a list
   item, same size, about one line pitch below); inside a block, a line starting with a marker ("-", "ក-", "១.") after

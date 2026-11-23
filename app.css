@@ -328,7 +328,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .textout .blk{margin-bottom:14px}
 .textout .para{margin:0 0 .45em;white-space:pre-wrap}
 .textout .lbl{font:11px Inter,system-ui,sans-serif;color:var(--mut-2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
-.textout .center{text-align:center}.textout .right{text-align:right}
+.textout .center{text-align:center}.textout .right{text-align:right}.textout .para.hd{font-weight:600}
+.textout .ttw{overflow-x:auto;max-width:100%}.textout .ttab{border-collapse:collapse;margin:.2em 0 .9em;white-space:normal}.textout .ttab td{border:1px solid var(--line);padding:.15em .5em;vertical-align:top}
 .menu{position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-2);min-width:220px;padding:6px;z-index:20;animation:pop .14s var(--ease);transform-origin:top right}
 @keyframes pop{from{opacity:0;transform:translateY(-4px) scale(.98)}}
 .menu button{display:flex;width:100%;gap:10px;align-items:center;border:0;background:transparent;padding:0 10px;height:36px;border-radius:7px;text-align:left;color:var(--ink);white-space:nowrap}

@@ -246,7 +246,9 @@ const hasJoin = () => !!(T.pipeline && T.pipeline.joinLines);
 const paraText = (p, cw) => hasJoin() ? T.pipeline.joinLines(p.lines, cw) : p.lines.reduce((a, l) => joinWrapped(a, l.text), "");
 const paraHtml = (p, cw) => (hasJoin() ? T.pipeline.runsWithBreaks(p.lines, cw) : [{text: paraText(p, cw)}]).map(r => r.bold ? `<b>${esc(r.text)}</b>` : esc(r.text)).join("");
 function blockTextMd(b, cw) { if (b.table) return b.table.rows.map(r => r.cells.map(c => c.text || "").join("\t")).join("\n"); return blockParas(b).map(p => "\t".repeat(p.level) + (p.bullet ? p.bullet + " " : "") + paraText(p, cw)).join("\n"); }
-function pageText(page) { const cw = columnWidths(page); return [...page.blocks].sort((a, b) => a.reading_order - b.reading_order).map(b => blockTextMd(b, cw(b.id))).filter(Boolean).join("\n\n"); }
+/** a page's text in reading order: the Document view's paragraphs (T.pipeline.composeBlocks), or per block for a page without them */
+function pageText(page) { const bs = page.document && T.pipeline && T.pipeline.composeBlocks ? T.pipeline.composeBlocks(page, {columnWidth: columnWidths(page)}) : null; if (bs) return T.pipeline.blocksText(bs);
+  const cw = columnWidths(page); return [...page.blocks].sort((a, b) => a.reading_order - b.reading_order).map(b => blockTextMd(b, cw(b.id))).filter(Boolean).join("\n\n"); }
 
 
 /* ---------------------------------------------------------------- shell */
@@ -681,7 +683,11 @@ function renderReview(id) {
   const hasDoc = !!(window.DocView && pages.some(s => s.result.document)), regions = pages.reduce((a, s) => a + s.result.blocks.length, 0), nLines = pages.reduce((a, s) => a + s.lines, 0), nChars = pages.reduce((a, s) => a + s.chars, 0), totalMs = pages.reduce((a, s) => a + (s.timings.total_ms || 0), 0);
   const fonts = [...new Set(pages.flatMap(s => s.result.blocks.map(b => b.font && b.font.family)).filter(Boolean))].slice(0, 3), pdfTextPages = pages.filter(s => s.result.source === "pdf-text").length, conf = groupConf(pages);
   const pageLabel = (s, i, ocr) => multi ? `<div class="pglabel">Page ${i + 1}${s.result.source === "pdf-text" ? " · PDF text" : ""}${ocr ? ` · <button class="linkbtn" data-ocr="${s.page_id}" title="Read this page again with OCR">${s.result.source === "pdf-text" ? "OCR this page" : "OCR again"}</button>` : ""}</div>` : "";
-  const textOut = s => { const colW = columnWidths(s.result); return [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => { const cw = colW(b.id); return `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : blockParas(b).map(p => `<div class="para"${p.level ? ` style="padding-left:${p.level * 2}em"` : ""}>${p.bullet ? esc(p.bullet) + " " : ""}${paraHtml(p, cw)}</div>`).join("")}</div>`; }).join(""); };
+  // the Text view: the same paragraphs as the Document view, list items with their marker, tables as small tables
+  const textOut = s => { const bs = s.result.document && T.pipeline.composeBlocks ? T.pipeline.composeBlocks(s.result, {columnWidth: columnWidths(s.result)}) : null;
+    if (bs) return bs.map(b => b.type === "table" ? `<div class="ttw"><table class="ttab">${b.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table></div>`
+      : `<div class="para ${b.type === "h" ? "hd " : ""}${b.align === "center" || b.align === "right" ? b.align : ""}">${b.type === "li" && b.marker ? esc(b.marker) + " " : ""}${(b.runs || [{text: b.text}]).map(r => r.bold ? `<b>${esc(r.text)}</b>` : esc(r.text)).join("")}</div>`).join("");
+    const colW = columnWidths(s.result); return [...s.result.blocks].sort((a, b) => a.reading_order - b.reading_order).filter(b => (b.lines || []).some(l => l.text)).map(b => { const cw = colW(b.id); return `<div class="blk ${b.align || ""}"><div class="lbl">${esc(ROLE[b.cls] || b.cls)}</div>${b.table ? esc(blockTextMd(b)) : blockParas(b).map(p => `<div class="para"${p.level ? ` style="padding-left:${p.level * 2}em"` : ""}>${p.bullet ? esc(p.bullet) + " " : ""}${paraHtml(p, cw)}</div>`).join("")}</div>`; }).join(""); };
   const source = pdfTextPages === pages.length ? "PDF text · no OCR" : pdfTextPages ? `PDF text on ${pdfTextPages} / ${pages.length} pages` : (d.result.pdf_text && d.result.pdf_text.reason ? `OCR (PDF text: ${esc(d.result.pdf_text.reason)})` : "");
   const doubtful = pages.filter(s => s.result.source === "pdf-text" && s.result.pdf_text && s.result.pdf_text.broken > 0.01);
   const ocrLabel = pdfTextPages ? "Run OCR instead" : "Run OCR again", ocrTip = pdfTextPages ? "Ignore the PDF text and read the page images with OCR" : "Read the document again";

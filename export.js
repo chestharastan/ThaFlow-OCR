@@ -310,6 +310,14 @@
           for (const seg of byFont(part, chain)) { const sp = document.createElement("span"); sp.style.fontFamily = seg.font.css; sp.textContent = seg.text; parent.appendChild(sp);
             draw.set(sp, {font: seg.font, bold: !!r.bold && !(real && seg.font === chain[0]), italic: !!b.italic, color: b.color || null}); } }); }
     }
+    // a list marker no bundled font has ("➢", "❖", "✓", ...): drawn as a small shape instead of an empty space
+    const SHAPES = {"➢": "arrow", "➤": "arrow", "►": "arrow", "▸": "arrow", "➔": "arrow", "➜": "arrow", "❖": "diamond", "◆": "diamond", "◇": "diamond", "✓": "check", "✔": "check", "√": "check", "■": "square", "▪": "square", "□": "square", "●": "disc", "○": "disc", "◦": "disc"};
+    async function marker(parent, it) {
+      const m = String(it.marker || ""), shape = SHAPES[m];
+      if (shape) { const files = it.family ? filesOf(it.family) : base, chain = [await pfont(files.regular), ...fallback];
+        if (!chain.some(f => f.cover.has(m.codePointAt(0)))) { el("span", "display:inline-block;width:.6em;height:.6em;vertical-align:-.02em", parent).dataset.mark = shape; return; } }
+      await text(parent, it, [{text: m, bold: it.runs[0] && it.runs[0].bold}]);
+    }
     const alignCss = a => `text-align:${a === "justify" ? "justify" : a === "center" ? "center" : a === "right" ? "right" : "left"};`;
     async function emit(blocks, parent) {
       for (const b of blocks) {
@@ -321,7 +329,7 @@
           if (b.heading) p.dataset.keep = "1"; await text(p, b, b.runs);
         } else if (b.k === "list") {
           for (const it of b.items) { const li = el("div", `display:flex;align-items:baseline;margin-bottom:.25em;margin-left:${pct(it.left)}`, parent);
-            const mk = el("span", "flex:none;min-width:1.4em;padding-right:.4em;white-space:nowrap", li); await text(mk, it, [{text: it.marker || "", bold: it.runs[0] && it.runs[0].bold}]);
+            const mk = el("span", "flex:none;min-width:1.4em;padding-right:.4em;white-space:nowrap", li); await marker(mk, it);
             await text(el("div", "flex:1;min-width:0", li), it, it.runs); }
           if (parent.lastChild) parent.lastChild.style.marginBottom = ".5em";
         } else if (b.k === "img") {
@@ -370,6 +378,7 @@
     for (const n of root.querySelectorAll("[data-cell]")) { const r = n.getBoundingClientRect(); items.push({t: "box", x: r.left - o.left, top: r.top - o.top, w: r.width, h: r.height}); }
     for (const n of root.querySelectorAll("[data-img]")) { const r = n.getBoundingClientRect(); items.push({t: "img", x: r.left - o.left, top: r.top - o.top, w: r.width, h: r.height, src: n.dataset.img}); bands.push([r.top - o.top, r.bottom - o.top, 0]); }
     for (const n of root.querySelectorAll("[data-rule]")) { const r = n.getBoundingClientRect(); items.push({t: "line", x: r.left - o.left, top: r.top - o.top, w: r.width}); }
+    for (const n of root.querySelectorAll("[data-mark]")) { const r = n.getBoundingClientRect(); items.push({t: "mark", x: r.left - o.left, top: r.top - o.top, w: r.width, h: r.height, shape: n.dataset.mark}); }
     for (const n of root.querySelectorAll("[data-ld]")) { const r = n.getBoundingClientRect(); items.push({t: "dots", x: r.left - o.left, top: r.bottom - o.top, w: r.width}); }
     for (const n of root.querySelectorAll("[data-keep]")) { const r = n.getBoundingClientRect(); bands.push([r.top - o.top, r.bottom - o.top, 1]); }
     root.remove();
@@ -418,6 +427,15 @@
       if (it.t === "box") { c.push(`0.5 w 0 G ${num(X(it.x))} ${num(Y(it.top + it.h, it.oy))} ${num(it.w * K)} ${num(it.h * K)} re S`); continue; }
       if (it.t === "line") { c.push(`0.6 w 0 G ${num(X(it.x))} ${num(Y(it.top, it.oy))} m ${num(X(it.x + it.w))} ${num(Y(it.top, it.oy))} l S`); continue; }
       if (it.t === "dots") { c.push(`q 0.8 w 1 J [0 2.4] 0 d 0 G ${num(X(it.x))} ${num(Y(it.top, it.oy) + 1)} m ${num(X(it.x + it.w))} ${num(Y(it.top, it.oy) + 1)} l S Q`); continue; }
+      if (it.t === "mark") {  // a list marker as a shape (filled; a check mark stroked)
+        const a = X(it.x), b = X(it.x + it.w), lo = Y(it.top + it.h, it.oy), hi = Y(it.top, it.oy), xm = (a + b) / 2, ym = (lo + hi) / 2, w = b - a, P2 = (x, y) => `${num(x)} ${num(y)}`;
+        const k = 0.5523 * w / 2, r = w / 2;
+        const path = it.shape === "arrow" ? `${P2(a, hi)} m ${P2(b, ym)} l ${P2(a, lo)} l ${P2(a + 0.3 * w, ym)} l h f`
+          : it.shape === "diamond" ? `${P2(xm, hi)} m ${P2(b, ym)} l ${P2(xm, lo)} l ${P2(a, ym)} l h f`
+          : it.shape === "square" ? `${P2(a + 0.1 * w, lo + 0.1 * w)} ${num(0.8 * w)} ${num(0.8 * w)} re f`
+          : it.shape === "check" ? `${num(0.14 * w)} w 1 J 1 j ${P2(a, ym)} m ${P2(a + 0.38 * w, lo)} l ${P2(b, hi)} l S`
+          : `${P2(xm + r, ym)} m ${P2(xm + r, ym + k)} ${P2(xm + k, ym + r)} ${P2(xm, ym + r)} c ${P2(xm - k, ym + r)} ${P2(xm - r, ym + k)} ${P2(xm - r, ym)} c ${P2(xm - r, ym - k)} ${P2(xm - k, ym - r)} ${P2(xm, ym - r)} c ${P2(xm + k, ym - r)} ${P2(xm + r, ym - k)} ${P2(xm + r, ym)} c h f`;
+        c.push(`q 0 g 0 G ${path} Q`); continue; }
       if (it.t === "img") { const n = imageName(it.src); if (n) c.push(`q ${num(it.w * K)} 0 0 ${num(it.h * K)} ${num(X(it.x))} ${num(Y(it.top + it.h, it.oy))} cm /${n} Do Q`); continue; }
       const f = it.d.font, size = it.size * K, glyphs = shape(f, it.text); if (!glyphs.length) continue;
       if (it.space && f.space) glyphs.push({g: f.space, ax: f.font.glyphHAdvance(f.space), dx: 0, dy: 0, sp: true});

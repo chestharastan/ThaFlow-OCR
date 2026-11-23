@@ -848,5 +848,22 @@
     return keep(out);
   }
 
-  T.pipeline = {cleanRegions, dissolvePictures, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, compose, runsWithBreaks, peelTableText};
+  /** The reading layout as text blocks, for Copy, the .txt download and the Text view (the same paragraphs as the
+      Document view): [{type: "p" | "h" | "li" | "table", text, runs, align, marker, rows}]. A paragraph is one text
+      ("\n" only where a line was kept on purpose), a list item keeps its marker, a dot-leader line is "title\tpage",
+      a table is rows of cell texts (a cell's own line breaks become spaces); side-by-side columns come one after the
+      other. textOf -> plain text: paragraphs apart by a blank line, list items and table rows one per line, cells by tabs. */
+  function composeBlocks(page, opts) {
+    const els = compose(page, opts); if (!els) return null; const out = [];
+    const walk = e => {
+      if (e.columns) { e.columns.forEach(c => c.elements.forEach(walk)); return; }
+      if (e.items) { for (const it of e.items) if (it.text) out.push({type: "li", marker: it.bullet || "", text: it.text, runs: it.runs, align: it.align}); return; }
+      if (e.type === "table" && e.table) { const rows = e.table.rows.map(r => r.cells.map(c => String(c.text || "").replace(/\s*\n\s*/g, " ").trim())).filter(r => r.some(Boolean)); if (rows.length) out.push({type: "table", rows, text: rows.map(r => r.join("\t")).join("\n")}); return; }
+      if (e.src && e.text) out.push({type: e.type === "heading" ? "h" : "p", text: e.text, runs: e.runs, align: e.align});
+    };
+    els.forEach(walk); return out;
+  }
+  const blocksText = bs => bs.map((b, i) => (i ? (b.type === "li" && bs[i - 1].type === "li" ? "\n" : "\n\n") : "") + (b.type === "li" ? (b.marker ? b.marker + " " : "") + b.text : b.text)).join("");
+
+  T.pipeline = {cleanRegions, dissolvePictures, composeBlocks, blocksText, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, compose, runsWithBreaks, peelTableText};
 })();
