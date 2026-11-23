@@ -63,6 +63,47 @@
     }
     return {blocks, ignored};
   }
+  /** A picture region (figure, photo, logo, decoration) that holds other regions or text lines is not one picture: the
+      layout model boxed a page header (emblem, kingdom lines, the university's name under the emblem) as one image.
+      Drawn like that, its text would be a picture (its lines are not read as text) and the emblem inside it would show
+      twice. Such a region keeps only its own ink outside the regions and text lines inside it - the biggest cluster
+      of it, so it shrinks to the emblem or ornament - and is dropped when nothing of its own is left, or when what is
+      left is a picture region inside it. Its text lines then go to the text regions (or become text of their own).
+      lines: detected lines ({quad}); canvas: the page. -> blocks */
+  const PICTURE_CLASSES = new Set(["figure", "photo", "logo", "decoration"]);
+  function dissolvePictures(blocks, lines, canvas) {
+    const area = b => Math.max(1, U.bArea(b)), inFrac = (a, b) => U.bInter(a, b) / area(a), lb = lines.map(l => U.bboxOf(l.quad)), drop = new Set();
+    let ctx = null; try { ctx = canvas.getContext("2d"); } catch { return blocks; }
+    for (const p of blocks) {
+      if (!PICTURE_CLASSES.has(p.cls)) continue;
+      const inner = blocks.filter(q => q !== p && !drop.has(q) && area(q.box) < 0.85 * area(p.box) && inFrac(q.box, p.box) > 0.7);
+      const text = lb.filter(b => inFrac(b, p.box) > 0.6 && !inner.some(q => inFrac(b, q.box) > 0.6));
+      if (!inner.length && (text.length < 2 || text.reduce((a, b) => a + area(b), 0) < 0.15 * area(p.box))) continue;  // a picture (a chart may carry a few labels)
+      const x0 = Math.max(0, Math.round(p.box[0])), y0 = Math.max(0, Math.round(p.box[1])), x1 = Math.min(canvas.width, Math.round(p.box[2])), y1 = Math.min(canvas.height, Math.round(p.box[3])), w = x1 - x0, h = y1 - y0;
+      if (w < 8 || h < 8) { drop.add(p); continue; }
+      let data; try { data = ctx.getImageData(x0, y0, w, h).data; } catch { continue; }
+      const cell = Math.max(4, Math.round(Math.min(w, h) / 40)), gw = Math.ceil(w / cell), gh = Math.ceil(h / cell), ink = new Uint16Array(gw * gh);
+      const cut = inner.map(q => q.box).concat(text).map(b => [b[0] - 3 - x0, b[1] - 3 - y0, b[2] + 3 - x0, b[3] + 3 - y0]);
+      for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+        const i = (y * w + x) * 4, r = data[i], g = data[i + 1], bl = data[i + 2];
+        if (0.299 * r + 0.587 * g + 0.114 * bl > 150 && Math.max(r, g, bl) - Math.min(r, g, bl) < 60) continue;  // paper, not ink
+        if (cut.some(c => x >= c[0] && x < c[2] && y >= c[1] && y < c[3])) continue;
+        ink[((y / cell) | 0) * gw + ((x / cell) | 0)]++; }
+      const on = k => ink[k] >= 2, seen = new Uint8Array(gw * gh), comps = [];
+      for (let k0 = 0; k0 < gw * gh; k0++) { if (!on(k0) || seen[k0]) continue; const st = [k0]; seen[k0] = 1; let n = 0, a0 = gw, b0 = gh, a1 = 0, b1 = 0;
+        while (st.length) { const k = st.pop(), cx = k % gw, cy = (k / gw) | 0; n++; a0 = Math.min(a0, cx); b0 = Math.min(b0, cy); a1 = Math.max(a1, cx); b1 = Math.max(b1, cy);
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = cx + dx, ny = cy + dy, j = ny * gw + nx; if (nx >= 0 && ny >= 0 && nx < gw && ny < gh && !seen[j] && on(j)) { seen[j] = 1; st.push(j); } } }
+        comps.push({n, box: [x0 + a0 * cell, y0 + b0 * cell, Math.min(x1, x0 + (a1 + 1) * cell), Math.min(y1, y0 + (b1 + 1) * cell)]}); }
+      // the biggest cluster, with every cluster touching or enclosing it (an emblem's ring around its centre)
+      comps.sort((a, b) => b.n - a.n); const best = comps.length ? {n: comps[0].n, box: comps[0].box.slice()} : null;
+      for (let grew = !!best, used = new Set([0]); grew;) { grew = false;
+        comps.forEach((c, k) => { if (used.has(k)) return; const g = best.box; if (c.box[0] <= g[2] + cell && c.box[2] >= g[0] - cell && c.box[1] <= g[3] + cell && c.box[3] >= g[1] - cell) {
+          used.add(k); best.n += c.n; best.box = [Math.min(g[0], c.box[0]), Math.min(g[1], c.box[1]), Math.max(g[2], c.box[2]), Math.max(g[3], c.box[3])]; grew = true; } }); }
+      if (!best || best.n * cell * cell < 0.01 * area(p.box) || inner.some(q => PICTURE_CLASSES.has(q.cls) && inFrac(best.box, q.box) > 0.6)) { drop.add(p); continue; }
+      p.box = best.box; p.shrunk = true;
+    }
+    return drop.size ? blocks.filter(b => !drop.has(b)) : blocks;
+  }
   /** Lines the page pass missed inside text regions: detect again on the region crop (DET_CASCADE). */
   async function cascade(img, blocks, lines) {
     const kept = lines.map(l => U.bboxOf(l.quad));
@@ -526,6 +567,7 @@
     step("decode", "reading the file"); await T.yieldUI(); const img = await T.loadImage(src); const W = img.width, H = img.height;
     step("layout", "finding regions"); await T.yieldUI(); let t = performance.now(); const regions = await T.detectLayout(img); let {blocks, ignored} = cleanRegions(regions, W, H); timings.layout_ms = ms(t);
     step("textdet", "finding text lines"); await T.yieldUI(); t = performance.now(); let lines = await T.detectLines(img.canvas); if (T.config.cascade) lines = await cascade(img, blocks, lines);
+    blocks = dissolvePictures(blocks, lines, img.canvas);
     const orphans = assign(lines, blocks);
     // a "decoration" that swallowed text lines (a whole letterhead band) is a misdetection: give the lines back as
     // orphans and drop the region when it is large or contains a logo / stamp / QR
@@ -789,8 +831,17 @@
         else if (p.box && !p.ext) p.ext = [p.box[0], p.box[1], p.box[0] + p.box[2], p.box[1] + p.box[3]]; }
       return out;
     }
-    return seq(doc.elements, m.left, W - m.right);
+    const out = seq(doc.elements, m.left, W - m.right);
+    // a picture that holds other elements (a page header boxed as one image, saved before dissolvePictures): the areas of
+    // those elements are masked out of it (mask: page boxes), so nothing shows twice; mostly such areas -> dropped
+    const leaves = [], walk = e => { if (e.columns) e.columns.forEach(c => c.elements.forEach(walk)); else if (e.items) e.items.forEach(walk); else leaves.push(e); }; out.forEach(walk);
+    const area = b => Math.max(1, (b[2] - b[0]) * (b[3] - b[1])), inter = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+    for (const p of leaves) { if (!(p.type === "figure" || p.type === "decoration") || !p.ext) continue;
+      const inner = leaves.filter(q => q !== p && q.ext && area(q.ext) < 0.85 * area(p.ext) && inter(q.ext, p.ext) > 0.7 * area(q.ext)); if (!inner.length) continue;
+      if (inner.reduce((a, q) => a + inter(q.ext, p.ext), 0) >= 0.6 * area(p.ext)) p.drop = true; else p.mask = inner.map(q => q.ext.slice()); }
+    const keep = es => es.filter(e => !e.drop).map(e => e.columns ? {...e, columns: e.columns.map(c => ({...c, elements: keep(c.elements)}))} : e);
+    return keep(out);
   }
 
-  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, compose, runsWithBreaks, peelTableText};
+  T.pipeline = {cleanRegions, dissolvePictures, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, compose, runsWithBreaks, peelTableText};
 })();

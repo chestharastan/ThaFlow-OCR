@@ -109,7 +109,8 @@
         const w = Math.max(8, ext[2] - ext[0]), h = Math.max(4, ext[3] - ext[1]);
         if (!e.crop) return e.type === "decoration" ? {k: "rule", left: snap((ext[0] - cx0) / cw), w: clamp(w / cw, 0.05, 1)} : null;
         const mid = (ext[0] + ext[2]) / 2, centered = e.align === "center" || Math.abs(mid - (cx0 + cx1) / 2) < 0.04 * cw;
-        return {k: "img", src: e.crop, w: clamp(w / cw, 0.02, 1), ratio: h / w, align: centered ? "center" : "left", left: centered ? 0 : snap((ext[0] - cx0) / cw)};
+        const mask = e.mask && e.mask.map(b => [(b[0] - ext[0]) / w, (b[1] - ext[1]) / h, (b[2] - ext[0]) / w, (b[3] - ext[1]) / h]);  // elements inside it, shown on their own (compose)
+        return {k: "img", src: e.crop, mask, w: clamp(w / cw, 0.02, 1), ratio: h / w, align: centered ? "center" : "left", left: centered ? 0 : snap((ext[0] - cx0) / cw)};
       }
       if (e.type === "table" && e.table && e.table.cols && e.table.cols.length) {
         note(e); const t = e.table, n = t.cols.length;
@@ -240,7 +241,16 @@
         margin: {top: tw(p.margin.top), bottom: tw(p.margin.bottom), left: tw(p.margin.left), right: tw(p.margin.right)}}}, children: (c => c.length ? c : [new Paragraph({children: []})])(emit(p.blocks, tw(p.pageW - p.margin.left - p.margin.right)))}))});
   }
 
-  async function docxBlob(docs, opts) { const D = await loadDocx(); return D.Packer.toBlob(buildDocx(D, model(docs, opts))); }
+  /** pictures with masked areas (see compose): paint those white, so the file shows nothing twice */
+  async function maskImages(M) {
+    const walk = async bs => { for (const b of bs) { if (b.k === "cols") for (const c of b.cols) await walk(c.blocks);
+      if (b.k !== "img" || !b.mask || !b.mask.length) continue;
+      try { const img = new Image(); img.src = b.src; await img.decode(); const cv = document.createElement("canvas"); cv.width = img.naturalWidth; cv.height = img.naturalHeight; const g = cv.getContext("2d"); g.drawImage(img, 0, 0); g.fillStyle = "#fff";
+        for (const [a, c, d, e] of b.mask) g.fillRect(a * cv.width, c * cv.height, (d - a) * cv.width, (e - c) * cv.height);
+        b.src = cv.toDataURL("image/png"); } catch (err) { console.warn("mask", err); } } };
+    for (const pg of M.pages) await walk(pg.blocks); return M;
+  }
+  async function docxBlob(docs, opts) { const D = await loadDocx(); return D.Packer.toBlob(buildDocx(D, await maskImages(model(docs, opts)))); }
 
   /* ================================================================== PDF */
   const SCALE = 4;                 // layout pixels per CSS pixel: advances a browser rounds to whole pixels stop mattering
@@ -438,7 +448,7 @@
 
   async function pdfBlob(docs, opts) {
     opts = opts || {};
-    const M = model(docs, opts); await loadHarfbuzz();
+    const M = await maskImages(model(docs, opts)); await loadHarfbuzz();
     const host = document.createElement("div");
     host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none";
     const css = document.createElement("style");

@@ -202,11 +202,18 @@
       const ext = extent(e), w = Math.max(8, ext[2] - ext[0]), h = Math.max(4, ext[3] - ext[1]), f = document.createElement("div"); f.className = e.type === "figure" ? "dv-figure" : "dv-rule";
       if (FLOW) { const frac = Math.min(1, w / Math.max(1, x1 - x0)), c = (ext[0] + ext[2]) / 2, centred = Math.abs(c - (x0 + x1) / 2) < 0.06 * (x1 - x0) && ext[0] - x0 > 0.08 * (x1 - x0);
         const pos = centred ? "margin:0 auto;" : ext[0] - x0 > 0.5 * (x1 - x0) ? "margin-left:auto;" : `margin-left:${(100 * Math.max(0, ext[0] - x0) / Math.max(1, x1 - x0)).toFixed(1)}%;`;
+        if (e.mask && e.crop) { maskNode(f, e, ext, `width:${(100 * frac).toFixed(1)}%;max-width:100%;${pos}`); return f; }
         f.innerHTML = e.crop ? `<img src="${esc(e.crop)}" alt="${esc(e.role || "")}" style="display:block;width:${(100 * frac).toFixed(1)}%;max-width:100%;height:auto;${pos}">` : e.type === "figure" ? `<div class="dv-ph" style="width:${(100 * frac).toFixed(1)}%;aspect-ratio:${w}/${h};${pos}">${esc(e.role)}</div>` : `<hr style="width:${(100 * frac).toFixed(1)}%;${pos}">`;
         return f; }
       f.style.cssText = `margin-left:${S(Math.max(0, ext[0] - x0))};line-height:0`;
+      if (e.mask && e.crop) { maskNode(f, e, ext, `width:${S(w)};height:${S(h)}`); return f; }
       f.innerHTML = e.crop ? `<img src="${esc(e.crop)}" style="width:${S(w)};height:${S(h)};object-fit:contain" alt="${esc(e.role || "")}">` : e.type === "figure" ? `<div class="dv-ph" style="width:${S(w)};height:${S(h)}">${esc(e.role)}</div>` : `<hr style="width:${S(w)}">`;
       return f;
+    }
+    // a picture with the areas of the elements inside it (shown on their own) painted out
+    function maskNode(f, e, ext, css) {
+      const w = Math.max(1, ext[2] - ext[0]), h = Math.max(1, ext[3] - ext[1]), pc = v => (100 * v).toFixed(2) + "%";
+      f.innerHTML = `<div class="dv-masked" style="position:relative;line-height:0;${css}"><img src="${esc(e.crop)}" alt="${esc(e.role || "")}" style="display:block;width:100%;height:auto">${e.mask.map(b => `<i style="left:${pc((b[0] - ext[0]) / w)};top:${pc((b[1] - ext[1]) / h)};width:${pc((b[2] - b[0]) / w)};height:${pc((b[3] - b[1]) / h)}"></i>`).join("")}</div>`;
     }
     // where a paragraph sits and how it is aligned
     function paraCss(p, x0, x1) {
@@ -321,7 +328,7 @@
 .dv-page .dv-ed:focus{box-shadow:0 0 0 2px #99f6e4;border-radius:2px}
 .dv-page .dv-list{margin:0}.dv-page .dv-li{display:flex;align-items:baseline;margin:0}.dv-page .dv-bullet{flex:none;min-width:1em;white-space:nowrap}.dv-page .dv-text{flex:1;min-width:0}
 .dv-page .dv-figure,.dv-page .dv-rule{margin:0}.dv-page .dv-figure img,.dv-page .dv-rule img{display:block;max-width:none}.dv-page .dv-ph{border:1px dashed #bbb;color:#999;font:12px system-ui;display:grid;place-items:center}
-.dv-page .dv-rule hr{border:0;border-top:1px solid #999;margin:0}
+.dv-page .dv-rule hr{border:0;border-top:1px solid #999;margin:0}.dv-page .dv-masked i{position:absolute;background:#fff}
 .dv-page .dv-row,.dv-page .dv-footer-row{display:flex;align-items:flex-start}.dv-page .dv-col>*{max-width:none}
 .dv-page .dv-low{background:#fff3cd;border-radius:2px;box-shadow:0 1px 0 #f2c14e}
 .dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.55}.dv-page .dv-table td{padding:.1em .35em;vertical-align:top;white-space:pre-wrap;overflow-wrap:break-word;min-width:1em;height:1.55em}.dv-page .dv-table.bordered td{border:1px solid #333}.dv-page .dv-table td.dv-span{font-weight:600}
