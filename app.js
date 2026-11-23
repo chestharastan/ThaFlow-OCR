@@ -760,7 +760,7 @@ function renderReview(id) {
     const avail = Math.max(innerWidth < 861 ? 320 : 160, wrap.clientWidth - 32)  /* the page fits the pane's real width (no overflow); phones reflow */, rendered = new Set();
     const renderPage = s => { if (rendered.has(s.page_id)) return; rendered.add(s.page_id); const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`), page = s.result; if (!body) return; body.style.minHeight = "";
     buildDocUpTo = pid => { const k = pages.findIndex(x => x.page_id === pid); pages.slice(0, k + 1).forEach(renderPage); };
-      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {flow: innerWidth < 861, natural: true, columnWidth: columnWidths(page), scale: Math.min(1, avail / page.width), editable: true, onEdit: (bid, orders, text) => applyParagraphEdit(s, bid, orders, text)}));
+      if (REVIEW.pane === "document" && window.DocView && page.document) body.appendChild(DocView.render(page, {flow: innerWidth < 861, columnWidth: columnWidths(page), scale: Math.min(1, avail / page.width), editable: true, reviewed: s.reviewed || {}, onLines: ch => applyLineChanges(s, ch)}));
       else { const dp = buildDocPage(s, (b, l, text) => applyEdit(s, b, l, text)); body.appendChild(dp); const fit = () => scaleToFit(body, dp, page.width, page.height); fit(); window.addEventListener("resize", fit, {once: true}); } };
     if (multi && window.IntersectionObserver) { // placeholders keep the scroll height; a page is built when it comes near
       for (const s of pages) { const body = wrap.querySelector(`.pgbody[data-pid="${s.page_id}"]`); if (body) body.style.minHeight = (Math.min(1, avail / s.result.width) * s.result.height) + "px"; }
@@ -769,7 +769,10 @@ function renderReview(id) {
     view.querySelectorAll("#r_pane button").forEach(b => b.onclick = () => { REVIEW.pane = b.dataset.p; renderReview(id); });
   }
   view.querySelectorAll(".rev").forEach(card => { const key = card.dataset.key, s = byId[card.dataset.pid], page = s.result, [bid, lo] = key.split(":"), b = page.blocks.find(x => x.id === bid), l = b.lines.find(x => String(x.reading_order) === lo);
-    card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); const ln = view.querySelector(`.pgbody[data-pid="${s.page_id}"] .docpage .ln[data-key="${key}"]`); if (ln && !e.target.closest("button,input")) { ln.scrollIntoView({block: "center", behavior: "smooth"}); ln.focus(); } else if (multi && !e.target.closest("button,input")) scrollToPage(s.page_id); };
+    card.onclick = e => { view.querySelectorAll(".rev").forEach(x => x.classList.remove("cur")); card.classList.add("cur"); if (e.target.closest("button,input")) return;
+      if (buildDocUpTo) buildDocUpTo(s.page_id);  // the Document view builds its pages as they come near
+      const ln = view.querySelector(`.pgbody[data-pid="${s.page_id}"] .docpage .ln[data-key="${key}"]`) || view.querySelector(`.pgbody[data-pid="${s.page_id}"] .dv-page [data-k="${key}"]`);
+      if (ln) { ln.scrollIntoView({block: "center", behavior: "smooth"}); focusAt(ln); } else if (multi) scrollToPage(s.page_id); };
     card.querySelector('[data-a="accept"]').onclick = () => { applyEdit(s, b, l, card.querySelector("input").value); renderReview(id); };
     card.querySelector('[data-a="ignore"]').onclick = () => { if (stale(s)) return; s.reviewed = s.reviewed || {}; s.reviewed[key] = "ignored"; syncDocument(s); store.put(s); renderReview(id); }; });
   if (RERUN) markRerunButtons();
@@ -777,25 +780,53 @@ function renderReview(id) {
 }
 /** the page object a handler holds was replaced by a re-run: show the new text instead of saving the old one */
 function stale(d) { const cur = store.get(d.page_id); if (cur === d) return false; if (cur) { toast("This page was just read again · showing the new text"); if (location.hash.startsWith("#/review/")) route(); } return true; }  /* gone: deleted, nothing to save */
-function applyParagraphEdit(d, blockId, orders, text) {
-  if (stale(d)) return; const b = d.result.blocks.find(x => x.id === blockId); if (!b) return;
-  const lines = orders.map(o => b.lines.find(l => l.reading_order === o)).filter(Boolean); if (!lines.length) return;
-  const parts = text.split("\n"), perLine = lines.length > 1 && parts.length === lines.length;  // kept breaks still there: one piece per line
-  lines.forEach((l, i) => { if (l.confidence_before == null) l.confidence_before = l.confidence; l.text = perLine ? parts[i] : i ? "" : text; l.spans = []; l.confidence = Math.max(l.confidence, 0.99); d.reviewed = d.reviewed || {}; d.reviewed[lineKey(b, l)] = "edited"; });
-  b.text = blockTextMd(b);
-  const para = (b.paragraphs || []).find(p => p.lines.join() === orders.join()); if (para) { para.text = text; para.runs = [{text, bold: false}]; }
-  const de = (d.result.document || {elements: []}).elements; for (const e of de) { const items = e.type === "list" ? e.items : e.columns ? e.columns.flatMap(c => c.elements) : [e]; for (const it of items) if (it.block === blockId && (it.lines || []).join() === orders.join()) { it.text = text; it.runs = [{text, bold: false}]; it.low = false; } }
+/** Put the caret at the start of a line: the Overlay's line box, or a line inside a Document view paragraph or cell */
+function focusAt(el) {
+  const ed = el.isContentEditable ? el.closest("[contenteditable=\"true\"]") || el : el; ed.focus({preventScroll: true});
+  if (ed === el || !window.getSelection) return; const r = document.createRange(); r.setStart(el, 0); r.collapse(true); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+}
+/** Document view edits, written back line by line (DocView maps a paragraph edit onto the lines it touched):
+    {block, order, text} a line's new text (joined: it now holds the text of several scanned lines - reviewed, but not
+    training data, see correctedLines); {block, order, bullet} a list marker; {block, cell: [row, col], text} text typed
+    into an empty table cell, which becomes a new line of the table (the cell's box on the scan). -> [{order} | null] */
+function applyLineChanges(d, changes) {
+  if (stale(d)) return []; const res = [], touched = new Set(); d.reviewed = d.reviewed || {};
+  for (const c of changes) {
+    const b = d.result.blocks.find(x => x.id === c.block); res.push(null); if (!b) continue;
+    if (c.cell) { const l = addCellLine(d, b, c.cell[0], c.cell[1], c.text); if (l) { res[res.length - 1] = {order: l.reading_order}; d.reviewed[lineKey(b, l)] = "edited"; touched.add(b); } continue; }
+    const l = (b.lines || []).find(x => x.reading_order === c.order); if (!l) continue;
+    if (c.bullet !== undefined) { if (l.bullet !== c.bullet) { l.bullet = c.bullet; touched.add(b); } continue; }
+    if (c.text === l.text) continue;
+    if (l.confidence_before == null) l.confidence_before = l.confidence;
+    l.text = c.text; l.spans = []; l.confidence = Math.max(l.confidence, 0.99); d.reviewed[lineKey(b, l)] = c.joined || !c.text ? "joined" : "edited"; touched.add(b);
+  }
+  if (!touched.size) return res;
+  syncDocument(d); for (const b of touched) b.text = blockTextMd(b);
   recount(d); store.put(d); const s = $("#r_saved"); if (s) s.textContent = "Saved just now";
+  return res;
+}
+/** a new line for text typed into an empty table cell: the cell's box on the scan, listed in the cell (block and document) */
+function addCellLine(d, b, ri, ci, text) {
+  const t = b.table, row = t && t.rows[ri], cell = row && row.cells[ci]; if (!cell) return null;
+  const n = t.cols.length, c0 = t.cols[Math.min(ci, n - 1)], c1 = t.cols[Math.min(ci + (cell.colspan || 1) - 1, n - 1)], x0 = c0.x0, x1 = Math.max(c1.x1, x0 + 4), y0 = row.y0, y1 = Math.max(row.y1, y0 + 4);
+  const order = Math.max(0, ...(b.lines || []).map(l => l.reading_order)) + 1;
+  const l = {box: {x: x0, y: y0, width: x1 - x0, height: y1 - y0}, quad: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], text, confidence: 1, score: 1, reading_order: order, indent_level: 0, indent: 0, tab: false, bullet: null, bullet_box: null, baseline: null, core_h: null, font: null, bold: false, spans: [], text_color: null, added: true};
+  (b.lines = b.lines || []).push(l);
+  const tables = [t]; for (const e of ((d.result.document || {}).elements || [])) if (e.type === "table" && e.block === b.id) { if (e.table && !tables.includes(e.table)) tables.push(e.table); if (e.lines && !e.lines.includes(order)) e.lines.push(order); }
+  for (const tb of tables) { const c = tb.rows[ri] && tb.rows[ri].cells[ci]; if (c) { if (!(c.lines || []).includes(order)) c.lines = (c.lines || []).concat(order); c.text = text; } }
+  return l;
 }
 /** Line edits (Accept, Ignore, typing in the Overlay) also update the structured document, so the Document view and the
     Word export show the corrected text and drop the "check" highlight of lines that were looked at. */
 function syncDocument(d) {
   const page = d.result, doc = page.document; if (!doc || !doc.elements || !(T.pipeline && T.pipeline.paragraphRuns)) return;
   const blocks = Object.fromEntries(page.blocks.map(b => [b.id, b])), rev = d.reviewed || {};
+  const cells = (b, table, byOrder) => { for (const r of table.rows) for (const c of r.cells) if ((c.lines || []).some(o => { const l = byOrder.get(o); return l && rev[lineKey(b, l)]; })) { const cl = c.lines.map(o => byOrder.get(o)).filter(l => l && l.text); c.text = cl.length >= 2 && cl.some(l => l.bullet) ? cl.map(l => (l.bullet ? l.bullet + " " : "") + l.text).join("\n") : cl.reduce((a, l) => T.pipeline.joinWrapped(a, l.text), ""); } };
   const fix = e => { const b = blocks[e.block]; if (!b || !(e.lines || []).length && !e.table) return; const byOrder = new Map((b.lines || []).map(l => [l.reading_order, l]));
-    if (e.type === "table" && e.table) { for (const r of e.table.rows) for (const c of r.cells) if ((c.lines || []).some(o => { const l = byOrder.get(o); return l && rev[lineKey(b, l)] === "edited"; })) { const cl = c.lines.map(o => byOrder.get(o)).filter(l => l && l.text); c.text = cl.length >= 2 && cl.some(l => l.bullet) ? cl.map(l => (l.bullet ? l.bullet + " " : "") + l.text).join("\n") : cl.reduce((a, l) => T.pipeline.joinWrapped(a, l.text), ""); } return; }
+    if (e.type === "table" && e.table) { cells(b, e.table, byOrder); if (b.table && b.table !== e.table) cells(b, b.table, byOrder); return; }
     const pl = e.lines.map(o => byOrder.get(o)).filter(l => l && l.text);
-    e.runs = pl.length ? T.pipeline.paragraphRuns(pl) : []; e.text = e.runs.map(r => r.text).join(""); e.low = pl.some(l => l.confidence < LOW && !rev[lineKey(b, l)]); };
+    e.runs = pl.length ? T.pipeline.paragraphRuns(pl) : []; e.text = e.runs.map(r => r.text).join(""); e.low = pl.some(l => l.confidence < LOW && !rev[lineKey(b, l)]);
+    if (e.type === "list_item") { const fl = e.lines.map(o => byOrder.get(o)).find(Boolean); if (fl && fl.bullet != null) e.bullet = fl.bullet; } };
   const walk = e => { if (e.columns) e.columns.forEach(c => c.elements.forEach(walk)); else if (e.type === "list") e.items.forEach(fix); else fix(e); };
   doc.elements.forEach(walk);
 }

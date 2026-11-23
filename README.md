@@ -6,7 +6,7 @@ server-side storage; the app says so before first use.
 
 ```
 index.html / app.js / app.css   the UI (light + dark theme: follows the system, switch in the sidebar or Settings)
-docview.js                      reflowed, editable page view (shared with the backend app)
+docview.js                      the Document view: the page as an editable document (window.DocView)
 export.js                       Word (.docx) and PDF export from one document model (window.ThaExport)
 pdftools.js                     PDF page core: merge / reorder / rotate / split / extract PDF pages (window.ThaPdfTools)
 ocr/engine.js                   model loading + the five stages (layout, lines, recogniser, font, structure); the layout
@@ -69,6 +69,29 @@ ruling lines or line alignment and exported as real Word tables; a narrow column
 ("យោង ៖", "សំណុំលិខិត៖" - bold or ending in a colon) whose rows line up with wider value blocks becomes a borderless
 label/value table, so labels stay beside their values; in a bordered table a faint rule the scan lost is recovered
 from the baseline rows that start a record. Line order inside a block is geometric.
+
+Document view (review page, right pane; docview.js) and the Word / PDF export read the page through one reading
+layout, `ThaOCR.pipeline.compose(page)`, built from `page.document` and the current line texts, so saved documents
+benefit too and the three always agree:
+- a paragraph the layout model split over several blocks is one paragraph again where the text only wrapped (the part
+  before ends at the right edge, the next starts at the left edge or under a first-line indent / the text of a list
+  item, same size, about one line pitch below); inside a block, a line starting with a marker ("-", "ក-", "១.") after
+  a kept break, or a list line left of its item's text (a bullet read as a letter), starts its own paragraph / item;
+- alignment comes from the line geometry: centred, right, justified (the lines before the last reach the right edge),
+  first-line and hanging indents; a first line pushed right by its indent is not "centred";
+- a table is a real table: the scan's columns, one body size in every cell, text wrapping inside its cell (on a
+  phone the columns size to their text and the table scrolls sideways).
+
+On a computer every element keeps its place on the scan; a paragraph keeps the width of its lines, and its size
+starts from the font model's em size: all body text gets one factor (the median of scan width / text width over the
+body paragraphs and lines), and a paragraph that would then wrap into more lines than on the scan shrinks by up to
+10% to keep its line count. Headings are fitted to their own width. On a phone (< 861 px) the same document reflows
+at a reading size, left-aligned instead of justified. Everything is editable: paragraphs, headings, list items and
+their bullets, every table cell (text typed into an empty cell becomes a new line with the cell's box), both sides of
+a dot-leader line. Each scanned line is a span in its paragraph, so an edit is saved to the lines it touched
+(after a short pause and on leaving the text); a line that ends up holding the text of several scanned lines is marked
+"joined" and is left out of the training corrections. Lines below 0.8 confidence keep a yellow hint until edited or
+accepted, and a "To check" card puts the caret on its line.
 
 Settings > Layout > Page analysis switches these rules off ("Models only"): grouping, reading order and paragraphs then come
 from the layout and structure models alone (`ThaOCR.config.rules = false`). On the test pages this is clearly worse

@@ -64,12 +64,13 @@
       return out;
     }
 
-    const lineBoxes = e => { const b = blocksById[e.block]; if (!b || !b.lines || !e.lines) return []; const want = new Set(e.lines); return b.lines.filter(l => want.has(l.reading_order)).map(l => l.box).filter(Boolean); };
+    const lineBoxes = e => { if (e.boxes) return e.boxes; const b = blocksById[e.block]; if (!b || !b.lines || !e.lines) return []; const want = new Set(e.lines); return b.lines.filter(l => want.has(l.reading_order)).map(l => l.box).filter(Boolean); };
     function extent(e) {  // [x0, y0, x1, y1] in page pixels
       const union = xs => xs.length ? [Math.min(...xs.map(b => b[0])), Math.min(...xs.map(b => b[1])), Math.max(...xs.map(b => b[2])), Math.max(...xs.map(b => b[3]))] : null;
       if (e.columns) return union(e.columns.flatMap(c => c.elements.map(extent))) || [0, 0, 0, 0];
       if (e.items) { const u = union(e.items.map(extent).filter(b => b[2] > b[0])); if (u) return u; }
       if (e.table && e.table.cols && e.table.cols.length) { const c = e.table.cols, b = e.box || [0, 0, 0, 0]; return [c[0].x0, b[1], c[c.length - 1].x1, b[1] + b[3]]; }
+      if (e.src && e.ext) return e.ext;
       const lb = lineBoxes(e); if (lb.length) return union(lb.map(b => [b.x, b.y, b.x + b.width, b.y + b.height]));
       const b = e.box || [0, 0, 0, 0]; return [b[0], b[1], b[0] + b[2], b[1] + b[3]];
     }
@@ -83,7 +84,7 @@
     const lineRuns = e => { const b = blocksById[e.block]; if (!TP || !TP.runsWithBreaks || !b || !b.lines || !(e.lines || []).length) return null;
       const want = new Set(e.lines), pl = b.lines.filter(l => want.has(l.reading_order) && l.text); return pl.length ? TP.runsWithBreaks(pl, colW ? colW(e.block) : undefined) : null; };
     const runsOf = (e, forceBold) => { const st = e.style || {}, all = (forceBold || st.weight === "bold") && !st.heavy;
-      const rs = (lineRuns(e) || (e.runs && e.runs.length ? e.runs : [{text: e.text || "", bold: false}])).filter(r => r.text).map(r => ({text: r.text, bold: (all || (!!r.bold && !st.heavy)) || undefined}));
+      const rs = ((e.src ? e.runs : lineRuns(e)) || (e.runs && e.runs.length ? e.runs : [{text: e.text || "", bold: false}])).filter(r => r.text).map(r => ({text: r.text, bold: (all || (!!r.bold && !st.heavy)) || undefined}));
       return rs.length ? rs : [{text: ""}]; };
     const note = e => { if (e.style && e.style.font_px) sizes.push(e.style.font_px / W * pageW); };
 
@@ -144,15 +145,20 @@
       if (lb.length >= 2 && align === "left") {  // justified in the scan: the lines before the last reach the right edge
         const full = lb.slice(0, -1).filter(b => ext[2] - (b.x + b.width) < 0.03 * w).length; if (full >= Math.max(1, 0.7 * (lb.length - 1))) align = "justify"; }
       const flush = align === "left" || align === "justify";
-      let first = 0; if (flush && lb.length >= 2) { const ind = lb[0].x - Math.min(...lb.slice(1).map(b => b.x)); if (ind > 0.01 * cw) first = Math.min(0.2, ind / cw); } else if (flush && e.first_line_indent) first = 0.05;
+      // first-line indent (> 0), or a hanging first line (< 0: "- text" with its wrapped lines under the text)
+      let first = 0; if (flush && lb.length >= 2) { const ind = lb[0].x - Math.min(...lb.slice(1).map(b => b.x)); if (ind > 0.01 * cw) first = Math.min(0.2, ind / cw); else if (ind < -0.01 * cw) first = Math.max(-0.2, ind / cw); } else if (flush && e.first_line_indent) first = 0.05;
       const bodyLeft = lb.length >= 2 ? Math.min(...lb.slice(1).map(b => b.x)) : ext[0];
       let left = flush ? snap((bodyLeft - cx0) / cw) : 0, right = align === "justify" || align === "right" ? snap((cx1 - ext[2]) / cw) : 0;
+      if (first < 0) first = Math.max(first, -left);  // a hanging first line stays inside the text column
       if (align === "center") { const off = ((ext[0] + ext[2]) / 2 - (cx0 + cx1) / 2) / cw; if (off > 0.02) left = Math.min(0.9, 2 * off); else if (off < -0.02) right = Math.min(0.9, -2 * off); }  // centred on its own axis, not the container's
       const p = Object.assign({k: "p", runs: runsOf(e, !!heading), align, heading, left, right, first}, look(e.style));
       if (e.type === "paragraph" && (e.text || "").includes("\t")) { const [before, ...rest] = e.text.split("\t"); p.tab = {before, after: rest.join(" ")}; p.align = "left"; p.first = 0; p.right = 0; }
       return p;
     }
-    out.blocks = doc.elements.map(e => conv(e, x0, x1, null)).filter(Boolean);
+    // the reading layout the Document view shows (ThaOCR.pipeline.compose): paragraphs the layout split over blocks are
+    // joined again, the text and table cells are the current (edited) lines, alignment comes from the line geometry
+    const composed = TP && TP.compose ? TP.compose(page, {columnWidth: colW || undefined}) : null;
+    out.blocks = (composed || doc.elements).map(e => conv(e, x0, x1, null)).filter(Boolean);
     return out;
   }
 
@@ -185,7 +191,7 @@
           if (b.tab) out.push(new Paragraph({tabStops: [{type: TabStopType.RIGHT, position: width, leader: LeaderType.DOT}], spacing: gap(afterTable), indent: b.left ? {left: Math.round(b.left * width)} : undefined, children: [...runs(b, [{text: b.tab.before}]), new TextRun({children: [new Tab(), b.tab.after || ""], font: fontOf(b)})]}));
           else out.push(new Paragraph({children: runs(b), alignment: align(b.align), spacing: gap(afterTable),
             heading: b.heading === 1 ? HeadingLevel.HEADING_1 : b.heading === 2 ? HeadingLevel.HEADING_2 : b.heading === 3 ? HeadingLevel.HEADING_3 : undefined,
-            indent: (b.left || b.right || b.first) ? {left: Math.round(b.left * width) || undefined, right: Math.round(b.right * width) || undefined, firstLine: Math.round(b.first * width) || undefined} : undefined}));
+            indent: (b.left || b.right || b.first) ? {left: Math.round(b.left * width) || undefined, right: Math.round(b.right * width) || undefined, firstLine: b.first > 0 ? Math.round(b.first * width) || undefined : undefined, hanging: b.first < 0 ? Math.round(-b.first * width) || undefined : undefined} : undefined}));
           afterTable = false;
         } else if (b.k === "list") {
           b.items.forEach((it, i) => { const left = Math.round(it.left * width), sp = {before: afterTable && !i ? 120 : 0, after: 60};

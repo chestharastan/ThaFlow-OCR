@@ -635,5 +635,162 @@
     return assemble(img, blocks, timings, tStart, extra || {});
   };
 
-  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, runsWithBreaks, peelTableText};
+  /* ---------------------------------------------------------------- reading layout (Document view, Word, PDF) */
+  /** The page as a reader sees it, built from page.document and the CURRENT line texts (edits included). The Document
+      view and the Word / PDF export both use it, so they show the same paragraphs:
+      - a paragraph the layout model split over several blocks is one paragraph again where the text only wrapped: the
+        part before ends at the right edge, the next part starts at its left edge (or left of a first-line indent, or
+        under the text or the bullet of a list item), same size, about one line pitch below, in the same column;
+      - inside a block, a line that starts with a list marker ("-", "ក-", "១.") after a kept break, and a list line that
+        starts left of its item's text (the next item, its bullet read as a letter), begin a paragraph / item of their own;
+      - alignment comes from the line geometry: centred (a stack of centred lines, or one line centred in its column),
+        right, justified (the lines before the last reach the right edge) or left. A first line pushed right by a
+        first-line indent is not "centred", whatever the block's align says;
+      - every text element lists its source lines (src: {block, order, key, text, runs, low}) and the glue between them
+        ("" between Khmer syllables, " ", or "\n" for a break kept on purpose), so an edit is written back line by line;
+      - table cells hold the text of their current lines (and the same src / glue).
+      opts: {columnWidth(blockId) -> px, reviewed: {"b3:2": status}}. -> elements in reading order, in the shapes of
+      page.document (row / footer_row with columns, list with items, table, figure, decoration); a text element also has
+      src, glue, lead, boxes (every line, blank ones too), runs, text, low, tab, ext [x0, y0, x1, y1], bodyLeft, indent
+      (first line minus the others: > 0 a first-line indent, < 0 a hanging first line), pitch, lineH and align. */
+  const MARKER_RE = /^\s*(?:[-–—•●○◦▪■➢►➤>*✓√❖]|[0-9០-៩]{1,2}\s?[.)\-]|[ក-អ]\s?[.)\-]|[a-zA-Z][.)]|[ivxIVX]{1,4}[.)])/;
+  const COMPOSE_TEXT = new Set(["paragraph", "heading", "header", "footer", "page_number", "caption", "footnote", "table_row"]);
+  function compose(page, opts) {
+    opts = opts || {}; const doc = page && page.document; if (!doc || !doc.elements) return null;
+    const W = page.width || 1000, rev = opts.reviewed || {}, colW = opts.columnWidth || null, m = doc.margins || {left: 0.08 * W, right: 0.08 * W}, pageW = Math.max(1, W - m.left - m.right);
+    const blocks = Object.fromEntries((page.blocks || []).map(b => [b.id, b]));
+    const boxOf = l => l.box || {x: l.bbox[0], y: l.bbox[1], width: l.bbox[2] - l.bbox[0], height: l.bbox[3] - l.bbox[1]};
+    const med = a => a.length ? U.median(a) : 0, spread = a => Math.max(...a) - Math.min(...a);
+    const srcOf = (b, l) => { const key = b.id + ":" + l.reading_order, sp = l.spans || [], text = l.text || "";
+      const runs = sp.length && sp.map(s => s.text).join(" ") === text ? sp.map((s, k) => ({text: (k ? " " : "") + s.text, bold: !!s.bold})) : [{text, bold: !!l.bold}];
+      return {block: b.id, order: l.reading_order, key, text, runs, low: (l.confidence ?? 1) < LOW && !rev[key]}; };
+    const linesOf = e => { const b = blocks[e.block]; if (!b || !b.lines || !(e.lines || []).length) return [];
+      const by = new Map(b.lines.map(l => [l.reading_order, l])); return e.lines.map(o => by.get(o)).filter(Boolean).map(l => ({b, l, box: boxOf(l)})); };
+    const lastCh = p => { const t = p.src[p.src.length - 1].text; return t[t.length - 1] || ""; };
+    const cw = id => colW ? colW(id) : undefined;
+    const newPiece = (e, type) => ({type, heading: e.heading, role: e.role, align0: e.align, style: e.style || {}, block: e.block, lines: e.lines, src: [], glue: [], lead: "", boxes: []});
+
+    // one element's lines -> 1+ pieces (a marker line after a kept break, or an out-dented list line, starts a new one)
+    function pieces(e, type, item) {
+      const ls = linesOf(e), tl = ls.filter(x => x.l.text);
+      if (!tl.length) {  // no line data at all (an older result): the stored text, read-only, so it is not lost
+        if (ls.length || !(e.text || "").trim() || !e.box) return [];
+        const p = newPiece(e, type); p.fixed = e.runs && e.runs.length ? e.runs : [{text: e.text, bold: false}]; p.boxes.push({x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3]});
+        if (item) { p.bullet = item.bullet || "•"; p.bullet_box = item.bullet_box; } return [p]; }
+      const soft = softBreaks(tl.map(x => x.l), cw(e.block)), h = med(tl.map(x => x.box.height)) || 10, out = [], pending = [];
+      const textX = item ? tl[0].box.x : null; let p = null, ti = -1;
+      // lines stacked on purpose that start at another x (a sub-item, a line set back) are paragraphs of their own;
+      // a centred stack (title, motto, signature block) stays one piece
+      const tw = Math.max(1, Math.max(...tl.map(x => x.box.x + x.box.width)) - Math.min(...tl.map(x => x.box.x)));
+      const stack = tl.length >= 2 && spread(tl.map(x => x.box.x + x.box.width / 2)) < 0.05 * tw && spread(tl.map(x => x.box.x)) > Math.max(0.02 * tw, 0.3 * h);
+      for (const x of ls) {
+        if (!x.l.text) { if (p) p.boxes.push(x.box); else pending.push(x.box); continue; }
+        ti++; const prev = ti ? tl[ti - 1] : null, kept = ti ? !soft[ti - 1] : true;
+        const marker = !!ti && kept && MARKER_RE.test(x.l.text) && x.box.x <= prev.box.x + 0.6 * h;
+        const outdent = !!ti && textX != null && x.box.x < textX - 0.6 * h;
+        const shifted = !!ti && kept && !stack && !item && Math.abs(x.box.x - prev.box.x) > Math.max(0.8 * h, 0.03 * tw);
+        if (!p || marker || outdent || shifted) {
+          p = newPiece(e, type); out.push(p);
+          if (!ti) p.boxes.push(...pending);
+          // an out-dented line is the next item, its bullet read as text: it gets the item's bullet and text column
+          if (item) { const own = x.l.bullet; p.bullet = own != null ? own : item.bullet || "•"; p.bulletSrc = {block: x.b.id, order: x.l.reading_order}; p.bullet_box = x.l.bullet_box ? {x: x.l.bullet_box[0], y: x.l.bullet_box[1]} : item.bullet_box; if (ti) p.textX = textX; }
+        } else p.glue.push(kept ? "\n" : wrapGlue(lastCh(p), x.l.text[0]));
+        p.src.push(srcOf(x.b, x.l)); p.boxes.push(x.box);
+      }
+      return out;
+    }
+    // b continues a: the text of a only wrapped into the next block
+    function continues(a, b) {
+      if (!["paragraph", "table_row", "list_item", "footnote", "caption"].includes(a.type) || !["paragraph", "table_row"].includes(b.type)) return false;
+      if (a.src.some(s => s.block === b.block)) return false;  // inside one block the pipeline already split its paragraphs
+      if (!a.src.length || !b.src.length || a.src.some(s => s.text.includes("\t")) || b.src.some(s => s.text.includes("\t")) || MARKER_RE.test(b.src[0].text)) return false;
+      const sa = a.style || {}, sb = b.style || {}; if (!!sa.heavy !== !!sb.heavy) return false;
+      const ha = med(a.boxes.map(x => x.height)), hb = med(b.boxes.map(x => x.height)), h = Math.max(ha, hb);
+      const ea = sa.font_px || 0.7 * ha, eb = sb.font_px || 0.7 * hb; if (Math.max(ea, eb) > 1.18 * Math.min(ea, eb)) return false;
+      const last = a.boxes[a.boxes.length - 1], first = b.boxes[0];
+      const gaps = a.boxes.slice(1).map((x, i) => x.y - (a.boxes[i].y + a.boxes[i].height)).filter(g => g > -h);
+      const gap = first.y - (last.y + last.height), maxGap = Math.max(0.8 * h, gaps.length ? 1.6 * med(gaps) + 0.2 * h : 0);
+      if (first.y < last.y + 0.5 * h || gap > maxGap) return false;
+      const ax0 = Math.min(...a.boxes.map(x => x.x)), ax1 = Math.max(...a.boxes.map(x => x.x + x.width)), bx0 = Math.min(...b.boxes.map(x => x.x)), bx1 = Math.max(...b.boxes.map(x => x.x + x.width));
+      if (Math.min(ax1, bx1) - Math.max(ax0, bx0) < 0.5 * Math.min(ax1 - ax0, bx1 - bx0)) return false;
+      const R = Math.max(ax1, bx1), w = Math.max(1, R - Math.min(ax0, bx0)), tolL = Math.max(0.03 * w, h);
+      const tolR = Math.max(0.05 * w, 1.5 * h, Math.min(0.12 * w, 1.2 * firstWordW({text: b.src[0].text}, first)));
+      if (R - (last.x + last.width) > tolR) return false;  // a's last line stops short: a break kept on purpose
+      const L = a.boxes.length >= 2 ? Math.min(...a.boxes.slice(1).map(x => x.x)) : a.boxes[0].x;
+      if (Math.abs(first.x - L) <= tolL) return true;
+      if (a.boxes.length === 1 && a.type !== "list_item" && first.x < L && L - first.x < 0.2 * w) return true;  // a's one line starts with a first-line indent
+      return a.type === "list_item" && !!a.bullet_box && Math.abs(first.x - a.bullet_box.x) <= tolL;  // wrapped under the bullet
+    }
+    function textOf(p) {
+      const runs = [], add = (t, bold) => { if (!t) return; const r = runs[runs.length - 1]; if (r && r.bold === bold) r.text += t; else runs.push({text: t, bold}); };
+      add(p.lead, false); p.src.forEach((s, i) => { if (i) add(p.glue[i - 1], runs.length ? runs[runs.length - 1].bold : false); s.runs.forEach(r => add(r.text, r.bold)); });
+      if (Array.isArray(p.fixed)) p.fixed.forEach(r => add(r.text, !!r.bold));
+      p.runs = runs; p.text = runs.map(r => r.text).join(""); p.low = p.src.some(s => s.low); return p;
+    }
+    function alignOf(p, x0, x1) {
+      const bx = p.boxes, n = bx.length, ex0 = p.ext[0], ex1 = p.ext[2], w = Math.max(1, ex1 - ex0), cwid = Math.max(1, x1 - x0), h = p.lineH;
+      if (p.tab) return "left";
+      if (n >= 2) {
+        const ls = bx.map(b => b.x), rs = bx.map(b => b.x + b.width), edge = Math.max(0.02 * w, 0.3 * h);
+        if (spread(bx.map(b => b.x + b.width / 2)) < 0.05 * w && spread(ls) > edge && spread(rs) > edge) return "center";
+        const tol = Math.max(0.03 * w, 0.6 * h), full = bx.slice(0, -1).filter(b => ex1 - (b.x + b.width) < tol).length;
+        if (full >= Math.max(1, 0.7 * (n - 1)) && spread(ls.slice(1)) <= Math.max(tol, h)) return "justify";
+        if (spread(rs) < edge && spread(ls) > 2 * edge) return "right";
+        return "left";
+      }
+      const b = bx[0], c = b.x + b.width / 2, mid = (x0 + x1) / 2;
+      // the block was centred on the page and the line is not a full text line (a first line with a first-line indent is)
+      if (p.align0 === "center" && b.width < 0.8 * pageW && Math.abs(c - mid) < 0.12 * cwid) return "center";
+      if (b.width > 0.85 * cwid) return "left";
+      if (Math.abs(c - mid) < 0.04 * cwid && b.x - x0 > 0.06 * cwid) return "center";
+      if (x1 - (b.x + b.width) < 0.03 * cwid && b.x - x0 > 0.3 * cwid) return "right";
+      return "left";
+    }
+    function finish(p, x0, x1) {
+      if (p.items) { p.items.forEach(it => finish(it, x0, x1)); const xs = p.items.map(i => i.ext); p.ext = [Math.min(...xs.map(b => b[0])), Math.min(...xs.map(b => b[1])), Math.max(...xs.map(b => b[2])), Math.max(...xs.map(b => b[3]))]; return p; }
+      if (!p.src) return p;
+      textOf(p); const bx = p.boxes, n = bx.length;
+      p.tab = p.src.length === 1 && p.src[0].text.includes("\t");
+      p.ext = [Math.min(...bx.map(b => b.x)), Math.min(...bx.map(b => b.y)), Math.max(...bx.map(b => b.x + b.width)), Math.max(...bx.map(b => b.y + b.height))];
+      p.lineH = med(bx.map(b => b.height)) || 10;
+      p.pitch = n >= 2 ? med(bx.slice(1).map((b, i) => (b.y + b.height / 2) - (bx[i].y + bx[i].height / 2))) : 0;
+      p.bodyLeft = n >= 2 ? Math.min(...bx.slice(1).map(b => b.x)) : bx[0].x; p.indent = n >= 2 ? bx[0].x - p.bodyLeft : 0;
+      p.align = alignOf(p, x0, x1); delete p.align0;
+      return p;
+    }
+    function table(e) {
+      const b = blocks[e.block], t = e.table, by = new Map(((b && b.lines) || []).map(l => [l.reading_order, l]));
+      const rows = t.rows.map((r, ri) => ({...r, cells: r.cells.map((c, ci) => {
+        const ls = (c.lines || []).map(o => by.get(o)).filter(Boolean), tl = ls.filter(l => l.text), cell = {colspan: c.colspan || 1, lines: c.lines || [], row: ri, col: ci, src: [], glue: [], lead: "", boxes: ls.map(boxOf)};
+        if (!b) { cell.src = []; cell.runs = [{text: c.text || "", bold: false}]; cell.text = c.text || ""; cell.low = false; cell.fixed = true; return cell; }
+        const bul = tl.length >= 2 && tl.some(l => l.bullet);
+        tl.forEach((l, i) => { if (i) cell.glue.push(bul ? "\n" + (l.bullet ? l.bullet + " " : "") : wrapGlue(lastCh(cell), l.text[0])); else if (bul && l.bullet) cell.lead = l.bullet + " "; cell.src.push(srcOf(b, l)); });
+        return textOf(cell); })}));
+      const bx = [...by.values()].filter(l => (e.lines || []).includes(l.reading_order)).map(boxOf), eb = e.box || [0, 0, 0, 0];
+      return {...e, table: {...t, rows}, ext: [t.cols[0].x0, bx.length ? Math.min(...bx.map(q => q.y)) : eb[1], t.cols[t.cols.length - 1].x1, bx.length ? Math.max(...bx.map(q => q.y + q.height)) : eb[1] + eb[3]]};
+    }
+    function seq(elements, x0, x1) {
+      const raw = [];
+      for (const e of elements) {
+        if (e.columns) { raw.push({...e, columns: e.columns.map(c => { const bs = c.elements.map(x => x.box).filter(Boolean), cx0 = c.x0 ?? (bs.length ? Math.min(...bs.map(q => q[0])) : x0), cx1 = c.x1 ?? (bs.length ? Math.max(...bs.map(q => q[0] + q[2])) : x1);
+          return {...c, x0: cx0, x1: cx1, elements: seq(c.elements, cx0, cx1)}; })}); continue; }
+        if (e.type === "list") { const items = e.items.flatMap(it => pieces(it, "list_item", it)); if (items.length) raw.push({...e, items}); continue; }
+        if (e.type === "table" && e.table) { raw.push(table(e)); continue; }
+        if (COMPOSE_TEXT.has(e.type)) { raw.push(...pieces(e, e.type)); continue; }
+        raw.push(e);  // figure, decoration (and anything new)
+      }
+      const out = [];
+      for (const p of raw) { const prev = out[out.length - 1], a = prev && (prev.type === "list" && prev.items ? prev.items[prev.items.length - 1] : prev);
+        if (a && a.src && p.src && !p.items && !a.fixed && !p.fixed && continues(a, p)) { a.glue.push(wrapGlue(lastCh(a), p.src[0].text[0])); a.src.push(...p.src); a.glue.push(...p.glue); a.boxes.push(...p.boxes); a.joined = true; continue; }
+        out.push(p); }
+      for (const p of out) {
+        if (p.src || p.items) finish(p, x0, x1);
+        else if (p.columns) { const xs = p.columns.flatMap(c => c.elements.map(x => x.ext).filter(Boolean)); if (xs.length) p.ext = [Math.min(...xs.map(b => b[0])), Math.min(...xs.map(b => b[1])), Math.max(...xs.map(b => b[2])), Math.max(...xs.map(b => b[3]))]; }
+        else if (p.box && !p.ext) p.ext = [p.box[0], p.box[1], p.box[0] + p.box[2], p.box[1] + p.box[3]]; }
+      return out;
+    }
+    return seq(doc.elements, m.left, W - m.right);
+  }
+
+  T.pipeline = {cleanRegions, assign, groupOrphans, mergeParagraphs, xyCut, sortLines, buildDocument, render, assemble, tableGrid, findRules, skewOf, joinWrapped, paragraphRuns, softBreaks, joinLines, compose, runsWithBreaks, peelTableText};
 })();
