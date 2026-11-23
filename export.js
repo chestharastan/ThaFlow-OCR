@@ -100,6 +100,10 @@
           outCols.push({left: Math.max(0, (left - px) / cw), w: Math.min(1, (right - left) / cw), blocks: k.c.elements.map(x => conv(x, left, right, k.c.align)).filter(Boolean)}); px = right; });
         return {k: "cols", cols: outCols};
       }
+      if (e.type === "rows" && e.rows) {  // far-apart segments of a row: tab stops at their x on the scan (compose)
+        note(e); const minX = e.ext[0], left = snap((minX - cx0) / cw);
+        return Object.assign({k: "rows", left, rows: e.rows.map(r => ({first: Math.max(0, (r.segs[0].x - minX) / cw), stops: r.segs.slice(1).map(g => Math.max(0, (g.x - minX) / cw)), segs: r.segs.map(g => runsOf(Object.assign({style: e.style}, g)))}))}, look(e.style));
+      }
       if (e.type === "list") {
         const items = e.items.map(it => { note(it); const ie = extent(it), bx = it.bullet_box ? it.bullet_box.x : ie[0], marker = String(it.bullet || "").trim();
           return Object.assign({marker, bullet: BULLET.test(marker), runs: runsOf(it), left: snap((bx - cx0) / cw)}, look(it.style)); });
@@ -151,7 +155,8 @@
       const bodyLeft = lb.length >= 2 ? Math.min(...lb.slice(1).map(b => b.x)) : ext[0];
       let left = flush ? snap((bodyLeft - cx0) / cw) : 0, right = align === "justify" || align === "right" ? snap((cx1 - ext[2]) / cw) : 0;
       if (first < 0) first = Math.max(first, -left);  // a hanging first line stays inside the text column
-      if (align === "center") { const off = ((ext[0] + ext[2]) / 2 - (cx0 + cx1) / 2) / cw; if (off > 0.02) left = Math.min(0.9, 2 * off); else if (off < -0.02) right = Math.min(0.9, -2 * off); }  // centred on its own axis, not the container's
+      if (align === "center") { const off = ((ext[0] + ext[2]) / 2 - (cx0 + cx1) / 2) / cw, room = Math.max(0, 1 - 1.15 * w / cw);  // centred on its own axis, not the container's,
+        if (off > 0.02) left = Math.min(0.9, 2 * off, room); else if (off < -0.02) right = Math.min(0.9, -2 * off, room); }  // but never narrower than its own text
       const p = Object.assign({k: "p", runs: runsOf(e, !!heading), align, heading, left, right, first}, look(e.style));
       if (e.type === "paragraph" && (e.text || "").includes("\t")) { const [before, ...rest] = e.text.split("\t"); p.tab = {before, after: rest.join(" ")}; p.align = "left"; p.first = 0; p.right = 0; }
       return p;
@@ -193,6 +198,11 @@
           else out.push(new Paragraph({children: runs(b), alignment: align(b.align), spacing: gap(afterTable),
             heading: b.heading === 1 ? HeadingLevel.HEADING_1 : b.heading === 2 ? HeadingLevel.HEADING_2 : b.heading === 3 ? HeadingLevel.HEADING_3 : undefined,
             indent: (b.left || b.right || b.first) ? {left: Math.round(b.left * width) || undefined, right: Math.round(b.right * width) || undefined, firstLine: b.first > 0 ? Math.round(b.first * width) || undefined : undefined, hanging: b.first < 0 ? Math.round(-b.first * width) || undefined : undefined} : undefined}));
+          afterTable = false;
+        } else if (b.k === "rows") {
+          b.rows.forEach((r, i) => { const at = f => Math.round((b.left + f) * width);
+            out.push(new Paragraph({indent: {left: at(r.first)}, tabStops: r.stops.map(f => ({type: TabStopType.LEFT, position: at(f)})), spacing: {before: afterTable && !i ? 120 : 0, after: 0},
+              children: r.segs.flatMap((rs, k) => (k ? [new TextRun({children: [new Tab()], font: fontOf(b)})] : []).concat(runs(b, rs)))})); });
           afterTable = false;
         } else if (b.k === "list") {
           b.items.forEach((it, i) => { const left = Math.round(it.left * width), sp = {before: afterTable && !i ? 120 : 0, after: 60};
@@ -331,6 +341,11 @@
           for (const it of b.items) { const li = el("div", `display:flex;align-items:baseline;margin-bottom:.25em;margin-left:${pct(it.left)}`, parent);
             const mk = el("span", "flex:none;min-width:1.4em;padding-right:.4em;white-space:nowrap", li); await marker(mk, it);
             await text(el("div", "flex:1;min-width:0", li), it, it.runs); }
+          if (parent.lastChild) parent.lastChild.style.marginBottom = ".5em";
+        } else if (b.k === "rows") {
+          for (const r of b.rows) { const row = el("div", `display:flex;align-items:baseline;white-space:nowrap;margin-left:${pct(b.left + r.first)}`, parent);
+            for (let k = 0; k < r.segs.length; k++) { const gap = k + 1 < r.segs.length ? r.stops[k] - (k ? r.stops[k - 1] : r.first) : 0;
+              await text(el("span", `flex:none;white-space:pre;${gap > 0 ? `min-width:${(gap * 100 / Math.max(0.01, 1 - b.left - r.first)).toFixed(3)}%;` : ""}`, row), b, r.segs[k]); } }
           if (parent.lastChild) parent.lastChild.style.marginBottom = ".5em";
         } else if (b.k === "img") {
           const im = el("div", `width:${pct(b.w)};aspect-ratio:${(1 / Math.max(0.01, b.ratio)).toFixed(4)};margin-bottom:.5em;${b.align === "center" ? "margin-left:auto;margin-right:auto;" : `margin-left:${pct(b.left)};`}`, parent); im.dataset.img = b.src;

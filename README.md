@@ -82,7 +82,12 @@ too and they always agree. In the PDF a list marker no bundled font has ("➢", 
 - alignment comes from the line geometry: centred, right, justified (the lines before the last reach the right edge),
   first-line and hanging indents; a first line pushed right by its indent is not "centred";
 - a table is a real table: the scan's columns, one body size in every cell, text wrapping inside its cell (on a
-  phone the columns size to their text and the table scrolls sideways).
+  phone the columns size to their text and the table scrolls sideways);
+- never worse than the Overlay: lines are taken as visual rows, left to right (a reference number and the small text
+  after it stay one line; a duplicate detection inside another line is dropped). A row whose segments stand far apart
+  (a list with counts at the right), and a table whose grid would wrap a one-line text or change the left-to-right
+  order of a row, are shown as the Overlay shows them: each segment editable at its x on the scan (tab stops in Word
+  and PDF), one line per row on a computer, wrapping on a phone; rows between them (a heading, "-" items) stay text.
 
 On a computer every element keeps its place on the scan; a paragraph keeps the width of its lines, and its size
 starts from the font model's em size: all body text gets one factor (the median of scan width / text width over the

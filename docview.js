@@ -164,6 +164,7 @@
       if (e.type === "figure" || e.type === "decoration") return figureNode(e, x0, x1);
       if (e.type === "table" && e.table) return tableNode(e, x0, x1);
       if (e.items) return listNode(e, x0, x1);
+      if (e.rows) return rowsNode(e, x0, x1);
       if (e.src) return e.tab ? tabNode(e, x0, x1) : textNode(e, x0, x1);
       return null;
     }
@@ -275,6 +276,26 @@
       }
       return ul;
     }
+    // rows of far-apart segments (a list with counts at the right) as the Overlay shows them: each segment editable and
+    // starting at its x on the scan (like a tab stop; a longer one pushes the next along), one line per row on a computer;
+    // on a phone the segments of a row flow and wrap
+    function rowsNode(e, x0, x1) {
+      const em = sizePx(e.style, "ក", 1, bodyEm), px = pxOf(Math.abs(em - bodyEm) < 0.08 * bodyEm ? bodyEm : em), minX = e.ext[0];
+      const lh = FLOW ? 0 : clamp((e.pitch || e.lineH * 1.4) * scale, 1.45 * px, 2.4 * px), lead = FLOW ? 0 : Math.max(0, (lh - e.lineH * scale) / 2);
+      const box = document.createElement("div"); box.className = "dv-rows";
+      box.style.cssText = fontCss(e.style, px) + (lh ? `line-height:${lh.toFixed(2)}px;` : "") + (FLOW ? `margin-left:min(${fpx(ems(minX - x0), 0, 4)},15%);` : `margin-left:${S(minX - x0)};`);
+      let prev = null;
+      for (const r of e.rows) {
+        const row = document.createElement("div"); row.className = "dv-trow";
+        if (prev != null) row.style.marginTop = FLOW ? fpx(ems(r.y0 - prev), 0.1, 1.2) : Math.max(0, (r.y0 - prev) * scale - 2 * lead).toFixed(2) + "px";
+        r.segs.forEach((g, i) => { const sp = document.createElement("span"), next = r.segs[i + 1]; sp.className = "dv-seg";
+          if (!FLOW) { if (!i && g.x > minX) sp.style.marginLeft = S(g.x - minX); if (next) sp.style.minWidth = S(next.x - g.x); }
+          fill(sp, g); if (canEdit) editor(sp, g, save); row.append(sp); });
+        box.append(row); prev = r.y1;
+      }
+      if (!FLOW) { fits.push({el: box, base: px, kind: "fixed"}); box.__lead = lead; }
+      return box;
+    }
     // a real table: the scan's columns (relative widths), one body size in every cell, text wraps in its cell
     function tableNode(e, x0, x1) {
       // body size; a table measured a little smaller on the scan keeps its size (down to 85% of the body)
@@ -354,7 +375,9 @@
 .dv-page .dv-list{margin:0}.dv-page .dv-li{display:flex;align-items:baseline;margin:0}.dv-page .dv-bullet{flex:none;min-width:1em;white-space:nowrap}.dv-page .dv-text{flex:1;min-width:0}
 .dv-page .dv-figure,.dv-page .dv-rule{margin:0}.dv-page .dv-figure img,.dv-page .dv-rule img{display:block;max-width:none}.dv-page .dv-ph{border:1px dashed #bbb;color:#999;font:12px system-ui;display:grid;place-items:center}
 .dv-page .dv-rule hr{border:0;border-top:1px solid #999;margin:0}.dv-page .dv-masked i{position:absolute;background:#fff}
-.dv-page .dv-row,.dv-page .dv-footer-row{display:flex;align-items:flex-start}.dv-page .dv-col>*{max-width:none}
+.dv-page .dv-row,.dv-page .dv-footer-row{display:flex;align-items:flex-start}
+.dv-page .dv-trow{display:flex;align-items:baseline}.dv-page .dv-trow .dv-seg{flex:none;white-space:pre;min-height:1em}
+.dv-flow .dv-trow{flex-wrap:wrap;column-gap:.8em}.dv-flow .dv-trow .dv-seg{flex:0 1 auto;white-space:pre-wrap}.dv-page .dv-col>*{max-width:none}
 .dv-page .dv-low{background:#fff3cd;border-radius:2px;box-shadow:0 1px 0 #f2c14e}
 .dv-page .dv-table{border-collapse:collapse;table-layout:fixed;line-height:1.55}.dv-page .dv-table td{padding:.1em .35em;vertical-align:top;white-space:pre-wrap;overflow-wrap:break-word;min-width:1em;height:1.55em}.dv-page .dv-table.bordered td{border:1px solid #333}.dv-page .dv-table td.dv-span{font-weight:600}
 .dv-page .dv-table td.dv-ed:focus{box-shadow:inset 0 0 0 2px #5eead4;border-radius:0}

@@ -712,33 +712,75 @@
     const cw = id => colW ? colW(id) : undefined;
     const newPiece = (e, type) => ({type, heading: e.heading, role: e.role, align0: e.align, style: e.style || {}, block: e.block, lines: e.lines, src: [], glue: [], lead: "", boxes: []});
 
+    // the lines of an element as visual rows, top-down, each left to right: lines on one row (a reference number and the
+    // small text after it, segments of a list row) belong together whatever their heights; a line lying inside another
+    // of its row and repeating its text (a second detection of "លេខ") is dropped
+    function rowsOf(xs) {
+      const rows = [];
+      for (const x of xs.slice().sort((p, q) => (p.box.y + p.box.height / 2) - (q.box.y + q.box.height / 2))) {
+        const r = rows.find(r => Math.min(r.y1, x.box.y + x.box.height) - Math.max(r.y0, x.box.y) > 0.5 * Math.min(r.h, x.box.height));
+        if (r) { r.items.push(x); r.y0 = Math.min(r.y0, x.box.y); r.y1 = Math.max(r.y1, x.box.y + x.box.height); } else rows.push({y0: x.box.y, y1: x.box.y + x.box.height, h: x.box.height, items: [x]}); }
+      const inside = (a, b) => (Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y))) / Math.max(1, a.width * a.height);
+      const bare = t => String(t || "").replace(/\s+/g, "");
+      for (const r of rows) { r.items.sort((p, q) => p.box.x - q.box.x);
+        r.items = r.items.filter(x => !r.items.some(o => o !== x && o.box.width * o.box.height > x.box.width * x.box.height && inside(x.box, o.box) > 0.7 && (bare(o.l.text).includes(bare(x.l.text)) || bare(x.l.text).length <= 3))); }
+      return rows.sort((a, b) => a.y0 - b.y0);
+    }
+    const unionB = bs => { const x0 = Math.min(...bs.map(b => b.x)), y0 = Math.min(...bs.map(b => b.y)); return {x: x0, y: y0, width: Math.max(...bs.map(b => b.x + b.width)) - x0, height: Math.max(...bs.map(b => b.y + b.height)) - y0}; };
+    // a row whose segments stand far apart (a list with counts at the right, a form): not one line of text
+    const gapped = (r, h) => r.items.some((x, k) => k && x.box.x - (r.items[k - 1].box.x + r.items[k - 1].box.width) > 1.5 * h);
+    // one segment of such a row: a detected box at its own x, as in the Overlay (touching boxes together), editable
+    function segsOf(r, h, style) {
+      const segs = [];
+      for (const x of r.items) { const s = segs[segs.length - 1], b = s && s.boxes[0];
+        if (s && x.box.x - (b.x + b.width) <= 0.35 * h) { s.glue.push(" "); s.src.push(srcOf(x.b, x.l)); s.boxes[0] = unionB([b, x.box]); }
+        else segs.push({src: [srcOf(x.b, x.l)], glue: [], lead: "", boxes: [x.box], style}); }
+      for (const g of segs) { textOf(g); g.x = g.boxes[0].x; }
+      return segs;
+    }
+    // an element (or a table that does not hold as a grid) as the Overlay shows it: rows of far-apart segments stay rows
+    // of segments at their scan x (type "rows"); the rows between them (a heading, "-" items, a paragraph) are text
+    function segmented(e, type, rows, h) {
+      const out = []; let run = null, text = [];
+      const flush = () => { if (text.length) out.push(...pieces({...e, type, lines: text.map(x => x.l.reading_order)}, type, null, true)); text = []; };
+      for (const r of rows) {
+        if (!gapped(r, h)) { run = null; text.push(...r.items); continue; }
+        flush(); if (!run) { run = {type: "rows", block: e.block, role: e.role, style: e.style || {}, rows: []}; out.push(run); }
+        run.rows.push({y0: r.y0, y1: r.y1, segs: segsOf(r, h, e.style || {})}); }
+      flush();
+      for (const o of out) if (o.rows) { const bs = o.rows.flatMap(r => r.segs.map(g => g.boxes[0])); o.ext = [Math.min(...bs.map(b => b.x)), Math.min(...bs.map(b => b.y)), Math.max(...bs.map(b => b.x + b.width)), Math.max(...bs.map(b => b.y + b.height))];
+        const ys = o.rows.map(r => (r.y0 + r.y1) / 2); o.pitch = ys.length >= 2 ? med(ys.slice(1).map((y, i) => y - ys[i])) : 0; o.lineH = med(o.rows.map(r => r.y1 - r.y0)) || 10; }
+      return out;
+    }
     // one element's lines -> 1+ pieces (a marker line after a kept break, or an out-dented list line, starts a new one)
-    function pieces(e, type, item) {
-      const ls = linesOf(e), tl = ls.filter(x => x.l.text);
-      if (!tl.length) {  // no line data at all (an older result): the stored text, read-only, so it is not lost
+    function pieces(e, type, item, noRows) {
+      const ls = linesOf(e), tl0 = ls.filter(x => x.l.text);
+      if (!tl0.length) {  // no line data at all (an older result): the stored text, read-only, so it is not lost
         if (ls.length || !(e.text || "").trim() || !e.box) return [];
         const p = newPiece(e, type); p.fixed = e.runs && e.runs.length ? e.runs : [{text: e.text, bold: false}]; p.boxes.push({x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3]});
         if (item) { p.bullet = item.bullet || "•"; p.bullet_box = item.bullet_box; } return [p]; }
-      const soft = softBreaks(tl.map(x => x.l), cw(e.block)), h = med(tl.map(x => x.box.height)) || 10, out = [], pending = [];
-      const textX = item ? tl[0].box.x : null; let p = null, ti = -1;
+      const h = med(tl0.map(x => x.box.height)) || 10, rows = rowsOf(tl0);
+      if (!item && !noRows && rows.some(r => gapped(r, h))) return segmented(e, type, rows, h);
+      const vl = rows.map(r => ({text: r.items.map(x => x.l.text).join(" "), box: unionB(r.items.map(x => x.box)), x: r.items[0]}));
+      const soft = softBreaks(vl, cw(e.block)), out = [], blanks = ls.filter(x => !x.l.text).map(x => x.box);
+      const textX = item ? vl[0].box.x : null; let p = null;
       // lines stacked on purpose that start at another x (a sub-item, a line set back) are paragraphs of their own;
       // a centred stack (title, motto, signature block) stays one piece
-      const tw = Math.max(1, Math.max(...tl.map(x => x.box.x + x.box.width)) - Math.min(...tl.map(x => x.box.x)));
-      const stack = tl.length >= 2 && spread(tl.map(x => x.box.x + x.box.width / 2)) < 0.05 * tw && spread(tl.map(x => x.box.x)) > Math.max(0.02 * tw, 0.3 * h);
-      for (const x of ls) {
-        if (!x.l.text) { if (p) p.boxes.push(x.box); else pending.push(x.box); continue; }
-        ti++; const prev = ti ? tl[ti - 1] : null, kept = ti ? !soft[ti - 1] : true;
-        const marker = !!ti && kept && MARKER_RE.test(x.l.text) && x.box.x <= prev.box.x + 0.6 * h;
-        const outdent = !!ti && textX != null && x.box.x < textX - 0.6 * h;
-        const shifted = !!ti && kept && !stack && !item && Math.abs(x.box.x - prev.box.x) > Math.max(0.8 * h, 0.03 * tw);
+      const tw = Math.max(1, Math.max(...vl.map(v => v.box.x + v.box.width)) - Math.min(...vl.map(v => v.box.x)));
+      const stack = vl.length >= 2 && spread(vl.map(v => v.box.x + v.box.width / 2)) < 0.05 * tw && spread(vl.map(v => v.box.x)) > Math.max(0.02 * tw, 0.3 * h);
+      vl.forEach((v, ti) => {
+        const prev = ti ? vl[ti - 1] : null, kept = ti ? !soft[ti - 1] : true, x = v.x;
+        const marker = !!ti && kept && MARKER_RE.test(v.text) && v.box.x <= prev.box.x + 0.6 * h;
+        const outdent = !!ti && textX != null && v.box.x < textX - 0.6 * h;
+        const shifted = !!ti && kept && !stack && !item && Math.abs(v.box.x - prev.box.x) > Math.max(0.8 * h, 0.03 * tw);
         if (!p || marker || outdent || shifted) {
           p = newPiece(e, type); out.push(p);
-          if (!ti) p.boxes.push(...pending);
-          // an out-dented line is the next item, its bullet read as text: it gets the item's bullet and text column
           if (item) { const own = x.l.bullet; p.bullet = own != null ? own : item.bullet || "•"; p.bulletSrc = {block: x.b.id, order: x.l.reading_order}; p.bullet_box = x.l.bullet_box ? {x: x.l.bullet_box[0], y: x.l.bullet_box[1]} : item.bullet_box; if (ti) p.textX = textX; }
         } else p.glue.push(kept ? "\n" : wrapGlue(lastCh(p), x.l.text[0]));
-        p.src.push(srcOf(x.b, x.l)); p.boxes.push(x.box);
-      }
+        rows[ti].items.forEach((y, k) => { if (k) p.glue.push(" "); p.src.push(srcOf(y.b, y.l)); });  // a row's segments, left to right
+        p.boxes.push(v.box);
+      });
+      if (out.length && blanks.length) out[out.length - 1].boxes.push(...blanks);  // emptied lines keep the paragraph's height
       return out;
     }
     // b continues a: the text of a only wrapped into the next block
@@ -791,7 +833,7 @@
     function finish(p, x0, x1) {
       if (p.items) { p.items.forEach(it => finish(it, x0, x1)); const xs = p.items.map(i => i.ext); p.ext = [Math.min(...xs.map(b => b[0])), Math.min(...xs.map(b => b[1])), Math.max(...xs.map(b => b[2])), Math.max(...xs.map(b => b[3]))]; return p; }
       if (!p.src) return p;
-      textOf(p); const bx = p.boxes, n = bx.length;
+      textOf(p); p.boxes.sort((a, b) => a.y - b.y); const bx = p.boxes, n = bx.length;
       p.tab = p.src.length === 1 && p.src[0].text.includes("\t");
       p.ext = [Math.min(...bx.map(b => b.x)), Math.min(...bx.map(b => b.y)), Math.max(...bx.map(b => b.x + b.width)), Math.max(...bx.map(b => b.y + b.height))];
       p.lineH = med(bx.map(b => b.height)) || 10;
@@ -805,10 +847,21 @@
       const rows = t.rows.map((r, ri) => ({...r, cells: r.cells.map((c, ci) => {
         const ls = (c.lines || []).map(o => by.get(o)).filter(Boolean), tl = ls.filter(l => l.text), cell = {colspan: c.colspan || 1, lines: c.lines || [], row: ri, col: ci, src: [], glue: [], lead: "", boxes: ls.map(boxOf)};
         if (!b) { cell.src = []; cell.runs = [{text: c.text || "", bold: false}]; cell.text = c.text || ""; cell.low = false; cell.fixed = true; return cell; }
-        const bul = tl.length >= 2 && tl.some(l => l.bullet);
-        tl.forEach((l, i) => { if (i) cell.glue.push(bul ? "\n" + (l.bullet ? l.bullet + " " : "") : wrapGlue(lastCh(cell), l.text[0])); else if (bul && l.bullet) cell.lead = l.bullet + " "; cell.src.push(srcOf(b, l)); });
+        const bul = tl.length >= 2 && tl.some(l => l.bullet), cr = rowsOf(tl.map(l => ({l, b, box: boxOf(l)})));  // row by row, each left to right
+        cr.forEach((r, ri2) => r.items.forEach((x, k) => { const l = x.l, i = cell.src.length;
+          if (i) cell.glue.push(k ? " " : bul ? "\n" + (l.bullet ? l.bullet + " " : "") : wrapGlue(lastCh(cell), l.text[0])); else if (bul && l.bullet) cell.lead = l.bullet + " "; cell.src.push(srcOf(b, l)); void ri2; }));
+        cell.items = cr.flatMap(r => r.items);
         return textOf(cell); })}));
-      const bx = [...by.values()].filter(l => (e.lines || []).includes(l.reading_order)).map(boxOf), eb = e.box || [0, 0, 0, 0];
+      // does the grid hold? a text on one line of the scan must fit its column (else it would wrap word by word), and a
+      // row must read left to right across its cells; otherwise the block is shown as the Overlay shows it (segmented)
+      const all = [...by.values()].filter(l => l.text && (e.lines || []).includes(l.reading_order)), h = med(all.map(l => boxOf(l).height)) || 10, n = t.cols.length;
+      const fits = rows.every(r => { if (r.span) return true; const seq = [];
+        const ok = r.cells.every((c, ci) => { const span = Math.max(1, c.colspan || 1), c0 = t.cols[Math.min(ci, n - 1)], c1 = t.cols[Math.min(ci + span - 1, n - 1)], w = c1.x1 - c0.x0;
+          return (c.items || []).every(x => { seq.push([x.box.x + x.box.width / 2, ci]); return x.box.width <= 1.08 * w + 0.5 * h; }); });
+        seq.sort((a, b2) => a[0] - b2[0]); return ok && seq.every((q, i) => !i || q[1] >= seq[i - 1][1]); });
+      if (b && all.length && !fits) return segmented({...e, type: "paragraph"}, "paragraph", rowsOf(all.map(l => ({l, b, box: boxOf(l)}))), h);
+      for (const r of rows) for (const c of r.cells) delete c.items;
+      const bx = all.map(boxOf), eb = e.box || [0, 0, 0, 0];
       return {...e, table: {...t, rows}, ext: [t.cols[0].x0, bx.length ? Math.min(...bx.map(q => q.y)) : eb[1], t.cols[t.cols.length - 1].x1, bx.length ? Math.max(...bx.map(q => q.y + q.height)) : eb[1] + eb[3]]};
     }
     function seq(elements, x0, x1) {
@@ -822,7 +875,7 @@
           for (const p of els) if (p.src && p.boxes && p.boxes.length === 1 && p.align === "left" && els.some(q => q !== p && q.ext && q.ext[2] - q.ext[0] < 0.9 * (p.ext[2] - p.ext[0]) && Math.abs(mid(q) - mid(p)) < 0.05 * cw) && Math.abs(mid(p) - (cx0 + cx1) / 2) < 0.05 * cw) p.align = "center";
           return {...c, x0: cx0, x1: cx1, elements: els}; })}); continue; }
         if (e.type === "list") { const items = e.items.flatMap(it => pieces(it, "list_item", it)); if (items.length) raw.push({...e, items}); continue; }
-        if (e.type === "table" && e.table) { raw.push(table(e)); continue; }
+        if (e.type === "table" && e.table) { raw.push(...[].concat(table(e))); continue; }
         if (COMPOSE_TEXT.has(e.type)) { raw.push(...pieces(e, e.type)); continue; }
         raw.push(e);  // figure, decoration (and anything new)
       }
@@ -858,6 +911,7 @@
     const walk = e => {
       if (e.columns) { e.columns.forEach(c => c.elements.forEach(walk)); return; }
       if (e.items) { for (const it of e.items) if (it.text) out.push({type: "li", marker: it.bullet || "", text: it.text, runs: it.runs, align: it.align}); return; }
+      if (e.rows) { const rows = e.rows.map(r => r.segs.map(g => g.text)); out.push({type: "table", plain: true, rows, text: rows.map(r => r.join("\t")).join("\n")}); return; }
       if (e.type === "table" && e.table) { const rows = e.table.rows.map(r => r.cells.map(c => String(c.text || "").replace(/\s*\n\s*/g, " ").trim())).filter(r => r.some(Boolean)); if (rows.length) out.push({type: "table", rows, text: rows.map(r => r.join("\t")).join("\n")}); return; }
       if (e.src && e.text) out.push({type: e.type === "heading" ? "h" : "p", text: e.text, runs: e.runs, align: e.align});
     };
