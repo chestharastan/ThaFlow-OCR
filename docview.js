@@ -142,7 +142,7 @@
     const extent = e => { if (e.ext) return e.ext; if (e.columns) { const xs = e.columns.flatMap(c => c.elements.map(extent)); if (xs.length) return [Math.min(...xs.map(b => b[0])), Math.min(...xs.map(b => b[1])), Math.max(...xs.map(b => b[2])), Math.max(...xs.map(b => b[3]))]; }
       const b = e.box || [0, 0, 0, 0]; return [b[0], b[1], b[0] + b[2], b[1] + b[3]]; };
 
-    if (FLOW) { root.className = "dv-page dv-flow"; place(root, els, m.left, W - m.right, m.top); return root; }
+    if (FLOW) { root.className = "dv-page dv-flow"; place(root, els, m.left, W - m.right, m.top); phoneFit(root, fits, BASE); return root; }
     root.className = "dv-page";
     root.style.cssText = `width:${S(W)};min-height:${S(page.height)};padding:${S(m.top)} ${S(m.right)} ${S(m.bottom)} ${S(m.left)}`;
     place(root, sideBySide(els), m.left, W - m.right, m.top);
@@ -200,7 +200,9 @@
     }
     function figureNode(e, x0, x1) {
       const ext = extent(e), w = Math.max(8, ext[2] - ext[0]), h = Math.max(4, ext[3] - ext[1]), f = document.createElement("div"); f.className = e.type === "figure" ? "dv-figure" : "dv-rule";
-      if (FLOW) { const frac = Math.min(1, w / Math.max(1, x1 - x0)), c = (ext[0] + ext[2]) / 2, centred = Math.abs(c - (x0 + x1) / 2) < 0.06 * (x1 - x0) && ext[0] - x0 > 0.08 * (x1 - x0);
+      // phone: a picture keeps its share of the PAGE's text width (in a narrow column that wrapped to the full width, a share
+      // of the column would blow an emblem up to the screen width)
+      if (FLOW) { const frac = clamp(w / Math.max(1, W - m.left - m.right), 0.12, 1), c = (ext[0] + ext[2]) / 2, centred = Math.abs(c - (x0 + x1) / 2) < 0.06 * (x1 - x0) && ext[0] - x0 > 0.08 * (x1 - x0);
         const pos = centred ? "margin:0 auto;" : ext[0] - x0 > 0.5 * (x1 - x0) ? "margin-left:auto;" : `margin-left:${(100 * Math.max(0, ext[0] - x0) / Math.max(1, x1 - x0)).toFixed(1)}%;`;
         if (e.mask && e.crop) { maskNode(f, e, ext, `width:${(100 * frac).toFixed(1)}%;max-width:100%;${pos}`); return f; }
         f.innerHTML = e.crop ? `<img src="${esc(e.crop)}" alt="${esc(e.role || "")}" style="display:block;width:${(100 * frac).toFixed(1)}%;max-width:100%;height:auto;${pos}">` : e.type === "figure" ? `<div class="dv-ph" style="width:${(100 * frac).toFixed(1)}%;aspect-ratio:${w}/${h};${pos}">${esc(e.role)}</div>` : `<hr style="width:${(100 * frac).toFixed(1)}%;${pos}">`;
@@ -219,7 +221,7 @@
     function paraCss(p, x0, x1) {
       const n = p.boxes.length, lead = Math.min(p.boxes[0].x, p.bodyLeft), right = p.ext[2], w = Math.max(1, right - lead);
       if (FLOW) {
-        if (p.align === "center") return "text-align:center;";
+        if (p.align === "center") return "text-align:center;text-wrap:balance;";  // a centred line too long for the screen wraps into even halves
         if (p.align === "right") return "text-align:right;";
         let s = `margin-left:min(${fpx(ems(lead - x0), 0, 8)},30%);`;
         if (p.indent > 0.01 * w) s += `text-indent:${Math.min(4, ems(p.indent)).toFixed(2)}em;`;
@@ -238,6 +240,8 @@
       el.className = "dv-" + p.type;
       el.style.cssText = fontCss(p.style, px) + (lh ? `line-height:${lh.toFixed(2)}px;` : "") + paraCss(p, x0, x1);
       fill(el, p); if (canEdit && !p.fixed) editor(el, p, save);
+      // phone: a title, heading, centred or stacked line keeps the scan's line breaks (see phoneFit)
+      if (FLOW && (p.type === "heading" || p.type === "header" || (p.style && p.style.heavy) || p.align === "center" || px > 1.05 * BASE) && !p.glue.some(g => g !== "\n")) fits.push({el, n: p.boxes.length, max: px});
       if (!FLOW) { fits.push({el, n: p.boxes.length, wraps: p.glue.some(g => g !== "\n"), scanW: scanW(p), base: px, lh, kind: p.type === "heading" || (p.style && p.style.heavy) || Math.abs(emOf(p) - bodyEm) > 0.01 * bodyEm ? "head" : "body"}); el.__lead = Math.max(0, (lh - p.lineH * scale) / 2); }
       return el;
     }
@@ -321,6 +325,27 @@
     Promise.allSettled([...loaded.values()]).then(() => (document.fonts ? document.fonts.ready : null)).then(() => { requestAnimationFrame(run); setTimeout(run, 250); });
   }
 
+  // Phone: a title, heading or subtitle line stays one line on the screen, as on the scan - the largest size up to its
+  // own heading size at which no scanned line wraps, but not below 85% of the body size (a heading must not end up
+  // clearly smaller than the text it introduces; a line too long even then wraps). Refitted when the width changes.
+  function phoneFit(root, fits, body) {
+    if (!fits.length) return;
+    const go = () => {
+      if (!root.isConnected) return;
+      for (const f of fits) {
+        const lo = Math.min(f.max, 0.85 * body), lines = () => Math.max(1, Math.round(f.el.getBoundingClientRect().height / (parseFloat(getComputedStyle(f.el).lineHeight) || 1)));
+        const at = px => { f.el.style.fontSize = px.toFixed(2) + "px"; return lines(); };
+        if (at(f.max) <= f.n) continue;
+        if (at(lo) > f.n) continue;
+        let a = lo, b = f.max; for (let i = 0; i < 8; i++) { const mid = (a + b) / 2; if (at(mid) <= f.n) a = mid; else b = mid; } at(a);
+      }
+    };
+    let ran = false, lastW = 0, t = 0;
+    const run = () => { if (!root.isConnected) { if (!ran) setTimeout(run, 150); return; } ran = true; lastW = root.clientWidth; go(); };
+    Promise.allSettled([...loaded.values()]).then(() => (document.fonts ? document.fonts.ready : null)).then(() => { requestAnimationFrame(run); setTimeout(() => { if (!ran) run(); }, 250); });
+    if (window.ResizeObserver) new ResizeObserver(() => { if (ran && Math.abs(root.clientWidth - lastW) > 4) { clearTimeout(t); t = setTimeout(run, 150); } }).observe(root);
+  }
+
   const CSS = `
 .dv-page{background:#fff;box-sizing:border-box;margin:0 auto;box-shadow:0 6px 24px rgba(16,24,40,.12);line-height:1.75;color:#1a1a1a;font-family:"Noto Sans Khmer","Khmer OS",sans-serif;overflow:hidden}
 .dv-page p,.dv-page h1,.dv-page h2,.dv-page h3{margin:0;font-weight:400;box-sizing:border-box;letter-spacing:normal}
@@ -335,7 +360,7 @@
 .dv-page .dv-table td.dv-ed:focus{box-shadow:inset 0 0 0 2px #5eead4;border-radius:0}
 .dv-page .dv-tabline{display:flex;align-items:baseline;white-space:nowrap}.dv-page .dv-tabline .dv-tl{flex:0 1 auto;min-width:1em}.dv-page .dv-tabline .dv-leader{flex:1;min-width:1em;border-bottom:1px dotted currentColor;margin:0 .3em;transform:translateY(-.3em)}.dv-page .dv-tabline .dv-tr{flex:none;min-width:1em}
 .dv-page b{font-weight:700}
-.dv-page.dv-flow{width:100%;max-width:100%;padding:clamp(20px,6%,64px) clamp(18px,7%,76px);line-height:1.85;overflow:visible;overflow-wrap:break-word;border-radius:3px}
+.dv-page.dv-flow{width:100%;max-width:100%;padding:clamp(18px,5%,64px) clamp(14px,5%,76px);line-height:1.85;overflow:visible;overflow-wrap:break-word;border-radius:3px}
 .dv-flow .dv-frow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:0 2em}.dv-flow .dv-fcol{min-width:min(14em,100%)}
 .dv-flow h1,.dv-flow h2,.dv-flow h3{line-height:inherit}
 .dv-flow .dv-li{line-height:1.85;gap:.5em}

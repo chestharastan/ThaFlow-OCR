@@ -815,7 +815,12 @@
       const raw = [];
       for (const e of elements) {
         if (e.columns) { raw.push({...e, columns: e.columns.map(c => { const bs = c.elements.map(x => x.box).filter(Boolean), cx0 = c.x0 ?? (bs.length ? Math.min(...bs.map(q => q[0])) : x0), cx1 = c.x1 ?? (bs.length ? Math.max(...bs.map(q => q[0] + q[2])) : x1);
-          return {...c, x0: cx0, x1: cx1, elements: seq(c.elements, cx0, cx1)}; })}); continue; }
+          // a column reads top-down (the header row lists its blocks left to right: a caption under an emblem came first)
+          const els = seq(c.elements, cx0, cx1).map((x, k) => ({x, k})).sort((a, b) => ((a.x.ext || [0, 0])[1] - (b.x.ext || [0, 0])[1]) || a.k - b.k).map(o => o.x);
+          // a line as wide as its column, centred on a narrower element of the column (a caption under an emblem), is centred
+          const cw = Math.max(1, cx1 - cx0), mid = x => (x.ext[0] + x.ext[2]) / 2;
+          for (const p of els) if (p.src && p.boxes && p.boxes.length === 1 && p.align === "left" && els.some(q => q !== p && q.ext && q.ext[2] - q.ext[0] < 0.9 * (p.ext[2] - p.ext[0]) && Math.abs(mid(q) - mid(p)) < 0.05 * cw) && Math.abs(mid(p) - (cx0 + cx1) / 2) < 0.05 * cw) p.align = "center";
+          return {...c, x0: cx0, x1: cx1, elements: els}; })}); continue; }
         if (e.type === "list") { const items = e.items.flatMap(it => pieces(it, "list_item", it)); if (items.length) raw.push({...e, items}); continue; }
         if (e.type === "table" && e.table) { raw.push(table(e)); continue; }
         if (COMPOSE_TEXT.has(e.type)) { raw.push(...pieces(e, e.type)); continue; }
