@@ -249,12 +249,12 @@ async function homeFillDevice(tok) {
     $("#h_dev_retry").onclick = () => { box.innerHTML = `<div class="chips"><span class="chip"><span class="spin"></span>Checking this device…</span></div>`; homeFillDevice(HOME_TOK); }; return; }
   const info = DEVICE, rec = T.recommend(info), picked = store.settings.tier || rec.tier, choice = chosenModels();
   const be = T.plannedBackend(store.settings.backend || "auto", info), gpu = be === "webgpu";
-  const RT = {wasm: 15.1e6, webgpu: 29.6e6}, rt = RT[be];
+  const rt = T.RUNTIME_BYTES[be];
   const setChoice = t => t === rec.tier ? rec.choice : tierModels(t).choice;
   const stageIds = ch => ["layout", "textdet", "rec", "font", "structure"].map(k => ch[k]).filter(Boolean);
   const setBytes = t => stageIds(setChoice(t)).reduce((a, id) => a + homeSize(id), 0);
   let plan = null, cached = {};
-  try { plan = await T.downloadPlan(choice, be);
+  try { plan = await downloadPlanHere(choice);   // the same plan as the Scan chip, the download card, the notice and Help
     await Promise.all(T.manifest.models.map(async m => { cached[m.id] = await T.isCached(T.modelUrl(m)); })); } catch (e) { console.warn(e); }
   if (!live()) return;
   const loaded = T.loaded(), mfiles = plan ? plan.files.filter(f => f.stage !== "runtime") : [], have = mfiles.filter(f => f.cached).length;

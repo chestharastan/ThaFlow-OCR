@@ -153,8 +153,8 @@
  .h-after .h-tb{font-size:14px;margin-top:16px}.h-after .h-tb th,.h-after .h-tb td{padding:6px 10px;border-width:1.5px}
  .h-after .h-lh{margin-top:18px}.h-after .h-ul{padding-left:22px;margin-top:4px}.h-after .h-ul li::before{left:-14px}
  .h-after .h-en{font-size:14.5px;margin-top:14px}.h-after .h-end{margin-top:16px}.h-after .h-foot{font-size:12px;margin-top:28px}
- .h-steps{grid-template-columns:1fr}
- .h-facts{grid-template-columns:1fr}
+ .h-steps{grid-template-columns:minmax(0,1fr)}
+ .h-facts{grid-template-columns:minmax(0,1fr)}
  .h-model{grid-template-columns:34px minmax(0,1fr)}
  .h-model-st{grid-column:2;align-items:flex-start;text-align:left;max-width:none}
  .h-end-cta{padding:28px 18px;border-radius:18px}

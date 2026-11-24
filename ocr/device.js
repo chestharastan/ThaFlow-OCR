@@ -44,13 +44,15 @@
     return {tier, choice, scale, reasons};
   };
 
+  /** Size of the ONNX Runtime download: the WebAssembly build, or the WebGPU build (it carries the WebAssembly one too). */
+  T.RUNTIME_BYTES = {wasm: 15.1e6, webgpu: 29.6e6};
   /** Bytes still to download for a choice (models not yet in the cache) -> {bytes, files, cachedFiles} */
   T.downloadPlan = async function (choice, backend) {   // backend: "wasm" | "webgpu" for the runtime size before it has loaded (default: the one in use)
     const files = []; let bytes = 0, cachedFiles = 0;
     const sizes = (T.manifest && T.manifest.sizes) || {};
     for (const [stage, id] of Object.entries(choice)) { const s = T.spec(id); if (!s) continue; if ((stage === "font" && !T.config.font) || (stage === "structure" && !T.config.structure)) continue;
       const url = T.modelUrl(s), cached = await T.isCached(url); const size = sizes[s.file] || 0; files.push({stage, id, file: s.file, size, cached}); if (cached) cachedFiles++; else bytes += size; }
-    const rt = {wasm: 15.1e6, webgpu: 29.6e6}, be = T.backendUsed || backend; const rtFile = "vendor/ort-wasm-simd-threaded" + (be === "webgpu" ? ".jsep" : "") + ".wasm";
+    const rt = T.RUNTIME_BYTES, be = T.backendUsed || backend; const rtFile = "vendor/ort-wasm-simd-threaded" + (be === "webgpu" ? ".jsep" : "") + ".wasm";
     // the runtime comes from the CDN into the browser's HTTP cache, not the model cache: once a model of the set is stored,
     // the runtime was downloaded with it, so it is not counted again
     files.unshift({stage: "runtime", id: "onnxruntime-web", file: rtFile, size: be === "webgpu" ? rt.webgpu : rt.wasm, cached: cachedFiles > 0 || await T.isCached(rtFile)});

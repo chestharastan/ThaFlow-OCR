@@ -161,7 +161,7 @@ a.chip:hover,button.chip:hover{background:var(--surface-2)}
 .card.danger{border-color:var(--bad-line)}
 .grid{display:grid;gap:16px}
 .g-main{grid-template-columns:minmax(0,1fr) 360px;align-items:start}
-@media(max-width:1100px){.g-main{grid-template-columns:1fr}}
+@media(max-width:1100px){.g-main{grid-template-columns:minmax(0,1fr)}}  /* minmax: a wide header row (file name, zoom tools, badge) must not widen the column past a phone screen */
 /* tooltips for icon-only controls (pointer devices only) */
 @media(hover:hover){
  .tip{position:relative}
@@ -435,7 +435,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 }
 @media(max-width:960px){
  h1{font-size:22px}
- .review,.review.text,.review.original,.review.one,.review.one.text,.review.one.original,.review.noside{grid-template-columns:1fr}
+ .review,.review.text,.review.original,.review.one,.review.one.text,.review.one.original,.review.noside{grid-template-columns:minmax(0,1fr)}
  .review>div{border-right:0;border-bottom:1px solid var(--line)}
  .thumbs{flex-direction:row;max-height:none;position:static;overflow-x:auto;overflow-y:hidden;padding:10px}
  .thumbs .th{flex:none;width:52px}
@@ -445,7 +445,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 
 /* ---------- phones: top bar + bottom tab bar */
 @media(max-width:860px){
- .shell{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+ .shell{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr}
  .topbar{display:none}
  .side{position:sticky;top:0;z-index:40;height:auto;flex-direction:row;align-items:center;gap:2px;padding:8px 8px 8px 10px;padding-top:calc(8px + env(safe-area-inset-top));border-right:0;background:transparent}
  /* the blur sits on a pseudo-element: backdrop-filter on .side itself would trap the fixed tab bar inside it */
@@ -471,7 +471,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
  .drop{padding:36px 18px}
  .drop.compact{flex-wrap:wrap}.drop.compact .acts{margin-left:0;width:100%}
  .stage{padding:16px;min-height:300px}
- .review.noside{grid-template-columns:1fr}
+ .review.noside{grid-template-columns:minmax(0,1fr)}
 }
 @media(pointer:coarse){
  .btn.sm{height:36px}.tool{width:38px;height:38px}.frow .x{width:40px;height:40px}.seg button{height:34px}
@@ -522,7 +522,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 .sel-skel i:nth-child(2){width:85%}.sel-skel i:nth-child(3){width:60%}
 @keyframes shimmer{from{background-position:200% 0}to{background-position:0 0}}
 @media(max-width:1180px){.sel-grid{grid-template-columns:120px minmax(0,1fr)}.sel-results{grid-column:1/-1;position:static;max-height:none}.sel-files{max-height:70vh}}
-@media(max-width:700px){.sel-grid{grid-template-columns:1fr}.sel-files{flex-direction:row;overflow-x:auto;position:static}.sel-file{width:110px;flex:none}.sel-file .th{height:70px}.sel-file .th img{max-height:70px}}
+@media(max-width:700px){.sel-grid{grid-template-columns:minmax(0,1fr)}  /* minmax: a long file name in the page header must not widen the page */.sel-files{flex-direction:row;overflow-x:auto;position:static}.sel-file{width:110px;flex:none}.sel-file .th{height:70px}.sel-file .th img{max-height:70px}}
 
 /* ---------- zoom inside a pane (Processing, Select): the pane scrolls, zoomPane() sizes the picture.
    contain:size keeps a zoomed picture from widening the page grid; margin:auto centres it without clipping. */
@@ -624,7 +624,7 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
 @media(hover:none){.pt-ck{opacity:1}.pt-card.picked .pt-acts{opacity:1;pointer-events:auto}}
 @media(max-width:1100px){.pt-bar .pt-tip{display:none}}
 @media(max-width:860px){
- .pt-feats{grid-template-columns:1fr}
+ .pt-feats{grid-template-columns:minmax(0,1fr)}
  .pt-bar{top:calc(62px + env(safe-area-inset-top));padding:6px 8px}
  .pt-bar:not(.splitting) .btn:not(.k) .lbl,.pt-bar .vsep{display:none}
  .pt-bar .btn.sm:not(.icon):not(.p){padding:0 9px}

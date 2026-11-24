@@ -83,7 +83,10 @@ of 10.9 MB), which Settings can switch back (Model set -> Balanced, or Models ->
 nothing is downloaded when the page opens, only at the first scan; on any device, Home, Help and the PDF page tools
 start no download. Compute "Automatic" is the GPU on a computer with
 WebGPU and the CPU on a phone; Settings > Compute can pick the GPU. A model set picked in Settings is kept across
-reloads. A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
+reloads. Every download size the app shows (Home, the Scan chip, the welcome notice, Help, the download card) comes
+from one plan, `downloadPlanHere()` in app.js: this device's model set on the compute it will run, with the runtime of
+that backend (`ThaOCR.RUNTIME_BYTES`: 15.1 MB WebAssembly, 29.6 MB WebGPU) - for example 33.9 MB on a phone, 70.3 MB on
+a computer with WebGPU - and "already on this device" once the models are stored. A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
 
 Layout rules added in the browser version (not in the server): segments of one line are recognised separately and
 joined in reading order; dot leaders become a tab with the page number right-aligned (Document view and Word);

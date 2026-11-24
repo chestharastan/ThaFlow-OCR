@@ -138,6 +138,17 @@ function chosenModels() { const base = RECO ? RECO.choice : (T.manifest ? T.mani
 /** Pick the layout model. One that gives roles and reading order itself (PP-DocLayout) is the layout engine; any other is a per-stage override. */
 function setLayoutModel(id) { const m = Object.assign({}, store.settings.models); delete m.layout; if (id && T.layoutGivesStructure(id)) store.settings.layout = id; else { store.settings.layout = null; if (id) m.layout = id; } store.settings.models = m; store.save(); resetModels(); }
 function applyScale() { const sc = RECO ? RECO.scale : {longMin: 1600, longMax: 2200}; T.config.longMin = store.settings.longMin || sc.longMin; T.config.longMax = store.settings.longMax || sc.longMax; T.config.backend = store.settings.backend || "auto"; T.config.rules = store.settings.rules !== false; }
+/** The download plan of THIS device: its model set (chosenModels) on the compute it will run (Settings > Compute;
+    Automatic = the GPU on a computer with WebGPU, the CPU on a phone). Every download size the app shows comes from here
+    (Home, the Scan chip, the welcome notice, Help, the download card), so they always agree.
+    -> T.downloadPlan's {bytes: still to download, files, cachedFiles} + total: the whole first download */
+async function downloadPlanHere(choice) { const plan = await T.downloadPlan(choice || chosenModels(), T.plannedBackend(store.settings.backend || "auto", DEVICE)); plan.total = plan.files.reduce((a, f) => a + f.size, 0); return plan; }
+/** the welcome notice and the Help page: this device's download in words (after the device check; before it, a size-free line) */
+async function fillDownloadText() {
+  const els = ["#notice_dl", "#help_dl"].map(s => $(s)).filter(Boolean); if (!els.length || !DEVICE || !T.manifest) return;
+  try { const plan = await downloadPlanHere(), loaded = T.loaded();
+    const txt = loaded || !plan.bytes ? `The reading models (${T.fmtBytes(plan.total)}) are already on this device.` : `About ${T.fmtBytes(plan.bytes)} for this device, downloaded once at the first scan.`;
+    els.forEach(el => { if (el.isConnected) el.textContent = txt + (el.dataset.after || ""); }); } catch (e) { console.warn(e); } }
 /** Load the chosen model set (once); onProgress(text, fraction, info). Every caller hears the progress, also one that joins a
     load already running (the preload on page open, then the Scan page): it gets the latest state at once. */
 const LOAD_EARS = new Set(); let LOAD_LAST = null;
@@ -147,7 +158,7 @@ function ensureModels(onProgress) {
   if (LOADING) return LOADING.finally(off);
   const tell = (...a) => { LOAD_LAST = a; for (const f of LOAD_EARS) { try { f(...a); } catch (e) { console.warn(e); } } };
   LOADING = (async () => {
-    applyScale(); const choice = chosenModels(), plan = await T.downloadPlan(choice, T.plannedBackend(T.config.backend, DEVICE)), total = Math.max(1, plan.files.reduce((a, f) => a + f.size, 0));
+    applyScale(); const choice = chosenModels(), plan = await downloadPlanHere(choice), total = Math.max(1, plan.total);
     const sizeOf = st => (plan.files.find(f => f.stage === st) || {}).size || 0, cur = {}, done = new Set(); let lastGot = 0, lastT = performance.now(), speed = 0, stage = null, cached = false;
     // info for the download card (renderProcess): bytes, speed, which models are in, and while the runtime loads (no byte
     // count from a script tag) how far the bar may trickle and how fast
@@ -156,7 +167,7 @@ function ensureModels(onProgress) {
       tell(msg, frac ?? Math.min(0.98, got / total), Object.assign({stage, got, total, speed, cached, files: plan.files.map(f => ({stage: f.stage, size: f.size, done: done.has(f.stage) || (f.size > 0 && (cur[f.stage] || 0) >= f.size)}))}, extra)); };
     await T.load(choice, p => { stage = p.stage; cached = !!p.fromCache;
       if (p.stage === "runtime") { if (p.done) { done.add("runtime"); cur.runtime = sizeOf("runtime"); report("The reading engine is ready"); }
-        else { cur.runtime = 0; const rs = sizeOf("runtime") || 15e6; report("Getting the reading engine…", undefined, {ahead: rs / total, tau: Math.max(2, rs / 3e6 / 2)}); } return; }
+        else { cur.runtime = 0; const rs = sizeOf("runtime") || T.RUNTIME_BYTES.wasm; report("Getting the reading engine…", undefined, {ahead: rs / total, tau: Math.max(2, rs / 3e6 / 2)}); } return; }
       cur[p.stage] = p.got; if (p.total && p.got >= p.total) done.add(p.stage); report(`${p.fromCache ? "Loading" : "Downloading"} the ${p.stage} model…`); });
     plan.files.forEach(f => done.add(f.stage));
     if (!T.benchmarkStored() || T.benchmarkStored().backend !== T.backendUsed || T.benchmarkStored().models.rec !== T.active.rec || T.benchmarkStored().models.layout !== T.active.layout) { stage = "bench"; report("Measuring speed on this device…", 0.99); await T.benchmark(); }
@@ -365,7 +376,7 @@ function devicePanel() {
     ${est ? `<span class="chip" title="Typical 40-line page on this device">${icon("clock", "s")}~${est} s / page</span>` : ""}
     <span class="chip ${T.loaded() ? "ok" : ""}">${icon(T.loaded() ? "check-circle" : "download", "s")}<span id="dl_line">${T.loaded() ? "Models ready" : "Models"}</span></span></div>`;
 }
-async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await T.downloadPlan(chosenModels(), T.plannedBackend(store.settings.backend || "auto", DEVICE)), dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} one-time download` : "Models on device";
+async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await downloadPlanHere(), dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} one-time download` : "Models on device";
     if (dl > 0 && DEVICE.downlinkMbps) el.parentElement.title = `About ${Math.max(1, Math.round(dl * 8 / (DEVICE.downlinkMbps * 1e6)))} s on your connection`; } catch { el.parentElement.remove(); } }
 /** a drop zone opens the file picker when clicked anywhere except its own buttons */
 const clickToBrowse = (zone, btn) => { if (zone && btn) zone.onclick = e => { if (!e.target.closest("button,a,input")) btn.click(); }; };
@@ -1027,9 +1038,10 @@ function renderHelp() {
    ${tile("download", "Export", "Word keeps headings, tables, fonts and images. Text and JSON too.")}
    ${tile("select", "Select", "Drag a box over part of a page to read and copy only that part. Zoom in for small text.")}
    ${tile("files", "PDF", "Merge PDFs, drag pages into order, rotate or delete them, split into parts or extract the pages you pick.")}
-   ${tile("clock", "Speed", "First visit downloads ~40 MB once. Seconds per page on a laptop, longer on a phone.")}
+   ${tile("clock", "Speed", `<span id="help_dl" data-after=" Seconds per page on a laptop, longer on a phone.">The reading models download once, at the first scan. Seconds per page on a laptop, longer on a phone.</span>`)}
   </div>
   <div class="card pad"><h2>Shortcuts</h2><div class="keys">${keys.map(([k, t]) => `<span>${k}</span><span>${t}</span>`).join("")}</div></div>`;
+  fillDownloadText();
 }
 
 
@@ -1599,7 +1611,7 @@ window.addEventListener("hashchange", route);
   $("#notice_ok").onclick = () => { $("#notice").classList.add("hide"); if (!seenBefore) { store.settings.noticeSeen = true; store.save(); preload(); } };
   route(); sidebar();
   try { await deviceCheck(); } catch (e) { console.warn(e); }
-  sidebar(); if (location.hash === "#/scan") renderScan();
+  sidebar(); if (location.hash === "#/scan") renderScan(); fillDownloadText();   // the notice (and Help) now say this device's size
   // warm up in the background on capable devices: the first scan then starts at once
   preload(); // nothing is downloaded before the user has read the notice (or left Home through one of its buttons)
 })();
