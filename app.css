@@ -643,6 +643,32 @@ kbd{display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;m
  .pt-src .nm{max-width:56px}
 }
 
+/* the model download card (first scan) */
+.dl{display:none}.dl.on{display:block;margin:-4px 0 14px}
+.dl-scene{position:relative;height:92px;display:flex;align-items:center;justify-content:space-between;padding:0 6px 0 2px}
+.dl-cloud{width:66px;height:44px;flex:none;fill:var(--cream);stroke:var(--ink);stroke-width:2;stroke-linejoin:round;animation:dl-bob 2.6s ease-in-out infinite}
+.dl-fly{position:absolute;left:58px;right:40px;top:36px;height:0;pointer-events:none}
+.dl-fly span{position:absolute;left:0;top:0;opacity:0;animation:dl-x 3s linear infinite;animation-delay:var(--d)}
+.dl-fly i{display:block;font:600 15px/1 var(--khm);color:var(--ink);animation:dl-y 3s ease-in-out infinite;animation-delay:var(--d)}
+.dl.fast .dl-fly span,.dl.fast .dl-fly i{animation-duration:1.2s}
+.dl-dev{position:relative;flex:none;width:36px;height:60px;border:2.5px solid var(--ink);border-radius:9px;overflow:hidden;background:var(--surface);box-shadow:0 0 0 4px var(--surface-2)}
+.dl-dev::before{content:"";position:absolute;left:50%;top:4px;width:10px;height:3px;margin-left:-5px;border-radius:2px;background:var(--ink);z-index:2}
+.dl-fill{position:absolute;left:0;right:0;bottom:0;height:calc(var(--p,0) * 100%);background:repeating-linear-gradient(-45deg,var(--cream-2) 0 6px,var(--cream) 6px 12px);background-size:17px 17px;animation:dl-stripes .8s linear infinite;transition:height .3s var(--ease)}
+.dl-ok{position:absolute;inset:0;margin:auto;width:22px;height:22px;fill:none;stroke:var(--ok);stroke-width:3;stroke-linecap:round;stroke-linejoin:round;opacity:0;transform:scale(.4);transition:opacity .3s,transform .4s var(--ease);z-index:3}
+.dl.ready .dl-ok{opacity:1;transform:none}.dl.ready .dl-fly{display:none}.dl.ready .dl-fill{background:var(--ok-soft);animation:none}.dl.ready .dl-dev{border-color:var(--ok)}
+.dl-fun{font-weight:600;font-size:15px;line-height:1.5;margin:6px 0 10px;min-height:1.5em}.dl-fun.pop{animation:dl-pop .45s var(--ease)}
+.dl-chips{display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 12px}
+.dl-chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;line-height:1;padding:5px 9px;border-radius:999px;background:var(--surface-2);color:var(--mut)}
+.dl-chip.run{background:var(--cream);color:var(--ink);box-shadow:inset 0 0 0 1px var(--cream-2);animation:dl-pulse 1.2s ease-in-out infinite}
+.dl-chip.done{background:var(--ok-soft);color:var(--ok)}.dl-chip .i{width:12px;height:12px}
+@keyframes dl-x{0%{left:0;opacity:0}12%{opacity:1}82%{opacity:1}100%{left:100%;opacity:0}}
+@keyframes dl-y{0%{transform:translateY(0) rotate(-8deg)}50%{transform:translateY(-24px) rotate(6deg)}100%{transform:translateY(6px) rotate(0)}}
+@keyframes dl-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@keyframes dl-stripes{to{background-position:17px 0}}
+@keyframes dl-pop{0%{opacity:0;transform:translateY(6px)}100%{opacity:1;transform:none}}
+@keyframes dl-pulse{50%{box-shadow:inset 0 0 0 1px var(--ink)}}
+@media(max-width:1100px){.g-main.loading>:last-child{order:-1}}  /* phone / narrow: the download card comes first */
+@media(prefers-reduced-motion:reduce){.dl-fly{display:none}.dl-cloud,.dl-fill,.dl-chip.run{animation:none!important}}
 @media(prefers-reduced-motion:reduce){
  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
  .spin,.pipe .step.run .n::after{animation-duration:.8s!important;animation-iteration-count:infinite!important}

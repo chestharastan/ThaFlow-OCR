@@ -204,7 +204,9 @@
   /** Load the given stage -> model id map (missing stages use the manifest defaults). onProgress({stage, id, got, total, fromCache}). */
   T.load = async function (choice, onProgress) {
     const m = await loadManifest(); choice = Object.assign({}, m.defaults, choice || {});
-    const eps = await providers(); await ortStart(eps); T.backendUsed = eps[0];
+    // the runtime (tens of MB from the CDN on a first visit) comes before any model byte: say so, so the page is not stuck at 0%
+    const eps = await providers(), fresh = !window.ort; if (fresh && onProgress) onProgress({stage: "runtime", got: 0, total: 0, starting: true});
+    await ortStart(eps); T.backendUsed = eps[0]; if (onProgress) onProgress({stage: "runtime", got: 0, total: 0, done: true, fromCache: !fresh});
     for (const stage of ["layout", "textdet", "rec", "font", "structure"]) {
       const id = choice[stage]; if (!id) continue;
       if (stage === "font" && !T.config.font) continue; if (stage === "structure" && !T.config.structure) continue;

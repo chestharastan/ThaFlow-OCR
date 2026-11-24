@@ -138,18 +138,31 @@ function chosenModels() { const base = RECO ? RECO.choice : (T.manifest ? T.mani
 /** Pick the layout model. One that gives roles and reading order itself (PP-DocLayout) is the layout engine; any other is a per-stage override. */
 function setLayoutModel(id) { const m = Object.assign({}, store.settings.models); delete m.layout; if (id && T.layoutGivesStructure(id)) store.settings.layout = id; else { store.settings.layout = null; if (id) m.layout = id; } store.settings.models = m; store.save(); resetModels(); }
 function applyScale() { const sc = RECO ? RECO.scale : {longMin: 1600, longMax: 2200}; T.config.longMin = store.settings.longMin || sc.longMin; T.config.longMax = store.settings.longMax || sc.longMax; T.config.backend = store.settings.backend || "auto"; T.config.rules = store.settings.rules !== false; }
-/** Load the chosen model set (once); onProgress(text, fraction) */
+/** Load the chosen model set (once); onProgress(text, fraction, info). Every caller hears the progress, also one that joins a
+    load already running (the preload on page open, then the Scan page): it gets the latest state at once. */
+const LOAD_EARS = new Set(); let LOAD_LAST = null;
 function ensureModels(onProgress) {
-  if (LOADING) return LOADING;
+  if (onProgress) { LOAD_EARS.add(onProgress); if (LOADING && LOAD_LAST) try { onProgress(...LOAD_LAST); } catch (e) { console.warn(e); } }
+  const off = () => { if (onProgress) LOAD_EARS.delete(onProgress); };
+  if (LOADING) return LOADING.finally(off);
+  const tell = (...a) => { LOAD_LAST = a; for (const f of LOAD_EARS) { try { f(...a); } catch (e) { console.warn(e); } } };
   LOADING = (async () => {
-    applyScale(); const choice = chosenModels(), plan = await T.downloadPlan(choice); let doneBytes = 0; const total = Math.max(1, plan.files.reduce((a, f) => a + f.size, 0));
-    const cur = {};
-    await T.load(choice, p => { cur[p.stage] = p.got; const got = Object.values(cur).reduce((a, b) => a + b, 0); onProgress && onProgress(`${p.fromCache ? "Loading" : "Downloading"} ${p.stage} model…`, Math.min(0.98, got / total)); });
-    void doneBytes;
-    if (!T.benchmarkStored() || T.benchmarkStored().backend !== T.backendUsed || T.benchmarkStored().models.rec !== T.active.rec || T.benchmarkStored().models.layout !== T.active.layout) { onProgress && onProgress("Measuring speed on this device…", 0.99); await T.benchmark(); }
-    onProgress && onProgress("Ready", 1); sidebar();
-  })().catch(e => { LOADING = null; throw e; });
-  return LOADING;
+    applyScale(); const choice = chosenModels(), plan = await T.downloadPlan(choice), total = Math.max(1, plan.files.reduce((a, f) => a + f.size, 0));
+    const sizeOf = st => (plan.files.find(f => f.stage === st) || {}).size || 0, cur = {}, done = new Set(); let lastGot = 0, lastT = performance.now(), speed = 0, stage = null, cached = false;
+    // info for the download card (renderProcess): bytes, speed, which models are in, and while the runtime loads (no byte
+    // count from a script tag) how far the bar may trickle and how fast
+    const report = (msg, frac, extra) => { const got = Object.values(cur).reduce((a, b) => a + b, 0), now = performance.now();
+      if (now - lastT > 500 && !cached) { const s = (got - lastGot) / ((now - lastT) / 1000); if (s > 0) speed = speed ? 0.7 * speed + 0.3 * s : s; lastGot = got; lastT = now; }
+      tell(msg, frac ?? Math.min(0.98, got / total), Object.assign({stage, got, total, speed, cached, files: plan.files.map(f => ({stage: f.stage, size: f.size, done: done.has(f.stage) || (f.size > 0 && (cur[f.stage] || 0) >= f.size)}))}, extra)); };
+    await T.load(choice, p => { stage = p.stage; cached = !!p.fromCache;
+      if (p.stage === "runtime") { if (p.done) { done.add("runtime"); cur.runtime = sizeOf("runtime"); report("The reading engine is ready"); }
+        else { cur.runtime = 0; const rs = sizeOf("runtime") || 15e6; report("Getting the reading engine…", undefined, {ahead: rs / total, tau: Math.max(2, rs / 3e6 / 2)}); } return; }
+      cur[p.stage] = p.got; if (p.total && p.got >= p.total) done.add(p.stage); report(`${p.fromCache ? "Loading" : "Downloading"} the ${p.stage} model…`); });
+    plan.files.forEach(f => done.add(f.stage));
+    if (!T.benchmarkStored() || T.benchmarkStored().backend !== T.backendUsed || T.benchmarkStored().models.rec !== T.active.rec || T.benchmarkStored().models.layout !== T.active.layout) { stage = "bench"; report("Measuring speed on this device…", 0.99); await T.benchmark(); }
+    stage = "ready"; report("Ready", 1); sidebar();
+  })().catch(e => { LOADING = null; LOAD_LAST = null; throw e; });
+  return LOADING.finally(off);
 }
 const loadedFonts = new Set();
 function ensureFont(fam) { if (loadedFonts.has(fam) || !FONT_FILES[fam] || !window.FontFace) return; loadedFonts.add(fam);
@@ -409,7 +422,7 @@ function startJob() {
       catch (e) { console.warn(e); f.status = "failed"; f.error = "Could not open this PDF: " + (e.message || e); } }
     JOB.total = JOB.files.length; JOB.name = JOB.files.length > 1 ? `${JOB.files.length} pages` : JOB.files[0].name;
     let modelsReady = T.loaded();
-    const needModels = async () => { if (modelsReady) { JOB.load = null; return; } await ensureModels((msg, frac) => { JOB.load = {msg, frac}; renderIfProcess(); }); modelsReady = true; JOB.load = null; };
+    const needModels = async () => { if (modelsReady) { JOB.load = null; return; } await ensureModels((msg, frac, info) => { JOB.load = {msg, frac, info}; renderIfProcess(); }); modelsReady = true; JOB.load = null; };
     // PDF text pages need no OCR, but the small font + structure models (6 MB) give them headings, lists and fonts
     const needLight = async () => { if (T.sessions.structure || modelsReady) return; try { JOB.load = {msg: "Loading the layout helper models…", frac: 0};
         await T.load({layout: null, textdet: null, rec: null, font: chosenModels().font, structure: chosenModels().structure}, p => { JOB.load = {msg: `Loading ${p.id}…`, frac: p.total ? p.got / p.total : 0}; renderIfProcess(); }); }
@@ -459,8 +472,8 @@ function renderProcess() {
   const headHtml = `<div class="grow"><h1>${JOB.load ? "Getting ready…" : running ? "Reading…" : "Done"}</h1><p>${esc(JOB.name)}${JOB.total > 1 ? ` · ${Math.min(JOB.done + 1, JOB.total)} / ${JOB.total}` : ""}</p></div>
     ${running ? `<a class="btn" href="#/scan" title="OCR keeps running while you browse">Run in background</a>` : `<a class="btn p lg" href="#/review/${esc((JOB.files.find(x => x.page_id) || {}).page_id || "")}">Review ${icon("arrow-right")}</a>`}`;
   const badgeCls = `badge ${running ? "ink" : "ok"}`, badgeTxt = JOB.load ? "Loading" : running ? "Working" : "Done";
-  const msg = JOB.load ? JOB.load.msg : remaining;
-  const note = JOB.load ? `One-time download. Next scans start instantly.` : "";
+  const dl = JOB.load && JOB.load.info, msg = dl ? dlSub(dl) : JOB.load ? JOB.load.msg : remaining;
+  const note = JOB.load ? (dl && dl.cached && dl.stage !== "runtime" ? "The models are already on this device." : `One-time download. Next scans start instantly.`) : "";
   const steps = stepsHtml.map(([tt, s, done, ms], i) => ({cls: `step ${done ? "done" : running && !JOB.load && i === Math.max(0, si) ? "run" : ""}`, done, tt, s, ms}));
   const stepHtml = (st, i) => `<div class="${st.cls}" data-i="${i}"><span class="n">${st.done ? icon("check", "s") : i + 1}</span><div class="grow"><b>${st.tt}</b><span class="sub">${esc(st.s || "")}</span></div><span class="ms mono">${st.ms != null ? fmtMs(st.ms) : ""}</span></div>`;
   const filesHtml = JOB.total > 1 ? `<div class="card pad">${JOB.files.map(f => `<div class="kv"><span style="color:var(--ink)">${esc(f.name)}</span><span class="badge ${f.status === "done" ? "ok" : f.status === "failed" ? "bad" : f.status === "running" ? "ink" : ""}">${f.status === "done" ? "Done" : f.status === "failed" ? "Failed" : f.status === "running" ? "Working" : "Waiting"}</span></div>`).join("")}</div>` : "";
@@ -470,7 +483,7 @@ function renderProcess() {
   const key = `${JOB.id}|${imgSrc}|${overlay}`, phase = JOB.load ? "load" : "run";
   // how far the next progress update will move the bar (%) and how long it should take (s): the bar trickles toward it, so it never
   // sits still between updates (recognition reports once per batch of 16 lines, which is many seconds on a phone)
-  const pace = (() => { if (!running || JOB.load) return {ahead: 0, tau: 3}; const bm = T.benchmarkStored() || {}, stg = JOB.step ? JOB.step.stage : "decode", n = JOB.step && JOB.step.total ? Math.min(16, JOB.step.total - JOB.step.done) : 0;
+  const pace = (() => { if (dl && dl.ahead) return {ahead: dl.ahead * 100, tau: dl.tau || 3}; if (!running || JOB.load) return {ahead: 0, tau: 3}; const bm = T.benchmarkStored() || {}, stg = JOB.step ? JOB.step.stage : "decode", n = JOB.step && JOB.step.total ? Math.min(16, JOB.step.total - JOB.step.done) : 0;
     const [d, secs] = stg === "rec" && JOB.step.total ? [0.5 * n / JOB.step.total, n * (bm.recMsPerLine || 120) * 1.25 / 1000] : stg === "layout" ? [0.12, (bm.layoutMs || 800) / 1000] : stg === "textdet" ? [0.11, (bm.detMs || 1500) * 1.3 / 1000] : stg === "font" || stg === "structure" ? [0.05, 1.5] : [0.12, 0.4];
     return {ahead: d / JOB.total * 100, tau: Math.max(0.4, secs / 2)}; })();
 
@@ -479,11 +492,11 @@ function renderProcess() {
   if (!PVIEW || PVIEW.key !== key || !$("#p_stage")) {
     view.innerHTML = `
   <div class="head" id="p_head">${headHtml}</div>
-  <div class="grid g-main">
+  <div class="grid g-main" id="p_grid">
    <div class="card"><div class="panehead"><span class="ph-t" id="p_name">${esc(cur.name)}</span><div class="grow"></div>${zoomTools("p_zoom")}<span class="${badgeCls}" id="p_badge"><span class="dot"></span><span class="t">${badgeTxt}</span></span></div>
     <div class="stage zoomable" id="p_box"><div class="pageimg" id="p_stage"><img id="p_img" src="${esc(imgSrc)}" alt="" draggable="false"><canvas id="p_cv" class="hide"></canvas>${scan ? `<div class="${scan}"></div>` : ""}</div></div></div>
    <div style="display:flex;flex-direction:column;gap:16px">
-    <div class="card pad"><div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" class="fill"></i></div>
+    <div class="card pad">${DL_SCENE}<div style="display:flex;align-items:baseline;gap:14px"><div class="prog" id="p_pct">${pct}%</div><div class="mut small grow" style="text-align:right" id="p_msg">${esc(msg)}</div></div><div class="bar" style="height:8px;margin-top:12px"><i id="p_bar" class="fill"></i></div>
       <div class="small mut" id="p_note" style="margin-top:10px${note ? "" : ";display:none"}">${note}</div></div>
     <div class="card pad"><div class="pipe" id="p_steps">${steps.map(stepHtml).join("")}</div></div>
     <div id="p_files">${filesHtml}</div><div id="p_failed">${failedHtml}</div></div></div>`;
@@ -496,7 +509,7 @@ function renderProcess() {
     img.onload = overlay ? () => { drawOriginal(cv, img, last, {boxes: true, labels: false, lines: true}); cv.classList.remove("hide"); img.classList.add("hide"); mount(last.width, last.height); }
       : () => mount(img.naturalWidth, img.naturalHeight);
     if (img.complete && img.naturalWidth) img.onload();
-    progressLoop();
+    paintDownload(dl, !!JOB.load, JOB.load && JOB.load.frac); progressLoop();
     return;
   }
   const set = (id, html) => { if (PVIEW.html[id] !== html) { PVIEW.html[id] = html; $("#" + id).innerHTML = html; } };
@@ -504,6 +517,7 @@ function renderProcess() {
   $("#p_name").textContent = cur.name;
   const bd = $("#p_badge"); if (bd.className !== badgeCls) bd.className = badgeCls; bd.querySelector(".t").textContent = badgeTxt;
   $("#p_msg").textContent = msg; const nt = $("#p_note"); nt.textContent = note; nt.style.display = note ? "" : "none";
+  paintDownload(dl, !!JOB.load, JOB.load && JOB.load.frac);
   const stage = $("#p_stage"); let sl = stage.querySelector(".scanline");
   if (scan && !sl) { sl = document.createElement("div"); stage.appendChild(sl); }
   if (sl) { if (scan) sl.className = scan; else sl.remove(); }
@@ -512,6 +526,39 @@ function renderProcess() {
     el.querySelector(".sub").textContent = st.s || ""; el.querySelector(".ms").textContent = st.ms != null ? fmtMs(st.ms) : ""; });
   if (PVIEW.phase !== phase) { PVIEW.phase = phase; PVIEW.disp = Math.min(PVIEW.disp, pct); } // new phase: the bar may start again from 0
   PVIEW.target = pct; PVIEW.running = running; PVIEW.ahead = pace.ahead; PVIEW.tau = pace.tau; progressLoop();
+}
+/* ---------------------------------------------------------------- the model download card (first scan) */
+// Khmer and Latin letters fly from the cloud into the device, which fills as the bytes arrive; a line that follows the
+// progress, the bytes / speed / time left, and one chip per model that ticks off when it is in
+const DL_SCENE = `<div class="dl" id="p_dl" aria-live="polite"><div class="dl-scene" aria-hidden="true">
+  <svg class="dl-cloud" viewBox="0 0 64 42"><path d="M17 36h31a10 10 0 0 0 1-20 15 15 0 0 0-28-4A12 12 0 0 0 17 36z"/></svg>
+  <div class="dl-fly">${["ក", "ខ", "A", "គ", "ង", "B", "ច", "ញ", "C", "ដ"].map((c, i) => `<span style="--d:${(i * 0.3).toFixed(1)}s"><i>${c}</i></span>`).join("")}</div>
+  <div class="dl-dev"><div class="dl-fill"></div><svg class="dl-ok" viewBox="0 0 24 24"><path d="M6 12.5l4 4 8-9"/></svg></div></div>
+  <div class="dl-fun" id="p_fun"></div><div class="dl-chips" id="p_chips"></div></div>`;
+const DL_NAMES = {runtime: "Engine", layout: "Layout", textdet: "Lines", rec: "Khmer reader", font: "Fonts", structure: "Order"};
+function dlFun(i, frac) {
+  if (!i) return "";
+  if (i.stage === "ready") return "Ready! Reading your page now ✨";
+  if (i.stage === "bench") return "Timing how fast this device reads…";
+  if (i.cached && i.stage !== "runtime") return "Unpacking the models saved on this device…";
+  if (frac >= 0.93) return "Just a few more bytes…";
+  if (frac >= 0.8) return "Almost done…";
+  const st = {runtime: "Waking up the reading engine…", layout: "Downloading the page-layout brain…", textdet: "Grabbing the line finder…", rec: "Teaching it to read Khmer… ក ខ គ", font: "Packing the font detective…", structure: "Adding the paragraph organiser…"}[i.stage] || "Downloading the models…";
+  return frac >= 0.5 ? "Halfway there! " + st : st;
+}
+function dlSub(i) {
+  if (i.stage === "ready" || i.stage === "bench") return "";
+  if (i.stage === "runtime" && !i.got) return "Getting the engine…";
+  const left = i.speed > 20e3 && !i.cached ? (i.total - i.got) / i.speed : 0;
+  return `${T.fmtBytes(i.got)} of ${T.fmtBytes(i.total)}` + (i.speed > 20e3 && !i.cached ? ` · ${T.fmtBytes(i.speed)}/s` : "") + (left > 1 && left < 3600 ? ` · about ${left < 90 ? Math.round(left) + " s" : Math.round(left / 60) + " min"} left` : "");
+}
+function paintDownload(i, loading, frac) {
+  const box = $("#p_dl"), grid = $("#p_grid"); if (!box) return;
+  box.classList.toggle("on", !!(loading && i)); if (grid) grid.classList.toggle("loading", !!(loading && i)); if (!loading || !i) return;
+  box.classList.toggle("ready", i.stage === "ready"); box.classList.toggle("fast", !!i.cached);
+  const fun = dlFun(i, Math.max(frac || 0, (PVIEW ? PVIEW.disp : 0) / 100)), fe = $("#p_fun"); if (fe.textContent !== fun) { fe.textContent = fun; fe.classList.remove("pop"); void fe.offsetWidth; fe.classList.add("pop"); }
+  const chips = i.files.filter(f => f.size > 0).map(f => `<span class="dl-chip ${f.done ? "done" : f.stage === i.stage ? "run" : ""}">${f.done ? icon("check", "s") : ""}${esc(DL_NAMES[f.stage] || f.stage)}</span>`).join("");
+  const ce = $("#p_chips"); if (ce.dataset.h !== chips) { ce.dataset.h = chips; ce.innerHTML = chips; }
 }
 /** Eases the shown percentage toward the real one, then trickles toward the next expected value (never past 92% of the
  *  next step, never 100 early) so the bar keeps moving between progress callbacks. */
@@ -531,6 +578,7 @@ function progressLoop() {
     const shown = Math.floor(v.disp);
     if (pe.textContent !== shown + "%") pe.textContent = shown + "%";
     be.style.transform = `scaleX(${(v.disp / 100).toFixed(4)})`;   // transform, not width: no layout per frame
+    const dle = document.getElementById("p_dl"); if (dle && dle.classList.contains("on")) dle.style.setProperty("--p", (v.disp / 100).toFixed(3));  // the device fills
     if (!v.running && Math.abs(v.disp - v.target) < 0.01) { v.raf = 0; return; }
     v.raf = requestAnimationFrame(tick);
   };
@@ -965,7 +1013,7 @@ async function resetEverything() {
   resetModels();
   return before;
 }
-function resetModels() { LOADING = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
+function resetModels() { LOADING = null; LOAD_LAST = null; for (const k of Object.keys(T.sessions)) { try { T.sessions[k].sess.release && T.sessions[k].sess.release(); } catch {} delete T.sessions[k]; } T.active = {}; sidebar(); }
 function renderHelp() {
   const tile = (ic, t, p) => `<div class="card tile"><div class="ti">${icon(ic)}</div><b>${t}</b><p>${p}</p></div>`;
   const keys = [["<kbd>Ctrl</kbd> <kbd>V</kbd>", "Paste an image or PDF"], ["<kbd>F</kbd>", "Full-size page (review)"], ["<kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>", "Zoom in, out, reset (page views)"], ["<kbd>Ctrl</kbd> + scroll", "Zoom at the pointer (or pinch)"], ["<kbd>Space</kbd> + drag", "Move a zoomed page (Select)"], ["<kbd>Esc</kbd>", "Close full-size view or menu"], ["<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>S</kbd>", "Show or hide the sidebar"], ["<kbd>R</kbd> <kbd>Del</kbd>", "Rotate or delete the selected pages (PDF)"], ["<kbd>Alt</kbd> + arrows", "Move the selected pages (PDF)"], ["<kbd>Ctrl</kbd> <kbd>Z</kbd>", "Undo (PDF)"]];
