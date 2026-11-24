@@ -147,7 +147,7 @@ function ensureModels(onProgress) {
   if (LOADING) return LOADING.finally(off);
   const tell = (...a) => { LOAD_LAST = a; for (const f of LOAD_EARS) { try { f(...a); } catch (e) { console.warn(e); } } };
   LOADING = (async () => {
-    applyScale(); const choice = chosenModels(), plan = await T.downloadPlan(choice), total = Math.max(1, plan.files.reduce((a, f) => a + f.size, 0));
+    applyScale(); const choice = chosenModels(), plan = await T.downloadPlan(choice, T.plannedBackend(T.config.backend, DEVICE)), total = Math.max(1, plan.files.reduce((a, f) => a + f.size, 0));
     const sizeOf = st => (plan.files.find(f => f.stage === st) || {}).size || 0, cur = {}, done = new Set(); let lastGot = 0, lastT = performance.now(), speed = 0, stage = null, cached = false;
     // info for the download card (renderProcess): bytes, speed, which models are in, and while the runtime loads (no byte
     // count from a script tag) how far the bar may trickle and how fast
@@ -365,7 +365,7 @@ function devicePanel() {
     ${est ? `<span class="chip" title="Typical 40-line page on this device">${icon("clock", "s")}~${est} s / page</span>` : ""}
     <span class="chip ${T.loaded() ? "ok" : ""}">${icon(T.loaded() ? "check-circle" : "download", "s")}<span id="dl_line">${T.loaded() ? "Models ready" : "Models"}</span></span></div>`;
 }
-async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await T.downloadPlan(chosenModels()), dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} one-time download` : "Models on device";
+async function fillDownloadLine() { const el = $("#dl_line"); if (!el || T.loaded()) return; try { const plan = await T.downloadPlan(chosenModels(), T.plannedBackend(store.settings.backend || "auto", DEVICE)), dl = plan.bytes; el.textContent = dl > 0 ? `${T.fmtBytes(dl)} one-time download` : "Models on device";
     if (dl > 0 && DEVICE.downlinkMbps) el.parentElement.title = `About ${Math.max(1, Math.round(dl * 8 / (DEVICE.downlinkMbps * 1e6)))} s on your connection`; } catch { el.parentElement.remove(); } }
 /** a drop zone opens the file picker when clicked anywhere except its own buttons */
 const clickToBrowse = (zone, btn) => { if (zone && btn) zone.onclick = e => { if (!e.target.closest("button,a,input")) btn.click(); }; };
@@ -1557,8 +1557,8 @@ function ptPreview(id) {
 }
 
 /* ---------------------------------------------------------------- router + boot */
-const ROUTES = {pdf: renderPdf, select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
-const TITLES = {pdf: "PDF", scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
+const ROUTES = {home: renderHome, pdf: renderPdf, select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
+const TITLES = {home: "Home", pdf: "PDF", scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
 function route(e) { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); document.title = (TITLES[r] ? TITLES[r] + " · " : "") + "ThaOCR";
   const wide = r === "review" || r === "select" || r === "pdf"; view.classList.toggle("wide", wide); $(".topbar").classList.toggle("wide", wide);
   view.classList.add("enter"); clearTimeout(route.t); route.t = setTimeout(() => view.classList.remove("enter"), 350);  // entry animation on page change only, not on re-renders
@@ -1574,7 +1574,12 @@ window.addEventListener("hashchange", route);
   $("#sidetog").onclick = () => setSideCollapsed(!$("#shell").classList.contains("collapsed"));
   document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) { e.preventDefault(); setSideCollapsed(!$("#shell").classList.contains("collapsed")); } });
   await store.init();
-  const preload = () => { if (RECO && RECO.tier !== "low" && !(DEVICE && DEVICE.saveData)) ensureModels(() => {}).then(() => { if (location.hash === "#/scan") renderScan(); }).catch(e => console.warn("model preload failed", e)); };
+  // warm up the models in the background on capable devices, once the notice has been read, and only on a page that reads
+  // text: Home (#/home), Help and the PDF page tools never start a download by themselves
+  const WARM = new Set(["scan", "select", "process", "review", "documents", "settings"]); let warm = false;
+  const preload = () => { if (warm || !store.settings.noticeSeen || !WARM.has(location.hash.split("/")[1] || "scan")) return;
+    if (RECO && RECO.tier !== "low" && !(DEVICE && DEVICE.saveData)) { warm = true; ensureModels(() => {}).then(() => { if (location.hash === "#/scan") renderScan(); }).catch(e => { warm = false; console.warn("model preload failed", e); }); } };
+  window.addEventListener("hashchange", () => preload());
   // the notice is shown on the first visit and after a hard reload (Ctrl+Shift+R / Cmd+Shift+R / Ctrl+F5),
   // not after a normal reload. The page cannot tell the two reloads apart afterwards, so the hard-reload keys are
   // caught before the page unloads and remembered in sessionStorage. Models are fetched before the notice is
@@ -1587,11 +1592,14 @@ window.addEventListener("hashchange", route);
     if (((e.ctrlKey || e.metaKey) && e.shiftKey && k === "r") || (k === "f5" && (e.ctrlKey || e.shiftKey)))
       try { sessionStorage.setItem("thaocr.hardReload", "1"); } catch { }
   }, true);
-  if (!seenBefore || hard) { $("#notice").classList.remove("hide"); setTimeout(() => $("#notice_ok").focus(), 60); }
+  // a first visit (notice not read, no documents) opens on Home, which says what the notice says; a returning visitor opens on Scan
+  const land = !location.hash ? (seenBefore || store.docs.length ? "#/scan" : "#/home") : null;
+  if (land) history.replaceState(null, "", land);
+  if ((!seenBefore || hard) && location.hash !== "#/home") { $("#notice").classList.remove("hide"); setTimeout(() => $("#notice_ok").focus(), 60); }
   $("#notice_ok").onclick = () => { $("#notice").classList.add("hide"); if (!seenBefore) { store.settings.noticeSeen = true; store.save(); preload(); } };
-  if (!location.hash) location.hash = "#/scan"; else route(); sidebar();
+  route(); sidebar();
   try { await deviceCheck(); } catch (e) { console.warn(e); }
   sidebar(); if (location.hash === "#/scan") renderScan();
   // warm up in the background on capable devices: the first scan then starts at once
-  if (seenBefore) preload(); // nothing is downloaded before the user has read the notice the first time
+  preload(); // nothing is downloaded before the user has read the notice (or left Home through one of its buttons)
 })();

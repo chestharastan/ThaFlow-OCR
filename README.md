@@ -6,6 +6,8 @@ server-side storage; the app says so before first use.
 
 ```
 index.html / app.js / app.css   the UI (light + dark theme: follows the system, switch in the sidebar or Settings)
+home.js / home.css              Home (#/home): the welcome page - what the app does, why it is safe, what this device can
+                                run (live from ocr/device.js + the manifest), a before -> after demo on a made-up page
 docview.js                      the Document view: the page as an editable document (window.DocView)
 export.js                       Word (.docx) and PDF export from one document model (window.ThaExport)
 pdftools.js                     PDF page core: merge / reorder / rotate / split / extract PDF pages (window.ThaPdfTools)
@@ -28,6 +30,26 @@ test.html                       engine test page: ?img=<your image>&backend=wasm
 ```
 
 Run locally: `python3 serve.py 8020` then open http://localhost:8020/ .
+
+Home (`#/home`, first item in the sidebar, also the ThaOCR logo; on a phone the logo, since the bottom bar keeps five
+tabs): the page a first-time visitor sees. A visit without a hash opens Home until the visitor has moved on from it (a button,
+the sidebar) or has a document; after that it opens Scan as before. The welcome notice is not shown over Home (Home says the
+same). In plain words for non-technical people: what ThaOCR can do (photos, scans and PDFs to Khmer / English text,
+tables / headings / lists kept, Word / PDF / text export, the PDF page tools, saved corrections, Select), why it can be
+trusted (nothing uploaded, no account, free, reads without internet once the models are in, made for Khmer), what this
+device can run, and the limits (handwriting and stamps, poor photos, no red-stamp lifting yet, the first download, storage
+in this browser only). "What this device can do" is filled in from `ThaOCR.deviceInfo()` / `recommend()` /
+`downloadPlan()` / `benchmarkStored()` / `estimate()` and `plannedBackend()`: the recommended model set and why, GPU or
+CPU, what is still to download and what is already here, the speed (or "measured after your first scan"), the three
+model sets with their download size (tap one to switch), one row per stage with the model this device uses, its size
+and status (on this device / downloads at first scan / only when needed / not needed here / too heavy for this device),
+and behind "Details for the curious" the device's technical facts and every model in the manifest. The demo page is
+drawn on a canvas with the bundled fonts (Khmer OS Muol Light, Khmer OS Battambang): a community library notice with a
+paragraph, a table and a list, no names. Next to it, the result as editable text. "Read this page for real" sends that
+picture through the normal scan (download card the first time, then the review page; it is saved in Documents like any
+scan). Opening Home never downloads a model: the device check reads `models.json` and the Cache API only, and the
+background warm-up of the models (computers, not phones) starts on the pages that read text (Scan, Select, Documents,
+Review, Settings), not on Home, Help or PDF.
 
 Runtime: `ThaOCR.config.ortBase` is the jsDelivr URL of onnxruntime-web 1.31.1 (it sends CORS and CORP headers, so it
 works under the isolation headers, threads included); the docx library loads from jsDelivr too. For offline work copy
@@ -58,7 +80,8 @@ Device tiers (ocr/device.js): **Best quality** (not a phone, and WebGPU or >= 8 
 v2.4, detector at 1600-2200 px; **Balanced** = int8 recogniser, 1600-1800 px; **Light** (every phone, even one with
 WebGPU; <= 4 threads or <= 4 GB) = int8 recogniser, 1100-1300 px; phones also get the int8 layout model (3.3 MB instead
 of 10.9 MB), which Settings can switch back (Model set -> Balanced, or Models -> Layout). On a device recommended Light
-nothing is downloaded when the page opens, only at the first scan. Compute "Automatic" is the GPU on a computer with
+nothing is downloaded when the page opens, only at the first scan; on any device, Home, Help and the PDF page tools
+start no download. Compute "Automatic" is the GPU on a computer with
 WebGPU and the CPU on a phone; Settings > Compute can pick the GPU. A model set picked in Settings is kept across
 reloads. A 2-second benchmark after loading gives the per-page estimate; each finished page refines it.
 

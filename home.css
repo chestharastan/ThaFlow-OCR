@@ -1,0 +1,171 @@
+/* Home (#/home, home.js): the welcome page. Only the app.css tokens, so light and dark themes follow. The sample page
+   and its editable result are "paper" (white with dark ink) in both themes, like every page view in the app. */
+.home{display:flex;flex-direction:column;gap:56px;padding-top:4px}
+.home h2{font-size:24px;letter-spacing:-.02em;line-height:1.25}
+.h-glyph{font:600 17px/1 var(--khm)}
+
+/* hero */
+.h-hero{position:relative;overflow:hidden;padding:48px 48px 40px;border-radius:24px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}
+.h-hero::before{content:"";position:absolute;right:-160px;top:-180px;width:520px;height:520px;border-radius:50%;background:radial-gradient(closest-side,var(--cream),transparent);pointer-events:none}
+.h-deco{position:absolute;right:44px;top:34px;display:grid;grid-template-columns:repeat(2,64px);gap:10px;pointer-events:none;user-select:none}
+.h-deco span{display:grid;place-items:center;width:64px;height:64px;border-radius:18px;background:var(--surface);border:1px solid var(--line);font:600 30px/1 var(--khm);color:var(--ink);box-shadow:var(--shadow);animation:h-float 6s ease-in-out infinite}
+.h-deco span:nth-child(2){animation-delay:-1.5s;background:var(--cream)}.h-deco span:nth-child(3){animation-delay:-3s;font-family:Inter,system-ui,sans-serif}.h-deco span:nth-child(4){animation-delay:-4.5s}
+@keyframes h-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+.h-hero>:not(.h-deco){position:relative}
+.h-eyebrow{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:999px;background:var(--cream);color:var(--ink);font-size:12.5px;font-weight:500}
+.h-eyebrow svg.i{color:var(--ink)}
+.h-hero h1{margin:18px 0 0;font-size:46px;line-height:1.06;letter-spacing:-.035em;max-width:640px}
+.h-km{margin:14px 0 0;font:500 18px/1.7 var(--khm);color:var(--ink-2)}
+.h-lead{margin:10px 0 0;font-size:16.5px;line-height:1.6;color:var(--mut);max-width:620px}
+.h-cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+.h-pills{list-style:none;margin:28px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+.h-pills li{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:12.5px;color:var(--ink-2)}
+.h-pills svg.i{color:var(--ok)}
+
+/* section heads */
+.h-sec{display:flex;flex-direction:column;gap:18px;scroll-margin-top:16px}
+.h-sechead p{margin:6px 0 0;color:var(--mut);max-width:660px}
+
+/* before -> after */
+.h-ba{display:grid;grid-template-columns:minmax(0,1fr) 44px minmax(0,1fr);gap:14px;align-items:stretch}
+.h-pane{margin:0;display:flex;flex-direction:column;gap:10px;min-width:0;container-type:inline-size}  /* cqw below = 1% of the page width */
+.h-pane figcaption{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mut);min-height:22px}
+.h-paper{position:relative;flex:1;background:var(--paper);color:var(--paper-ink);border-radius:6px;box-shadow:var(--page-shadow);overflow:hidden}
+.h-before{display:grid;place-items:center;aspect-ratio:1200/1500;color:#141414}
+.h-before img{display:block;width:100%;height:100%;object-fit:cover}
+.h-before .scanline{opacity:.5}
+.h-arrow{align-self:center;display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);color:var(--ink)}
+/* the result mirrors the page: sizes follow the pane width (1 cqw = 12 px of the 1200 px sample) */
+.h-after{padding:7.5cqw 10cqw 6cqw;font:400 2.58cqw/1.75 "ThaDemo",var(--khm);caret-color:#141414;cursor:text;outline:none;transition:box-shadow .15s}
+.h-after:focus-visible,.h-after:focus{box-shadow:var(--page-shadow),0 0 0 2px var(--focus)}
+.h-after>*{margin:0}
+.h-after .h-t{font:400 4cqw/1.6 "ThaDemo Muol",var(--khm);text-align:center}
+.h-after .h-s{font-weight:700;font-size:2.83cqw;text-align:center;margin-top:1cqw}
+.h-after .h-s::after{content:"";display:block;width:13.4cqw;height:2px;margin:2.2cqw auto 0;background:#141414}
+.h-after .h-p{margin-top:3.6cqw;text-indent:5cqw}
+.h-after .h-tb{width:100%;border-collapse:collapse;margin-top:3.2cqw;font-size:2.5cqw}
+.h-after .h-tb th,.h-after .h-tb td{border:2px solid #141414;padding:.9cqw 1.8cqw;text-align:left;font-weight:400;width:50%}
+.h-after .h-tb th{font-weight:700;background:rgba(0,0,0,.05)}
+.h-after .h-lh{margin-top:4cqw}
+.h-after .h-ul{list-style:none;padding:0 0 0 5cqw;margin-top:1.2cqw}
+.h-after .h-ul li{position:relative}.h-after .h-ul li::before{content:"-";position:absolute;left:-2.8cqw}
+.h-after .h-en{margin-top:3cqw;font:2.5cqw/1.75 "Liberation Serif",Georgia,"Times New Roman",serif}
+.h-after .h-end{text-align:right;margin-top:4cqw}
+.h-after .h-foot{text-align:center;color:#6b6b6b;font-size:1.83cqw;margin-top:9cqw}
+.h-demobar{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+
+/* what it can do */
+.h-tiles .tile{gap:6px}
+.h-eg{margin-top:auto;padding-top:10px;font-size:12.5px;color:var(--ink-2)}
+.h-eg::before{content:"e.g. ";color:var(--mut)}
+
+/* how it works */
+.h-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.h-steps li{display:flex;gap:14px;align-items:flex-start;padding:18px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.h-steps .n{flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-weight:600;font-variant-numeric:tabular-nums}
+.h-steps b,.h-lims b{display:block;font-weight:600}
+.h-steps p,.h-lims p,.h-why p{margin:2px 0 0;color:var(--mut);font-size:13.5px}
+
+/* why you can trust it */
+.h-whys{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.h-why{display:flex;gap:14px;align-items:flex-start;padding:18px;border-radius:var(--r);background:var(--surface);border:1px solid var(--line)}
+.h-why b{font-weight:600}
+.h-why-i{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--ok-soft);color:var(--ok)}
+
+/* this device */
+.h-dev-top{display:flex;gap:16px;align-items:flex-start}
+.h-dev-ic{flex:none;display:grid;place-items:center;width:52px;height:52px;border-radius:15px;background:var(--cream);color:var(--ink)}
+.h-dev-top h3{font-size:21px;letter-spacing:-.02em;margin:2px 0 0}
+.h-dev-top p{margin:4px 0 0;color:var(--ink-2)}
+.h-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:20px}
+.h-fact{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.h-fact-i{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--surface-2);color:var(--ink)}
+.h-fact b{display:block;font-size:15px;font-weight:600;line-height:1.35;margin:1px 0 2px}
+.h-fact .small{display:block;line-height:1.4}
+.h-sub{font-size:15px;margin:26px 0 0}
+.h-subp{margin:4px 0 12px}
+.h-sets .tier{gap:3px}
+.h-sets .h-setsz{font-size:12px;color:var(--ink-2);margin-top:4px}
+.h-sets i{font-style:normal;font-size:10.5px;font-weight:600;margin-top:6px;padding:2px 7px;border-radius:999px}
+.h-sets .h-warn{background:var(--warn-soft);color:var(--warn)}
+.h-sets .rec+.h-warn{margin-top:4px}
+.h-models{display:flex;flex-direction:column}
+.h-model{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:12px;align-items:start;padding:14px 0;border-top:1px solid var(--line-2)}
+.h-model:first-child{border-top:0;padding-top:4px}
+.h-model-i{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--cream);color:var(--ink)}
+.h-model b{font-weight:600}
+.h-model p{margin:2px 0 2px;color:var(--ink-2);font-size:13.5px}
+.h-model-st{display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:220px;text-align:right}
+.h-details{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}
+.h-details>summary{display:inline-flex;align-items:center;gap:8px;cursor:pointer;list-style:none;font-weight:500;padding:6px 10px 6px 6px;margin-left:-6px;border-radius:var(--r-s);color:var(--ink-2)}
+.h-details>summary::-webkit-details-marker{display:none}
+.h-details>summary:hover{background:var(--surface-2);color:var(--ink)}
+.h-details>summary svg.i{transition:transform .2s var(--ease)}
+.h-details[open]>summary svg.i{transform:rotate(180deg)}
+.h-tech{margin-top:12px}
+.h-tech .kv b{max-width:70%}
+.h-mtable-wrap{overflow-x:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px}
+.h-mtable{width:100%;border-collapse:collapse;font-size:13px}
+.h-mtable th,.h-mtable td{text-align:left;padding:10px 12px;border-top:1px solid var(--line-2);vertical-align:top}
+.h-mtable thead th{border-top:0;font-size:12px;font-weight:500;color:var(--mut);background:var(--surface-2)}
+.h-mtable .h-mgroup th{font-size:12px;font-weight:600;color:var(--ink);background:var(--surface-2);padding:7px 12px}
+.h-mtable td b{display:block;font-weight:500}
+.h-mtable td .small{display:block;margin-top:2px}
+.h-mtable td.num{white-space:nowrap}
+.h-mtable code{font-size:11.5px;color:var(--mut-2)}
+.h-mtable td:last-child{white-space:nowrap}
+.h-ok{display:flex;align-items:center;gap:4px;margin-top:5px;color:var(--ok)}
+
+/* good to know */
+.h-lims{list-style:none;margin:0;display:flex;flex-direction:column;gap:16px}
+.h-lims li{display:flex;gap:14px;align-items:flex-start}
+.h-lim-i{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--warn-soft);color:var(--warn)}
+
+/* last call to action */
+.h-end-cta{display:flex;flex-direction:column;align-items:center;text-align:center;padding:40px 24px;border-radius:24px;background:var(--cream)}
+.h-end-cta p{margin:6px 0 0;color:var(--ink-2)}
+.h-end-cta .h-cta{justify-content:center;margin-top:20px}
+.h-end-cta .btn:not(.p){background:var(--surface)}
+
+@media(max-width:1100px){
+ .h-deco{display:none}
+ /* side by side the panes would be too narrow to read: one above the other, at most 600 px wide */
+ .h-ba{grid-template-columns:minmax(0,1fr)}
+ .h-pane{width:100%;max-width:600px;justify-self:center}
+ .h-arrow{justify-self:center;transform:rotate(90deg)}
+ .h-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:860px){
+ nav.tabs .nav[data-r=home]{display:none}   /* five tabs at the bottom; the logo at the top opens Home */
+ .home{gap:40px}
+ .h-sec{scroll-margin-top:72px}   /* below the sticky top bar */
+ .h-hero{padding:28px 20px 24px;border-radius:18px}
+ .h-hero::before{right:-220px;top:-240px}
+ .h-hero h1{font-size:31px;line-height:1.12}
+ .h-km{font-size:16px}
+ .h-lead{font-size:15px}
+ .h-cta .btn{flex:1 1 100%}
+ .home h2{font-size:21px}
+ /* on a phone the result reflows at a reading size, like the Document view */
+ .h-after{padding:22px 20px 24px;font-size:15px;line-height:1.8}
+ .h-after .h-t{font-size:22px}.h-after .h-s{font-size:16px;margin-top:4px}.h-after .h-s::after{width:72px;margin-top:12px}
+ .h-after .h-p{margin-top:16px;text-indent:24px}
+ .h-after .h-tb{font-size:14px;margin-top:16px}.h-after .h-tb th,.h-after .h-tb td{padding:6px 10px;border-width:1.5px}
+ .h-after .h-lh{margin-top:18px}.h-after .h-ul{padding-left:22px;margin-top:4px}.h-after .h-ul li::before{left:-14px}
+ .h-after .h-en{font-size:14.5px;margin-top:14px}.h-after .h-end{margin-top:16px}.h-after .h-foot{font-size:12px;margin-top:28px}
+ .h-steps{grid-template-columns:1fr}
+ .h-facts{grid-template-columns:1fr}
+ .h-model{grid-template-columns:34px minmax(0,1fr)}
+ .h-model-st{grid-column:2;align-items:flex-start;text-align:left;max-width:none}
+ .h-end-cta{padding:28px 18px;border-radius:18px}
+ /* every-model table: one stacked row per model (name, then status and size), no sideways scrolling */
+ .h-mtable thead{display:none}
+ .h-mtable tbody,.h-mtable .h-mgroup,.h-mtable .h-mgroup th{display:block}
+ .h-mtable tr:not(.h-mgroup){display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"n n" "s z";border-top:1px solid var(--line-2)}
+ .h-mtable tr:not(.h-mgroup) td{border-top:0}
+ .h-mtable tr:not(.h-mgroup) td:nth-child(1){grid-area:n;padding-bottom:2px}
+ .h-mtable tr:not(.h-mgroup) td:nth-child(2){grid-area:z;padding-top:4px;text-align:right}
+ .h-mtable tr:not(.h-mgroup) td:nth-child(3){grid-area:s;padding-top:4px;white-space:normal}
+ .h-mtable .h-mgroup th{border-top:1px solid var(--line-2)}.h-mtable .h-mgroup:first-child th{border-top:0}
+}
+@media(prefers-reduced-motion:reduce){.h-deco span{animation:none}}
