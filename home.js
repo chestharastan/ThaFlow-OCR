@@ -136,7 +136,7 @@ function renderHome() {
   </section>
  </div>`;
 
-  view.querySelectorAll("[data-go]").forEach(a => a.addEventListener("click", homeAccept));   // before the page changes: Scan then warms up the models
+  document.querySelectorAll("#view [data-go], #lhead [data-go]").forEach(a => a.addEventListener("click", homeAccept));   // before the page changes: Scan then warms up the models (the same listener is added once)
   // leaving Home any other way (sidebar, back) also counts: Home says everything the welcome notice says
   if (!store.settings.noticeSeen && !renderHome.leave) { renderHome.leave = () => { if ((location.hash.split("/")[1] || "") !== "home") { homeAccept(); window.removeEventListener("hashchange", renderHome.leave); renderHome.leave = null; } };
     window.addEventListener("hashchange", renderHome.leave); }

@@ -32,8 +32,10 @@ test.html                       engine test page: ?img=<your image>&backend=wasm
 Run locally: `python3 serve.py 8020` then open http://localhost:8020/ .
 
 Home (`#/home`, first item in the sidebar, also the ThaOCR logo; on a phone the logo, since the bottom bar keeps five
-tabs): the page a first-time visitor sees. A visit without a hash opens Home until the visitor has moved on from it (a button,
-the sidebar) or has a document; after that it opens Scan as before. The welcome notice is not shown over Home (Home says the
+tabs): the page a first-time visitor sees. It is laid out as a website page, not an app page: no sidebar (and no tab bar on a
+phone), a header with the logo, PDF tools / Documents / Help (desktop), the theme button and "Open the app" (Scan). Scan and
+every other page keep the sidebar. A visit without a hash opens Home until the visitor has moved on from it (a button,
+the header) or has a document; after that it opens Scan as before. The welcome notice is not shown over Home (Home says the
 same). In plain words for non-technical people: what ThaOCR can do (photos, scans and PDFs to Khmer / English text,
 tables / headings / lists kept, Word / PDF / text export, the PDF page tools, saved corrections, Select), why it can be
 trusted (nothing uploaded, no account, free, reads without internet once the models are in, made for Khmer), what this

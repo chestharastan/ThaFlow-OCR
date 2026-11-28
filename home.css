@@ -1,5 +1,21 @@
 /* Home (#/home, home.js): the welcome page. Only the app.css tokens, so light and dark themes follow. The sample page
    and its editable result are "paper" (white with dark ink) in both themes, like every page view in the app. */
+/* Home is a website page, not an app page: a header across the top and no sidebar. app.js puts .landing on the shell
+   on #/home only; Scan and the other app pages keep the sidebar. */
+.lhead{display:none}
+.shell.landing,.shell.landing.collapsed{grid-template-columns:minmax(0,1fr)}
+.shell.landing .side,.shell.landing .topbar{display:none}
+.shell.landing .lhead{display:block;position:sticky;top:0;z-index:40;padding-top:env(safe-area-inset-top)}
+.lhead::before{content:"";position:absolute;inset:0;z-index:-1;background:var(--bg);background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
+.lhead-in{display:flex;align-items:center;gap:8px;max-width:1240px;margin:0 auto;padding:12px 40px}   /* same width as the page below */
+.lhead .brand{flex:none;margin:0 auto 0 -6px}
+.lnav{display:flex;align-items:center;gap:2px}
+.lnav a{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 12px;border-radius:var(--r-s);color:var(--ink-2);font-weight:500;transition:background .15s,color .15s}
+.lnav a:hover{background:var(--surface-2);color:var(--ink)}
+.lnav .count{font-size:11.5px;color:var(--mut);background:var(--surface-2);border-radius:999px;padding:0 7px;line-height:19px;font-variant-numeric:tabular-nums}
+.lnav a:hover .count{background:var(--surface)}
+.lnav .count:empty{display:none}
+.shell.landing .page{padding-top:28px}
 .home{display:flex;flex-direction:column;gap:56px;padding-top:4px}
 .home h2{font-size:24px;letter-spacing:-.02em;line-height:1.25}
 .h-glyph{font:600 17px/1 var(--khm)}
@@ -23,7 +39,7 @@
 .h-pills svg.i{color:var(--ok)}
 
 /* section heads */
-.h-sec{display:flex;flex-direction:column;gap:18px;scroll-margin-top:16px}
+.h-sec{display:flex;flex-direction:column;gap:18px;scroll-margin-top:84px}   /* below the sticky header */
 .h-sechead p{margin:6px 0 0;color:var(--mut);max-width:660px}
 
 /* before -> after */
@@ -127,6 +143,7 @@
 .h-end-cta .h-cta{justify-content:center;margin-top:20px}
 .h-end-cta .btn:not(.p){background:var(--surface)}
 
+@media(max-width:1280px){.lhead-in{padding:12px 24px}}
 @media(max-width:1100px){
  .h-deco{display:none}
  /* side by side the panes would be too narrow to read: one above the other, at most 600 px wide */
@@ -137,6 +154,11 @@
 }
 @media(max-width:860px){
  nav.tabs .nav[data-r=home]{display:none}   /* five tabs at the bottom; the logo at the top opens Home */
+ .lhead-in{padding:8px 12px 8px 16px;gap:4px}
+ .lhead .brand{margin-left:-4px}
+ .lnav{display:none}   /* a phone has room for the logo, the theme button and "Open the app"; the app's tab bar has the rest */
+ .shell.landing .page{padding-top:20px;padding-bottom:calc(48px + env(safe-area-inset-bottom))}   /* no tab bar at the bottom */
+ .shell.landing~.toast{bottom:calc(24px + env(safe-area-inset-bottom))}
  .home{gap:40px}
  .h-sec{scroll-margin-top:72px}   /* below the sticky top bar */
  .h-hero{padding:28px 20px 24px;border-radius:18px}

@@ -289,7 +289,7 @@ function sidebar() {
   const r = location.hash.split("/")[1] || "scan";
   document.querySelectorAll(".nav").forEach(a => { const on = a.dataset.r === r || (r === "process" && a.dataset.r === "scan") || (r === "review" && a.dataset.r === "documents");
     a.classList.toggle("cur", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
-  $("#n_docs").textContent = groups(store.docs).length || "";
+  $("#n_docs").textContent = $("#ln_docs").textContent = groups(store.docs).length || "";
   const job = JOB && JOB.status === "running", pill = $("#running");
   pill.classList.toggle("hide", !(job || RERUN) || (job && r === "process"));
   if (job) { pill.href = "#/process"; $("#running_txt").textContent = "Working…"; $("#running_pct").textContent = Math.round(JOB.done / JOB.total * 100) + "%"; }
@@ -1572,6 +1572,7 @@ function ptPreview(id) {
 const ROUTES = {home: renderHome, pdf: renderPdf, select: renderSelect, scan: renderScan, process: renderProcess, review: a => renderReview(a), documents: renderDocuments, settings: renderSettings, help: renderHelp, dashboard: renderScan, new: renderScan, batch: renderDocuments};
 const TITLES = {home: "Home", pdf: "PDF", scan: "Scan", select: "Select", process: "Processing", review: "Review", documents: "Documents", settings: "Settings", help: "Help"};
 function route(e) { closeMenus(); const [, r = "scan", arg = ""] = location.hash.split("/"); sidebar(); document.title = (TITLES[r] ? TITLES[r] + " · " : "") + "ThaOCR";
+  $("#shell").classList.toggle("landing", r === "home");  // Home is a website page: its own header, no sidebar; the app pages keep the sidebar
   const wide = r === "review" || r === "select" || r === "pdf"; view.classList.toggle("wide", wide); $(".topbar").classList.toggle("wide", wide);
   view.classList.add("enter"); clearTimeout(route.t); route.t = setTimeout(() => view.classList.remove("enter"), 350);  // entry animation on page change only, not on re-renders
   (ROUTES[r] || renderScan)(arg); window.scrollTo(0, 0);
